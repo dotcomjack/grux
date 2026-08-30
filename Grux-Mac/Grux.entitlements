@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      SECURITY MODEL (see SECURITY.md):
+      Sandbox is OFF because Grux needs ScreenCaptureKit, AppleEvents,
+      and raw mic access across arbitrary apps. OS-level path allowlisting
+      is therefore NOT AVAILABLE. The filesystem security boundary lives
+      in Swift (FilesystemTool.swift), the ONLY path from Claude to disk.
+      That tool enforces:
+        • Allowlist of read-only project roots
+        • Denylist of .ssh / .aws / .env / Keychain / Mail / Messages / browser profiles
+        • 1 MB size cap, binary-file rejection
+        • 10 reads/min rate limit
+        • Audit log to ~/Library/Application Support/Grux/fs-audit.log
+        • Secret-pattern scan on file content before returning
+      API keys live in macOS Keychain (service com.gruxai.grux), never on disk.
+      Hardened runtime ON. Optional Apple notarization via GRUX_NOTARIZE=1.
+    -->
+    <key>com.apple.security.app-sandbox</key>
+    <false/>
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
+    <!--
+      audio-input + microphone entitlements ARE required for hardened-runtime
+      apps (independent of sandbox): without them, AVCaptureDevice.requestAccess
+      returns false without even surfacing the TCC prompt. Empirically verified
+      2026-04-24 when temporarily removing these caused "ambient: mic not
+      authorized" to appear immediately with no user-visible dialog.
+    -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+    <key>com.apple.security.device.microphone</key>
+    <true/>
+    <!--
+      network.server is required for NWListener to accept inbound TCP
+      connections from the Grux Phone iOS companion. Pairs with
+      NSLocalNetworkUsageDescription + NSBonjourServices (_grux-phone._tcp)
+      in Info.plist. Traffic is HMAC-authed and never leaves the user's LAN.
+    -->
+    <key>com.apple.security.network.server</key>
+    <true/>
+    <!--
+      Personal-information entitlements are hardened-runtime resource-access
+      keys (independent of sandbox, same story as audio-input above).
+      calendars covers EventKit reads/writes for the Calendar tab and
+      calendar tools; addressbook covers CNContactStore for the Contacts
+      tab and lookup_contact / create_contact tools. Without them the TCC
+      prompt never surfaces and access is silently denied.
+    -->
+    <key>com.apple.security.personal-information.calendars</key>
+    <true/>
+    <key>com.apple.security.personal-information.addressbook</key>
+    <true/>
+    <!--
+      MusicKit NOTE (PROVEN DEAD END 2026-06-19, do NOT retry the profile route):
+      `com.apple.developer.musickit` is a RESTRICTED entitlement. On macOS,
+      catalog playback via MusicKit/ApplicationMusicPlayer is NOT achievable for
+      Grux under its current (non-App-Store, Apple-Development-signed) build. We
+      went the full distance and tested every combination on the real signed app:
+        - entitlement WITHOUT a provisioning profile  -> macOS kills the app on launch.
+        - a Mac Development profile (App ID com.gruxai.grux WITH MusicKit enabled
+          under "App Services") WITHOUT the entitlement -> app launches, but
+          MusicAuthorization is auto-.denied with no prompt (framework refuses).
+        - entitlement WITH that profile embedded       -> still killed on launch,
+          because MusicKit is an App SERVICE and Apple does NOT inject the
+          musickit entitlement into a Development profile, so it stays
+          unauthorized.
+      Net: the only way to authorize this entitlement is App Store / TestFlight
+      distribution (which provisions it). It cannot be done via the dev-cert +
+      profile flow build.sh uses. The App ID, device, and MusicKit capability are
+      already registered in the portal as groundwork IF Grux ever ships via the
+      App Store. Until then the entitlement is OMITTED (keeps the app launching +
+      TCC-stable). Music plays via the AppleScript path: owned-library tracks
+      exact + in the background (no skip), catalog tracks via the focus-restored
+      path. The gated MusicKitPlayer code stays for the App Store future.
+    -->
+</dict>
+</plist>

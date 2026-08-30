@@ -1,0 +1,2243 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Grux CLI onboarding, interactive prototype</title>
+<style>
+  /* Palette read from Grux-Mac ThemeConfig.swift, same values the website uses, so a
+     reviewer moving between the prototype, the site and the app sees one product. */
+  :root {
+    color-scheme: dark;
+    --base: #0A0A0C; --surface: #141418; --surface-2: #1B1B20;
+    --line: #26262E; --line-strong: #33333D;
+    --ink: #F5F5F7; --soft: #9A9AA8; --dim: #6A6A78;
+    --accent: #7B61FF; --accent-light: #C8B6FF; --co: #6EE0FF;
+    --ok: #5BD6A0; --warn: #F0B860; --no: #F07A7A;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #050506; color: var(--ink);
+    font: 14px/1.6 var(--sans); -webkit-font-smoothing: antialiased;
+    display: flex; flex-direction: column; align-items: center; padding: 28px 20px 48px;
+  }
+  .head { width: 100%; max-width: 1080px; margin: 0 0 18px; }
+  .head h1 { font-size: 17px; font-weight: 600; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .head p { margin: 0; font-size: 13px; color: var(--soft); }
+  .head b { color: var(--accent-light); font-weight: 600; }
+
+  /* The window chrome. Not decoration: the whole point of this prototype is that a
+     reviewer can judge the real thing, and a terminal flow judged in a web page with no
+     window around it reads as a document rather than as software. */
+  .term {
+    width: 100%; max-width: 1080px; background: var(--base);
+    border: 1px solid var(--line-strong); border-radius: 10px; overflow: hidden;
+  }
+  .bar {
+    display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 12px;
+    background: var(--surface-2); border-bottom: 1px solid var(--line);
+  }
+  .lights { display: flex; gap: 6px; }
+  .light { width: 11px; height: 11px; border-radius: 50%; }
+  .l1 { background: #FF5F57; } .l2 { background: #FEBC2E; } .l3 { background: #28C840; }
+  .bar-title {
+    flex: 1; text-align: center; font: 500 12px/1 var(--mono); color: var(--soft);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  /* The beat rail. THE CONSISTENCY MECHANISM, and the reason it is chrome rather than a
+     screen: every Grux CLI command runs the same six beats in the same order, so by the
+     third command the reader already knows where they are and what is coming. A beat that
+     only appears on the screen it owns teaches nothing about the shape of the whole. */
+  .beats {
+    display: flex; gap: 0; padding: 10px 16px 0; font: 600 10px/1 var(--mono);
+    letter-spacing: 1.6px; text-transform: uppercase; flex-wrap: wrap;
+  }
+  .beat { color: var(--dim); padding: 5px 0; }
+  .beat .sep { color: var(--line-strong); padding: 0 9px; }
+  .beat.done { color: var(--soft); }
+  .beat.now { color: var(--accent-light); }
+  .beat.now .dotmark { color: var(--accent); }
+
+  .screen {
+    font: 13px/1.62 var(--mono); padding: 14px 16px 20px; min-height: 560px;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .screen .row { display: block; }
+  .soft { color: var(--soft); } .dim { color: var(--dim); }
+  .ac { color: var(--accent-light); } .co { color: var(--co); }
+  .ok { color: var(--ok); } .warn { color: var(--warn); } .no { color: var(--no); }
+  .b { font-weight: 700; color: var(--ink); }
+  .inv { background: var(--accent); color: #0A0A0C; }
+  .sel { color: var(--ink); }
+  .cur { color: var(--accent); }
+  .rule { color: var(--line-strong); }
+  .caret { background: var(--ink); color: var(--base); }
+
+  .foot {
+    width: 100%; max-width: 1080px; margin: 14px 0 0;
+    display: flex; gap: 18px; flex-wrap: wrap; font-size: 12px; color: var(--soft);
+  }
+  .foot kbd {
+    font: 600 11px/1 var(--mono); background: var(--surface-2); color: var(--ink);
+    border: 1px solid var(--line-strong); border-radius: 4px; padding: 3px 6px;
+  }
+  .note { width: 100%; max-width: 1080px; margin: 20px 0 0; font-size: 12px; color: var(--dim); }
+  .note code { color: var(--soft); }
+</style>
+</head>
+<body>
+
+<div class="head">
+  <h1>Grux CLI onboarding, interactive prototype</h1>
+  <p>Every feature, capability and permission below is read from the app's own Swift sources by <b>extract-registry.py</b>. The arithmetic on the COST screen is the app's arithmetic, not an illustration of it.</p>
+</div>
+
+<div class="term">
+  <div class="bar">
+    <div class="lights"><i class="light l1"></i><i class="light l2"></i><i class="light l3"></i></div>
+    <div class="bar-title" id="bartitle">grux setup</div>
+    <div style="width:52px"></div>
+  </div>
+  <div class="beats" id="beats"></div>
+  <div class="screen" id="screen" tabindex="0"></div>
+</div>
+
+<div class="foot" id="foot"></div>
+
+<div class="note">
+  Prototype only. Nothing here talks to a real Grux install. It exists so the flow can be
+  driven, reviewed and asserted before any of it is written in Swift.
+  Drive it from a console with <code>__grux.send('down')</code>, read it with
+  <code>__grux.state()</code>, and check the arithmetic with <code>__grux.derived()</code>.
+</div>
+
+<script>
+/* REGISTRY:BEGIN generated by extract-registry.py, do not edit by hand */
+const REGISTRY = {
+  "generatedFrom": "Grux-Mac/Sources/Grux, parsed by prototypes/extract-registry.py",
+  "capabilities": {
+    "key.anthropic": {
+      "swift": "keyAnthropic",
+      "id": "key.anthropic",
+      "kind": "key",
+      "label": "Anthropic API key",
+      "remediation": "Add your Anthropic API key in Settings to let Grux think. Get one at console.anthropic.com.",
+      "why": ""
+    },
+    "key.github": {
+      "swift": "keyGithub",
+      "id": "key.github",
+      "kind": "key",
+      "label": "GitHub token",
+      "remediation": "Connect GitHub in Settings so Grux can read your repositories. A classic token with repo scope is enough.",
+      "why": ""
+    },
+    "key.appstoreconnect": {
+      "swift": "keyAppstoreconnect",
+      "id": "key.appstoreconnect",
+      "kind": "key",
+      "label": "App Store Connect API key",
+      "remediation": "Add your App Store Connect key, issuer ID and .p8 file in Settings to let Grux publish builds.",
+      "why": ""
+    },
+    "key.elevenlabs": {
+      "swift": "keyElevenlabs",
+      "id": "key.elevenlabs",
+      "kind": "key",
+      "label": "ElevenLabs API key",
+      "remediation": "Optional. Add an ElevenLabs key for a natural voice. Grux uses the built-in macOS voice without one.",
+      "why": ""
+    },
+    "key.reddit": {
+      "swift": "keyReddit",
+      "id": "key.reddit",
+      "kind": "key",
+      "label": "Reddit API credentials",
+      "remediation": "Connect Reddit in Settings to read mentions of your product.",
+      "why": ""
+    },
+    "key.fal": {
+      "swift": "keyFal",
+      "id": "key.fal",
+      "kind": "key",
+      "label": "fal.ai API key",
+      "remediation": "Add a fal.ai key in Settings to generate images.",
+      "why": ""
+    },
+    "key.brave": {
+      "swift": "keyBrave",
+      "id": "key.brave",
+      "kind": "key",
+      "label": "Web search API key",
+      "remediation": "Add a Brave Search API key in Settings so Grux can search the web. The free tier is enough.",
+      "why": ""
+    },
+    "key.resend": {
+      "swift": "keyResend",
+      "id": "key.resend",
+      "kind": "key",
+      "label": "Email sending API key",
+      "remediation": "Add your email provider API key in Settings so Grux can send mail. Grux has no SMTP client.",
+      "why": ""
+    },
+    "key.slack": {
+      "swift": "keySlack",
+      "id": "key.slack",
+      "kind": "key",
+      "label": "Slack token",
+      "remediation": "Connect Slack in Settings so Grux can read and post in your workspace.",
+      "why": ""
+    },
+    "key.godaddy": {
+      "swift": "keyGodaddy",
+      "id": "key.godaddy",
+      "kind": "key",
+      "label": "Domain registrar key",
+      "remediation": "Add your registrar API key and secret in Settings so Grux can read your domains and DNS.",
+      "why": ""
+    },
+    "key.notion": {
+      "swift": "keyNotion",
+      "id": "key.notion",
+      "kind": "key",
+      "label": "Notion token",
+      "remediation": "Paste your Notion integration secret in Settings, and the database you want Grux to write to.",
+      "why": ""
+    },
+    "key.telegram": {
+      "swift": "keyTelegram",
+      "id": "key.telegram",
+      "kind": "key",
+      "label": "Telegram bot token",
+      "remediation": "Add a Telegram bot token and chat id in Settings so Grux can send alerts to your phone. Nothing is sent until you add both.",
+      "why": ""
+    },
+    "perm.screen_recording": {
+      "swift": "permScreenRecording",
+      "id": "perm.screen_recording",
+      "kind": "perm",
+      "label": "Screen Recording",
+      "remediation": "Grux needs Screen Recording to see what you are working on. Open System Settings, Privacy and Security, Screen Recording, and enable Grux.",
+      "why": "Grux can see what you are working on, so it can keep you on the task you chose and answer questions about what is on screen. Decline and Grux is text only: focus tracking and screen questions stay off, everything else still works."
+    },
+    "perm.microphone": {
+      "swift": "permMicrophone",
+      "id": "perm.microphone",
+      "kind": "perm",
+      "label": "Microphone",
+      "remediation": "Grux needs the microphone to hear you. Open System Settings, Privacy and Security, Microphone, and enable Grux.",
+      "why": "You can talk to Grux instead of typing, and it can transcribe meetings on this Mac. Decline and voice and meeting notes stay off, everything else still works. Continuous listening is a separate switch that ships off."
+    },
+    "perm.accessibility": {
+      "swift": "permAccessibility",
+      "id": "perm.accessibility",
+      "kind": "perm",
+      "label": "Accessibility",
+      "remediation": "Grux needs Accessibility to read the active window title. Open System Settings, Privacy and Security, Accessibility, and enable Grux.",
+      "why": "Grux can read which app and window you are in, which is how it knows what you are working on and how it clicks things for you. Decline and focus tracking and app control stay off."
+    },
+    "perm.automation": {
+      "swift": "permAutomation",
+      "id": "perm.automation",
+      "kind": "perm",
+      "label": "Automation",
+      "remediation": "Grux needs Automation to control other apps. Approve the prompt macOS shows, or enable Grux under Privacy and Security, Automation.",
+      "why": "Grux can drive the apps you already have open instead of telling you which buttons to press. Decline and Grux can advise but not act."
+    },
+    "perm.calendar": {
+      "swift": "permCalendar",
+      "id": "perm.calendar",
+      "kind": "perm",
+      "label": "Calendar",
+      "remediation": "Grux needs Calendar access to read and create events. Open System Settings, Privacy and Security, Calendars, and enable Grux.",
+      "why": "Grux can line your meetings up with what it heard and put events in for you. Decline and the workday log has no meetings in it."
+    },
+    "perm.contacts": {
+      "swift": "permContacts",
+      "id": "perm.contacts",
+      "kind": "perm",
+      "label": "Contacts",
+      "remediation": "Grux needs Contacts access to match people to conversations. Open System Settings, Privacy and Security, Contacts, and enable Grux.",
+      "why": "Grux can put names to the voices in a meeting and find an address without you typing it. Decline and speakers stay unnamed."
+    },
+    "perm.notifications": {
+      "swift": "permNotifications",
+      "id": "perm.notifications",
+      "kind": "perm",
+      "label": "Notifications",
+      "remediation": "Allow notifications so Grux can nudge you. Open System Settings, Notifications, Grux, and turn them on.",
+      "why": "Grux can tell you something happened without you watching the window. Decline and you only see updates when you go looking."
+    },
+    "perm.system_audio": {
+      "swift": "permSystemAudio",
+      "id": "perm.system_audio",
+      "kind": "perm",
+      "label": "System audio capture",
+      "remediation": "Grux needs system audio to transcribe meetings. Open System Settings, Privacy and Security, Screen Recording, and enable Grux.",
+      "why": "Grux can transcribe the other side of a call, not just your microphone. Decline and you get your half of the conversation."
+    },
+    "perm.full_disk_access": {
+      "swift": "permFullDiskAccess",
+      "id": "perm.full_disk_access",
+      "kind": "perm",
+      "label": "Full Disk Access",
+      "remediation": "Grux needs Full Disk Access to read your messages. Open System Settings, Privacy and Security, Full Disk Access, and enable Grux.",
+      "why": "Grux can read your Messages history and answer questions about past conversations. Decline and Messages stays unreadable, nothing else changes."
+    },
+    "endpoint.registry": {
+      "swift": "endpointRegistry",
+      "id": "endpoint.registry",
+      "kind": "endpoint",
+      "label": "Project registry",
+      "remediation": "Point Grux at your project registry URL in Settings. Grux reads your projects from it and writes status changes back.",
+      "why": ""
+    },
+    "endpoint.repo_list": {
+      "swift": "endpointRepoList",
+      "id": "endpoint.repo_list",
+      "kind": "endpoint",
+      "label": "Repository list",
+      "remediation": "Tell Grux which repositories to watch in Settings. Nothing is watched until you do.",
+      "why": ""
+    },
+    "endpoint.uptime_targets": {
+      "swift": "endpointUptimeTargets",
+      "id": "endpoint.uptime_targets",
+      "kind": "endpoint",
+      "label": "Sites to monitor",
+      "remediation": "Add the URLs you want Grux to check in Settings.",
+      "why": ""
+    },
+    "endpoint.webhook_inbox": {
+      "swift": "endpointWebhookInbox",
+      "id": "endpoint.webhook_inbox",
+      "kind": "endpoint",
+      "label": "Webhook inbox",
+      "remediation": "Turn on the local webhook listener in Settings and choose a port to let other machines push updates in.",
+      "why": ""
+    },
+    "endpoint.ollama": {
+      "swift": "endpointOllama",
+      "id": "endpoint.ollama",
+      "kind": "endpoint",
+      "label": "Local model server",
+      "remediation": "Install Ollama and start it, or point Grux at your Ollama host in Settings.",
+      "why": ""
+    },
+    "endpoint.media_service": {
+      "swift": "endpointMediaService",
+      "id": "endpoint.media_service",
+      "kind": "endpoint",
+      "label": "Image generation service",
+      "remediation": "Point Grux at your image generation service in Settings, or use a hosted provider key instead.",
+      "why": ""
+    },
+    "endpoint.imap": {
+      "swift": "endpointImap",
+      "id": "endpoint.imap",
+      "kind": "endpoint",
+      "label": "Mail server",
+      "remediation": "Add a mail account, its server and an app password in Settings to let Grux read your inbox.",
+      "why": ""
+    },
+    "endpoint.social_accounts": {
+      "swift": "endpointSocialAccounts",
+      "id": "endpoint.social_accounts",
+      "kind": "endpoint",
+      "label": "Social accounts",
+      "remediation": "Connect the social accounts you want Grux to watch in Settings.",
+      "why": ""
+    },
+    "endpoint.sandbox_root": {
+      "swift": "endpointSandboxRoot",
+      "id": "endpoint.sandbox_root",
+      "kind": "endpoint",
+      "label": "Watched folder",
+      "remediation": "Choose the folder Grux should guard in Settings.",
+      "why": ""
+    },
+    "endpoint.microsoft_graph": {
+      "swift": "endpointMicrosoftGraph",
+      "id": "endpoint.microsoft_graph",
+      "kind": "endpoint",
+      "label": "Microsoft 365 mail",
+      "remediation": "Add your Microsoft 365 tenant, app id and a mailbox in Settings to let Grux read that inbox. Nothing connects until you do.",
+      "why": ""
+    },
+    "step.first_frame_reviewed": {
+      "swift": "stepFirstFrameReviewed",
+      "id": "step.first_frame_reviewed",
+      "kind": "step",
+      "label": "Review the first capture",
+      "remediation": "Grux will show you one frame, and the exact text it would send, before anything leaves your Mac. Nothing is sent until you approve.",
+      "why": ""
+    },
+    "step.agent_cli_installed": {
+      "swift": "stepAgentCliInstalled",
+      "id": "step.agent_cli_installed",
+      "kind": "step",
+      "label": "Install the agent command line tool",
+      "remediation": "Install the coding agent command line tool, then restart Grux. It was not found at any location Grux checks.",
+      "why": ""
+    },
+    "step.capture_exclusions_confirmed": {
+      "swift": "stepCaptureExclusionsConfirmed",
+      "id": "step.capture_exclusions_confirmed",
+      "kind": "step",
+      "label": "Confirm what stays private",
+      "remediation": "Check the list of apps Grux will never look at. Password managers and banking apps are excluded by default.",
+      "why": ""
+    },
+    "step.recording_consent_acknowledged": {
+      "swift": "stepRecordingConsentAcknowledged",
+      "id": "step.recording_consent_acknowledged",
+      "kind": "step",
+      "label": "Confirm you will tell people",
+      "remediation": "Recording a call captures everyone on it, and some places require you to say so first. Confirm you will, then Grux can record.",
+      "why": ""
+    },
+    "step.speech_model_downloaded": {
+      "swift": "stepSpeechModelDownloaded",
+      "id": "step.speech_model_downloaded",
+      "kind": "step",
+      "label": "Fetch the speech model",
+      "remediation": "Grux fetches a one time on-device speech model before it can transcribe. Connect to the internet and open Meetings once.",
+      "why": ""
+    },
+    "step.corpus_sources_confirmed": {
+      "swift": "stepCorpusSourcesConfirmed",
+      "id": "step.corpus_sources_confirmed",
+      "kind": "step",
+      "label": "Choose what gets indexed",
+      "remediation": "Pick which of your messages, notes and sent mail Grux may index. Nothing is indexed until you choose.",
+      "why": ""
+    },
+    "step.terminal_focus_hook_installed": {
+      "swift": "stepTerminalFocusHookInstalled",
+      "id": "step.terminal_focus_hook_installed",
+      "kind": "step",
+      "label": "Install the terminal hook",
+      "remediation": "Grux adds one entry to your coding tool's settings and one script beside it. It removes nothing else.",
+      "why": ""
+    },
+    "step.terminal_sessions_explained": {
+      "swift": "stepTerminalSessionsExplained",
+      "id": "step.terminal_sessions_explained",
+      "kind": "step",
+      "label": "Understand terminal sessions",
+      "remediation": "Read what a headless session runs and which credential it spends, then turn terminal sessions on in Settings.",
+      "why": ""
+    },
+    "step.phone_paired": {
+      "swift": "stepPhonePaired",
+      "id": "step.phone_paired",
+      "kind": "step",
+      "label": "Pair your iPhone",
+      "remediation": "Open Pair iPhone in Settings and scan the code with the Grux phone app. The pairing secret never leaves your Mac and your phone.",
+      "why": ""
+    },
+    "step.youtube_transcripts_enabled": {
+      "swift": "stepYoutubeTranscriptsEnabled",
+      "id": "step.youtube_transcripts_enabled",
+      "kind": "step",
+      "label": "Turn on YouTube transcripts",
+      "remediation": "Grux reads YouTube captions with yt-dlp when you paste a video link. Turn it on in Settings, and off there whenever you want.",
+      "why": ""
+    }
+  },
+  "features": [
+    {
+      "id": "home",
+      "label": "Home",
+      "tier": "core",
+      "requires": [],
+      "optional": [
+        "perm.calendar",
+        "key.anthropic",
+        "key.elevenlabs"
+      ],
+      "steps": [],
+      "optionalSteps": [],
+      "anyOf": []
+    },
+    {
+      "id": "reactor",
+      "label": "Reactor",
+      "tier": "labs",
+      "requires": [],
+      "optional": [
+        "perm.microphone",
+        "perm.calendar",
+        "key.elevenlabs",
+        "endpoint.imap"
+      ],
+      "steps": [],
+      "optionalSteps": [],
+      "anyOf": []
+    },
+    {
+      "id": "chat",
+      "label": "Chat",
+      "tier": "core",
+      "requires": [
+        "key.anthropic",
+        "endpoint.ollama"
+      ],
+      "optional": [
+        "key.slack",
+        "key.notion",
+        "key.resend",
+        "key.brave",
+        "perm.microphone",
+        "key.elevenlabs",
+        "perm.screen_recording",
+        "perm.accessibility",
+        "perm.automation",
+        "perm.calendar",
+        "perm.contacts",
+        "endpoint.imap",
+        "key.fal",
+        "endpoint.media_service"
+      ],
+      "steps": [],
+      "optionalSteps": [
+        "step.agent_cli_installed",
+        "step.youtube_transcripts_enabled",
+        "step.terminal_sessions_explained"
+      ],
+      "anyOf": [
+        {
+          "capabilities": [
+            "key.anthropic",
+            "endpoint.ollama"
+          ],
+          "min": 1
+        }
+      ]
+    },
+    {
+      "id": "jax.command",
+      "label": "Jax Command",
+      "tier": "labs",
+      "requires": [],
+      "optional": [
+        "key.anthropic",
+        "perm.full_disk_access"
+      ],
+      "steps": [
+        "step.agent_cli_installed",
+        "step.corpus_sources_confirmed",
+        "step.terminal_sessions_explained"
+      ],
+      "optionalSteps": [],
+      "anyOf": []
+    },
+    {
+      "id": "approvals",
+      "label": "Approvals",
+      "tier": "core",
+      "requires": [],
+      "optional": [],
+      "steps": [],
+      "optionalSteps": [],
+      "anyOf": []
+    },
+    {
+      "id": "cognition.map",
+      "label": "Cognition Map",
+      "tier": "core",
+      "requires": [],
+      "optional": [
+        "key.anthropic"
+      ],
+      "steps": [],
+      "optionalSteps": [],
+      "anyOf": []
+    },
+    {
+      "id": "feature.review",
+      "label": "Feature Review",
+      "tier": "labs",
+      "requires": [],
+      "optional": [
+        "key.anthropic"
+      ],
+      "steps": [],
+      "optionalSteps": [],
+      "anyOf": []
+    },
+    {
+      "id": "projects",
+      "label": "Projects",
+      "tier": "core",
+      "requires": [],
+      "optional": [
+        "endpoint.registry"
+      ],
+      "steps": [],
+      "optionalSteps": [],
+      "anyOf": []
+    },
+    {
+      "id": "tasks",
+      "label": "Task Stack",
+      "tier": "core",
+      "requires": [],
+      "optional": [],
+      "steps": [],
+      "optionalSteps": [],
+      "anyOf": []
+    },
+    {
+      "id": "agents",
+      "label": "Agents",
+      "tier": "labs",
+      "requires": [],
+      "optional": [],
+      "steps": [
+        "step.agent_cli_installed",
+        "step.terminal_sessions_explained"
+      ],
+      "optionalSteps": [],
+      "anyOf": []
+    },
+    {
+      "id": "mailbox",
+      "label": "Mailbox",
+      "tier": "core",
+      "requires": [
+        "endpoint.imap"
+      ],
+      "optional": [
+        "endpoint.microsoft_graph"
+      ],
+      "steps": [],
+      "optionalSteps": [],
+      "anyOf": []
+    },
+    {
+      "id": "mailbox.compose",
+      "label": "Compose and send",
+      "tier": "labs",
+      "requires": [
+        "key.resend",
+        "endpoint.imap"
+      ],
+      "optional": [],
+      "steps": [],
+      "optionalSteps": [],
+      "anyOf": []
+    },
+    {
+      "id": "calendar",
+      "label": "Calendar",
+      "tier": "core",
+      "requires": [
+        "perm.calendar"
+      ],
+      "optional": [],
+      "steps": [],
+      "optionalSteps": [],
+      "anyOf": []
+    },
+    {
+      "id": "notes",
+      "label": "Notes",
+      "tier": "core",
+      "requires": [],
+      "optional": [],
+      "steps": [],
+      "optionalSteps": [],
+      "anyOf": []
+    },
+    {
+      "id": "documents",
+      "label": "Documents",
+      "tier": "core",
+      "requires": [],
+      "optional": [
+        "key.anthropic"
+      ],
+      "steps": [],
+      "optionalSteps": [],
+      "anyOf": []
+    },
+    {
+      "id": "contacts",
+      "label": "Contacts",
+      "tier": "core",
+      "requires": [
+        "perm.contacts"
+      ],
+      "optional": [],
+      "steps": [],
+      "optionalSteps": [],
+      "anyOf": []
+    },
+    {
+      "id": "schedules",
+      "label": "Schedules",
+      "tier": "core",
+      "requires": [],
+      "optional": [
+        "perm.notifications"
+      ],
+      "steps": [],
+      "optionalSteps": [
+        "step.agent_cli_installed",
+        "step.terminal_sessions_explained"
+      ],
+      "anyOf": []
+    },
+    {
+      "id": "folders",
+      "label": "Folders",
+      "tier": "core",
+      "requires": [],
+      "optional": [
+        "key.anthropic",
+        "endpoint.ollama"
+      ],
+      "steps": [],
+      "optionalSteps": [],
+      "anyOf": []
+    },
+    {
+      "id": "research",
+      "label": "Research",
+      "tier": "core",
+      "requires": [
+        "key.brave",
+        "key.anthropic"
+      ],
+      "optional": [],
+      "steps": [],
+      "optionalSteps": [],
+      "anyOf": []
+    },
+    {
+      "id": "skills",
+      "label": "Skills",
+      "tier": "core",
+      "requires": [],
+      "optional": [],
+      "steps": [],
+      "optionalSteps": [],
+      "anyOf": []
+    },
+    {
+      "id": "compare",
+      "label": "Compare",
+      "tier": "core",
+      "requires": [
+        "key.anthropic",
+        "endpoint.ollama"
+      ],
+      "optional": [],
+      "steps": [],
+      "optionalSteps": [],
+      "anyOf": []
+    },
+    {
+      "id": "cookbook",
+      "label": "Local Models",
+      "tier": "core",
+      "requires": [],
+      "optional": [
+        "endpoint.ollama"
+      ],
+      "steps": [],
+      "optionalSteps": [],
+      "anyOf": []
+    },
+    {
+      "id": "creative",
+      "label": "Media Studio",
+      "tier": "labs",
+      "requires": [
+        "key.fal"
+      ],
+      "optional": [
+        "endpoint.media_service",
+        "endpoint.registry"
+      ],
+      "steps": [],
+      "optionalSteps": [],
+      "anyOf": []
+    },
+    {
+      "id": "design.studio",
+      "label": "Design Studio",
+      "tier": "core",
+      "requires": [
+        "key.anthropic"
+      ],
+      "optional": [
+        "endpoint.ollama",
+        "endpoint.registry"
+      ],
+      "steps": [],
+      "optionalSteps": [
+        "step.agent_cli_installed",
+        "step.terminal_sessions_explained"
+      ],
+      "anyOf": []
+    },
+    {
+      "id": "meetings",
+      "label": "Meetings",
+      "tier": "core",
+      "requires": [
+        "perm.microphone",
+        "perm.system_audio"
+      ],
+      "optional": [
+        "key.anthropic"
+      ],
+      "steps": [
+        "step.recording_consent_acknowledged",
+        "step.speech_model_downloaded"
+      ],
+      "optionalSteps": [],
+      "anyOf": []
+    },
+    {
+      "id": "speakers",
+      "label": "Speakers",
+      "tier": "core",
+      "requires": [],
+      "optional": [],
+      "steps": [],
+      "optionalSteps": [],
+      "anyOf": []
+    },
+    {
+      "id": "commands",
+      "label": "Commands",
+      "tier": "core",
+      "requires": [],
+      "optional": [
+        "perm.automation",
+        "key.anthropic"
+      ],
+      "steps": [],
+      "optionalSteps": [],
+      "anyOf": []
+    },
+    {
+      "id": "social",
+      "label": "Social",
+      "tier": "labs",
+      "requires": [],
+      "optional": [
+        "key.telegram"
+      ],
+      "steps": [],
+      "optionalSteps": [],
+      "anyOf": []
+    },
+    {
+      "id": "workflows",
+      "label": "Workflows",
+      "tier": "labs",
+      "requires": [],
+      "optional": [
+        "perm.notifications"
+      ],
+      "steps": [],
+      "optionalSteps": [
+        "step.agent_cli_installed",
+        "step.terminal_sessions_explained"
+      ],
+      "anyOf": []
+    },
+    {
+      "id": "focus",
+      "label": "Focus log",
+      "tier": "core",
+      "requires": [
+        "perm.screen_recording",
+        "key.anthropic"
+      ],
+      "optional": [
+        "perm.accessibility",
+        "perm.notifications"
+      ],
+      "steps": [
+        "step.first_frame_reviewed",
+        "step.capture_exclusions_confirmed"
+      ],
+      "optionalSteps": [],
+      "anyOf": []
+    },
+    {
+      "id": "terminal.focus",
+      "label": "Terminal Focus",
+      "tier": "labs",
+      "requires": [
+        "perm.screen_recording"
+      ],
+      "optional": [
+        "perm.automation"
+      ],
+      "steps": [
+        "step.terminal_focus_hook_installed"
+      ],
+      "optionalSteps": [],
+      "anyOf": []
+    },
+    {
+      "id": "self.upgrade",
+      "label": "Self-Upgrade",
+      "tier": "labs",
+      "requires": [],
+      "optional": [],
+      "steps": [
+        "step.agent_cli_installed",
+        "step.terminal_sessions_explained"
+      ],
+      "optionalSteps": [],
+      "anyOf": []
+    },
+    {
+      "id": "integrations",
+      "label": "Integrations",
+      "tier": "core",
+      "requires": [],
+      "optional": [],
+      "steps": [],
+      "optionalSteps": [],
+      "anyOf": []
+    },
+    {
+      "id": "integrations.webhooks",
+      "label": "Outbound Webhooks",
+      "tier": "core",
+      "requires": [],
+      "optional": [],
+      "steps": [],
+      "optionalSteps": [],
+      "anyOf": []
+    },
+    {
+      "id": "jax.hq",
+      "label": "Jax HQ",
+      "tier": "labs",
+      "requires": [
+        "endpoint.imap"
+      ],
+      "optional": [
+        "key.anthropic",
+        "key.resend"
+      ],
+      "steps": [],
+      "optionalSteps": [],
+      "anyOf": []
+    },
+    {
+      "id": "meta.ads",
+      "label": "Meta Ads",
+      "tier": "labs",
+      "requires": [],
+      "optional": [
+        "key.anthropic",
+        "key.telegram"
+      ],
+      "steps": [],
+      "optionalSteps": [],
+      "anyOf": []
+    },
+    {
+      "id": "domains",
+      "label": "Domain monitor",
+      "tier": "labs",
+      "requires": [
+        "key.godaddy"
+      ],
+      "optional": [],
+      "steps": [],
+      "optionalSteps": [],
+      "anyOf": []
+    },
+    {
+      "id": "phone",
+      "label": "Phone companion",
+      "tier": "labs",
+      "requires": [],
+      "optional": [
+        "key.elevenlabs"
+      ],
+      "steps": [
+        "step.phone_paired"
+      ],
+      "optionalSteps": [],
+      "anyOf": []
+    },
+    {
+      "id": "settings",
+      "label": "Settings",
+      "tier": "core",
+      "requires": [],
+      "optional": [],
+      "steps": [],
+      "optionalSteps": [],
+      "anyOf": []
+    }
+  ],
+  "tabAliases": {},
+  "sidebarGroups": [
+    {
+      "id": "command",
+      "title": "Command",
+      "keys": [
+        "home",
+        "reactor",
+        "chat",
+        "jaxHQ",
+        "jaxCommand",
+        "cognitionMap",
+        "featureReview",
+        "projects",
+        "tasks",
+        "agents",
+        "social"
+      ]
+    },
+    {
+      "id": "workspace",
+      "title": "Workspace",
+      "keys": [
+        "mailbox",
+        "calendar",
+        "notes",
+        "documents",
+        "contacts",
+        "schedules",
+        "folders"
+      ]
+    },
+    {
+      "id": "intelligence",
+      "title": "Intelligence",
+      "keys": [
+        "research",
+        "skills",
+        "compare",
+        "cookbook",
+        "creative",
+        "designStudio"
+      ]
+    },
+    {
+      "id": "ambient",
+      "title": "Ambient",
+      "keys": [
+        "meetings",
+        "speakers"
+      ]
+    },
+    {
+      "id": "system",
+      "title": "System",
+      "keys": [
+        "roadmap",
+        "commands",
+        "workflows",
+        "metaAds",
+        "focus",
+        "terminalFocus",
+        "selfUpgrade",
+        "integrations",
+        "settings"
+      ]
+    }
+  ],
+  "permissionOrder": [
+    "perm.notifications",
+    "perm.microphone",
+    "perm.calendar",
+    "perm.contacts",
+    "perm.screen_recording",
+    "perm.accessibility",
+    "perm.automation",
+    "perm.full_disk_access"
+  ],
+  "blueprints": [
+    {
+      "id": "fact-grounding",
+      "capabilities": [
+        {
+          "id": "key.anthropic",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "mention-monitor",
+      "capabilities": [
+        {
+          "id": "key.anthropic",
+          "required": true
+        },
+        {
+          "id": "key.reddit",
+          "required": true
+        },
+        {
+          "id": "key.appstoreconnect",
+          "required": true
+        },
+        {
+          "id": "perm.notifications",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "output-gates",
+      "capabilities": [
+        {
+          "id": "key.anthropic",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "portfolio-dashboard",
+      "capabilities": [
+        {
+          "id": "key.anthropic",
+          "required": true
+        },
+        {
+          "id": "endpoint.registry",
+          "required": true
+        },
+        {
+          "id": "key.github",
+          "required": true
+        },
+        {
+          "id": "endpoint.uptime_targets",
+          "required": true
+        },
+        {
+          "id": "key.appstoreconnect",
+          "required": true
+        },
+        {
+          "id": "perm.notifications",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "pr-digest",
+      "capabilities": [
+        {
+          "id": "key.github",
+          "required": true
+        },
+        {
+          "id": "key.anthropic",
+          "required": true
+        },
+        {
+          "id": "endpoint.repo_list",
+          "required": true
+        },
+        {
+          "id": "perm.notifications",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "product-shot",
+      "capabilities": [
+        {
+          "id": "key.fal",
+          "required": true
+        },
+        {
+          "id": "endpoint.media_service",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "project-registry",
+      "capabilities": [
+        {
+          "id": "endpoint.registry",
+          "required": true
+        },
+        {
+          "id": "key.anthropic",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "sandbox-tripwire",
+      "capabilities": [
+        {
+          "id": "endpoint.sandbox_root",
+          "required": true
+        },
+        {
+          "id": "perm.notifications",
+          "required": true
+        },
+        {
+          "id": "key.anthropic",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "ship-ios",
+      "capabilities": [
+        {
+          "id": "key.appstoreconnect",
+          "required": true
+        },
+        {
+          "id": "key.anthropic",
+          "required": true
+        },
+        {
+          "id": "perm.automation",
+          "required": true
+        },
+        {
+          "id": "perm.notifications",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "social-health-grid",
+      "capabilities": [
+        {
+          "id": "endpoint.social_accounts",
+          "required": true
+        },
+        {
+          "id": "key.anthropic",
+          "required": true
+        },
+        {
+          "id": "perm.notifications",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "social-ops-cockpit",
+      "capabilities": [
+        {
+          "id": "endpoint.social_accounts",
+          "required": true
+        },
+        {
+          "id": "key.anthropic",
+          "required": true
+        },
+        {
+          "id": "perm.automation",
+          "required": true
+        },
+        {
+          "id": "perm.notifications",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "test-digest",
+      "capabilities": [
+        {
+          "id": "key.anthropic",
+          "required": true
+        },
+        {
+          "id": "endpoint.registry",
+          "required": true
+        },
+        {
+          "id": "perm.notifications",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "uptime-dashboard",
+      "capabilities": [
+        {
+          "id": "endpoint.uptime_targets",
+          "required": true
+        },
+        {
+          "id": "key.anthropic",
+          "required": true
+        },
+        {
+          "id": "perm.notifications",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "webhook-inbox",
+      "capabilities": [
+        {
+          "id": "endpoint.webhook_inbox",
+          "required": true
+        },
+        {
+          "id": "perm.notifications",
+          "required": true
+        },
+        {
+          "id": "key.anthropic",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "workday-log",
+      "capabilities": [
+        {
+          "id": "perm.screen_recording",
+          "required": true
+        },
+        {
+          "id": "perm.accessibility",
+          "required": true
+        },
+        {
+          "id": "key.anthropic",
+          "required": true
+        },
+        {
+          "id": "perm.notifications",
+          "required": true
+        }
+      ]
+    }
+  ],
+  "counts": {
+    "capabilities": 41,
+    "features": 39,
+    "core": 25,
+    "labs": 14,
+    "tabs": 35,
+    "blueprints": 15
+  }
+};
+/* REGISTRY:END */
+</script>
+
+<script>
+"use strict";
+(function () {
+
+// ---------------------------------------------------------------------------------------
+// THE SIX BEATS. This is the grammar every Grux CLI command follows, not just this one.
+//
+// The order is load bearing and it is the whole answer to "will the tenth handoff feel
+// like the first". CHOOSE always precedes COST, and COST always precedes GRANT, so a
+// person is never asked for anything before they have seen the complete bill for what
+// they picked. A command that asks first and explains after has broken the grammar even
+// if every individual screen is well written.
+// ---------------------------------------------------------------------------------------
+const BEATS = ["LOOK", "CHOOSE", "COST", "GRANT", "HAND OFF", "PROVE"];
+
+const FRAMES = [
+  { id: "launch",      beat: "LOOK" },
+  { id: "look",        beat: "LOOK" },
+  { id: "choose",      beat: "CHOOSE" },
+  { id: "cost",        beat: "COST" },
+  { id: "grantKey",    beat: "GRANT" },
+  { id: "grantPerms",  beat: "GRANT" },
+  { id: "grantCreds",  beat: "GRANT" },
+  { id: "handoff",     beat: "HAND OFF" },
+  { id: "prove",       beat: "PROVE" }
+];
+
+// Presets. Named for what somebody wants, never for how many features it turns on.
+const PRESETS = {
+  1: { label: "Just enough to have a Grux",
+       pick: ["home", "chat", "approvals", "settings"] },
+  2: { label: "A working day",
+       pick: ["home", "chat", "approvals", "settings", "mailbox", "calendar", "notes",
+              "contacts", "tasks", "meetings", "focus", "research", "documents"] },
+  3: { label: "Everything, including the labs surfaces", pick: "all" }
+};
+
+const S = {
+  frame: 0,
+  cursor: 0,
+  selected: new Set(),
+  name: "",
+  typing: "",
+  keyState: "none",      // none | pasted | local | skipped
+  granted: new Set(),
+  declined: new Set(),
+  credIndex: 0,
+  permIndex: 0,
+  copied: false,
+  visited: []
+};
+
+// ---- derived state, the arithmetic the whole flow is selling -------------------------
+//
+// blocking  = requires + steps        a feature missing one of these cannot run at all
+// degrading = optional + optionalSteps a feature missing one of these runs in a lesser mode
+// never     = every capability no chosen feature mentions, in any of the four lists
+//
+// The third is the interesting one and it is why COST is its own beat. Telling somebody
+// what you will ask for is ordinary. Telling them, by name, the twenty things you will
+// never ask for because they did not pick the features that use them is the part that
+// earns a permission dialog later.
+function derived() {
+  const feats = REGISTRY.features.filter(f => S.selected.has(f.id));
+  const blocking = new Set(), degrading = new Set();
+  const choices = [];
+  feats.forEach(f => {
+    f.requires.forEach(c => blocking.add(c));
+    f.steps.forEach(c => blocking.add(c));
+    f.optional.forEach(c => degrading.add(c));
+    f.optionalSteps.forEach(c => degrading.add(c));
+    (f.anyOf || []).forEach(g => choices.push({
+      feature: f.id, label: f.label, capabilities: g.capabilities, min: g.min
+    }));
+  });
+  // A capability that blocks one feature and merely degrades another is BLOCKING.
+  // Reporting it as optional would let somebody skip it and land in a broken tab.
+  degrading.forEach(c => { if (blocking.has(c)) degrading.delete(c); });
+
+  // ANY-OF GROUPS. A feature may need any N of a set rather than all of it: `chat`
+  // declares `requires: [key.anthropic, endpoint.ollama]` with a group of min 1, meaning a
+  // hosted key OR a local model, never both.
+  //
+  // Reading `requires` alone here would tell somebody they need two credentials to open
+  // Chat when one does. That is exactly the over-asking this whole flow exists to stop, so
+  // a capability covered by a group leaves `blocking` and the GROUP becomes the ask. It
+  // stays counted as touched, because it is still something a chosen feature can use and
+  // must therefore never appear on the never-asked list.
+  const grouped = new Set();
+  choices.forEach(g => g.capabilities.forEach(c => grouped.add(c)));
+  grouped.forEach(c => { blocking.delete(c); degrading.delete(c); });
+
+  const touched = new Set([...blocking, ...degrading, ...grouped]);
+  const never = Object.keys(REGISTRY.capabilities).filter(c => !touched.has(c));
+
+  const byKind = (set, kind) => [...set].filter(c => REGISTRY.capabilities[c].kind === kind);
+  // Permissions come back in the app's own cheapest-to-refuse order. Anything the app
+  // never offers is appended and flagged, rather than silently dropped.
+  const orderPerms = list => {
+    const rank = c => {
+      const i = REGISTRY.permissionOrder.indexOf(c);
+      return i === -1 ? 999 : i;
+    };
+    return list.slice().sort((a, b) => rank(a) - rank(b));
+  };
+  return {
+    features: feats.map(f => f.id),
+    blocking: [...blocking],
+    degrading: [...degrading],
+    choices: choices,
+    never: never,
+    perms: orderPerms(byKind(blocking, "perm").concat(byKind(degrading, "perm"))),
+    permsBlocking: byKind(blocking, "perm"),
+    keys: byKind(blocking, "key").concat(byKind(degrading, "key")),
+    keysBlocking: byKind(blocking, "key"),
+    endpoints: byKind(blocking, "endpoint").concat(byKind(degrading, "endpoint")),
+    steps: byKind(blocking, "step").concat(byKind(degrading, "step")),
+    neverPerms: never.filter(c => REGISTRY.capabilities[c].kind === "perm"),
+    neverKeys: never.filter(c => REGISTRY.capabilities[c].kind === "key")
+  };
+}
+
+// ---- tiny render helpers -------------------------------------------------------------
+const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const c = (cls, s) => '<span class="' + cls + '">' + esc(s) + "</span>";
+const rule = (n) => c("rule", "─".repeat(n || 74));
+const cap = id => REGISTRY.capabilities[id];
+const capLabel = id => (cap(id) ? cap(id).label : id);
+
+function wrap(text, width, indent) {
+  const pad = " ".repeat(indent || 0);
+  const words = String(text).split(/\s+/);
+  const out = [];
+  let line = "";
+  words.forEach(w => {
+    if ((line + " " + w).trim().length > width) { out.push(pad + line.trim()); line = w; }
+    else { line = (line + " " + w).trim(); }
+  });
+  if (line) out.push(pad + line.trim());
+  return out;
+}
+
+// Re-wrap any line over `width`, keeping its indent and hanging under its bullet.
+function fitTerminal(lines, width) {
+  const out = [];
+  lines.forEach(function (l) {
+    if (l.length <= width) { out.push(l); return; }
+    const m = l.match(/^(\s*)(-\s+)?([\s\S]*)$/);
+    const indent = m[1], bullet = m[2] || "";
+    const cont = indent + " ".repeat(bullet.length);
+    wrap(m[3], width - indent.length - bullet.length, 0).forEach(function (p, i) {
+      out.push(i === 0 ? indent + bullet + p : cont + p);
+    });
+  });
+  return out;
+}
+
+function groupOf(featureId) {
+  const alias = REGISTRY.tabAliases;
+  const keyFor = k => alias[k] || k;
+  for (const g of REGISTRY.sidebarGroups) {
+    if (g.keys.some(k => keyFor(k) === featureId)) return g;
+  }
+  return { id: "other", title: "Other" };
+}
+
+// Feature list in sidebar order, grouped, which is the order they appear in the app.
+// A prototype that invents its own ordering is teaching a flow the product does not have.
+function orderedFeatures() {
+  const out = [];
+  REGISTRY.sidebarGroups.forEach(g => {
+    g.keys.forEach(k => {
+      const id = REGISTRY.tabAliases[k] || k;
+      const f = REGISTRY.features.find(x => x.id === id);
+      if (f) out.push({ group: g, f: f });
+    });
+  });
+  // Any registry row with no sidebar tab still has to appear, or the count on screen
+  // disagrees with the count on the website and nobody can tell which is wrong.
+  REGISTRY.features.forEach(f => {
+    if (!out.some(o => o.f.id === f.id)) out.push({ group: { id: "other", title: "Other" }, f: f });
+  });
+  return out;
+}
+
+// ---- frames ---------------------------------------------------------------------------
+const R = {};
+
+R.launch = function () {
+  const L = [];
+  L.push(c("dim", "~ ") + c("ok", "$ ") + c("b", "grux setup"));
+  L.push("");
+  L.push(c("ac", "  Grux 1.2") + c("dim", "  setup"));
+  L.push("");
+  L.push(...wrap("This walks through what Grux can do, you pick the parts you want, and only "
+    + "then does anything get asked for. Nothing is granted, installed or sent while you "
+    + "are choosing.", 74, 2).map(s => c("soft", s)));
+  L.push("");
+  L.push(c("dim", "  Six steps, always in this order, in every grux command:"));
+  L.push("");
+  L.push("  " + c("ac", "LOOK") + c("dim", "      what is already true on this Mac. Asks for nothing."));
+  L.push("  " + c("ac", "CHOOSE") + c("dim", "    the features you want. Still asks for nothing."));
+  L.push("  " + c("ac", "COST") + c("dim", "      exactly what that will ask for, and what it never will."));
+  L.push("  " + c("ac", "GRANT") + c("dim", "     the asks, cheapest to refuse first. All skippable."));
+  L.push("  " + c("ac", "HAND OFF") + c("dim", "  a prompt for your own coding agent, for the dull half."));
+  L.push("  " + c("ac", "PROVE") + c("dim", "     what is set up, what is not, and how to check it yourself."));
+  L.push("");
+  L.push("  " + rule(70));
+  L.push("");
+  L.push("  " + c("soft", "Press ") + c("b", "enter") + c("soft", " to look at this Mac."));
+  return L;
+};
+
+R.look = function () {
+  const L = [];
+  L.push(c("ac", "  LOOK") + c("dim", "  nothing on this screen asks you for anything"));
+  L.push("");
+  L.push("  " + c("ok", "✓") + " " + c("soft", "Grux.app          ") + c("b", "1.2.0") + c("dim", "  /Applications/Grux.app, signed and notarized"));
+  L.push("  " + c("ok", "✓") + " " + c("soft", "macOS             ") + c("b", "15.3") + c("dim", "   Apple silicon, 36 GB"));
+  L.push("  " + c("ok", "✓") + " " + c("soft", "Ollama            ") + c("b", "running") + c("dim", " 3 models local"));
+  L.push("  " + c("warn", "○") + " " + c("soft", "Keychain          ") + c("dim", "no Grux credentials yet"));
+  L.push("  " + c("warn", "○") + " " + c("soft", "Permissions       ") + c("dim", "0 of 9 granted, which is what a fresh install looks like"));
+  L.push("");
+  L.push("  " + rule(70));
+  L.push("");
+  L.push("  " + c("soft", "What should Grux call you?") + c("dim", "  (enter to skip, it is only used to say hello)"));
+  L.push("");
+  const shown = S.typing || "";
+  L.push("  " + c("ac", "> ") + c("sel", shown) + c("caret", " "));
+  L.push("");
+  L.push("  " + c("dim", "Free, instant, and skippable, which is why it is asked before the API key"));
+  L.push("  " + c("dim", "rather than after. The app learns your name two screens earlier than it used to."));
+  return L;
+};
+
+R.choose = function () {
+  const rows = orderedFeatures();
+  const d = derived();
+  const L = [];
+  L.push(c("ac", "  CHOOSE") + c("dim", "  still asks for nothing. Space toggles, enter confirms."));
+  L.push("");
+  L.push("  " + c("dim", "presets  ") + c("b", "1") + c("dim", " " + PRESETS[1].label + "   ")
+    + c("b", "2") + c("dim", " " + PRESETS[2].label + "   ")
+    + c("b", "3") + c("dim", " " + PRESETS[3].label));
+  L.push("");
+
+  let lastGroup = null;
+  const body = [];
+  rows.forEach((row, i) => {
+    if (row.group.id !== lastGroup) {
+      lastGroup = row.group.id;
+      body.push("  " + c("dim", row.group.title.toUpperCase()));
+    }
+    const on = S.selected.has(row.f.id);
+    const here = i === S.cursor;
+    const box = on ? c("ac", "[x]") : c("dim", "[ ]");
+    const pointer = here ? c("cur", "❯ ") : "  ";
+    const name = (on ? c("sel", row.f.label) : c("soft", row.f.label));
+    const badge = row.f.tier === "labs" ? " " + c("warn", "BETA") : "";
+    body.push("  " + pointer + box + " " + name + badge);
+  });
+
+  // A 39 row list does not fit a terminal, so it scrolls, and the prototype has to scroll
+  // too or it is showing a screen the real thing cannot draw.
+  const WINDOW = 20;
+  const start = Math.max(0, Math.min(S.cursor - 8, body.length - WINDOW));
+  const view = body.slice(start, start + WINDOW);
+  if (start > 0) view.unshift("  " + c("dim", "  ↑ " + start + " more above"));
+  const below = body.length - (start + WINDOW);
+  if (below > 0) view.push("  " + c("dim", "  ↓ " + below + " more below"));
+  L.push(...view);
+
+  L.push("");
+  L.push("  " + rule(70));
+  const n = S.selected.size;
+  if (n === 0) {
+    L.push("  " + c("soft", "Nothing picked. ") + c("ok", "Grux will ask you for nothing at all")
+      + c("soft", " and start empty."));
+  } else {
+    L.push("  " + c("b", n + " picked") + c("dim", "  →  ")
+      + c("warn", d.permsBlocking.length + " permissions required") + c("dim", ", ")
+      + c("soft", (d.perms.length - d.permsBlocking.length) + " optional") + c("dim", "  │  ")
+      + c("warn", d.keysBlocking.length + " keys required") + c("dim", ", ")
+      + c("soft", (d.keys.length - d.keysBlocking.length) + " optional"));
+    L.push("  " + c("dim", "Never asked for, because nothing you picked uses them: ")
+      + c("ok", d.never.length + " of " + Object.keys(REGISTRY.capabilities).length));
+  }
+  return L;
+};
+
+R.cost = function () {
+  const d = derived();
+  const L = [];
+  L.push(c("ac", "  COST") + c("dim", "  the whole bill, before a single dialog"));
+  L.push("");
+  if (S.selected.size === 0) {
+    L.push("  " + c("ok", "You picked nothing, so there is nothing to ask for."));
+    L.push("");
+    L.push("  " + c("soft", "Grux will start with an empty sidebar. Every feature is one command away"));
+    L.push("  " + c("soft", "later, and each one asks for its own permissions at the moment you add it."));
+    L.push("");
+    L.push("  " + rule(70));
+    L.push("  " + c("soft", "enter") + c("dim", " continue    ") + c("soft", "b") + c("dim", " back to choosing"));
+    return L;
+  }
+  L.push("  " + c("soft", "You picked ") + c("b", S.selected.size + " features")
+    + c("soft", ". Here is everything they will ever ask you for."));
+  L.push("");
+
+  const block = (title, list, tone) => {
+    if (!list.length) return;
+    L.push("  " + c(tone, title));
+    list.forEach(id => {
+      L.push("    " + c("dim", "• ") + c("sel", capLabel(id)) + c("dim", "  " + id));
+    });
+    L.push("");
+  };
+  block("REQUIRED, or the feature does not run", d.blocking.length ? d.blocking : [], "warn");
+  // Rendered as its own heading rather than folded into REQUIRED, because "you need both
+  // of these" and "you need either of these" are different sentences and printing them
+  // under one heading is how a person ends up pasting a key they did not need.
+  if (d.choices.length) {
+    L.push("  " + c("warn", "ONE OF EACH GROUP BELOW, never all of it"));
+    d.choices.forEach(g => {
+      L.push("    " + c("dim", "• ") + c("soft", "for " + g.label + ", any " + g.min + " of:"));
+      g.capabilities.forEach(id => {
+        L.push("        " + c("sel", capLabel(id)) + c("dim", "  " + id));
+      });
+    });
+    L.push("");
+  }
+  block("OPTIONAL, the feature runs either way and is better with it", d.degrading, "soft");
+
+  L.push("  " + c("ok", "NEVER ASKED FOR, because nothing you picked uses it"));
+  const neverNames = d.never.map(capLabel);
+  wrap(neverNames.join(", "), 68, 0).forEach(s => L.push("    " + c("dim", s)));
+  L.push("");
+  L.push("  " + rule(70));
+  L.push("  " + c("soft", "enter") + c("dim", " that is fine, start asking    ")
+    + c("soft", "b") + c("dim", " go back and change the picks"));
+  return L;
+};
+
+R.grantKey = function () {
+  const L = [];
+  L.push(c("ac", "  GRANT") + c("dim", "  1 of 3, the model key"));
+  L.push("");
+  L.push("  " + c("b", "Grux needs a model to think with."));
+  L.push("");
+  L.push(...wrap("Paste an Anthropic API key and Grux stores it in your Mac's Keychain and "
+    + "sends it nowhere else. Or point it at the Ollama already running on this machine "
+    + "and no key is needed at all.", 72, 2).map(s => c("soft", s)));
+  L.push("");
+  const opt = (n, label, hint, active) => "  " + (active ? c("cur", "❯ ") : "  ")
+    + c("b", "[" + n + "] ") + c(active ? "sel" : "soft", label) + c("dim", "  " + hint);
+  L.push(opt(1, "Paste an Anthropic key", "console.anthropic.com", S.cursor === 0));
+  L.push(opt(2, "Use the local model already running", "ollama, no key, no account", S.cursor === 1));
+  L.push(opt(3, "Skip for now", "Grux opens, and says so when it needs one", S.cursor === 2));
+  L.push("");
+  if (S.keyState === "pasted") {
+    L.push("  " + c("ok", "✓ Key accepted and written to the Keychain") + c("dim", "  service com.gruxai.grux"));
+    L.push("  " + c("dim", "  It was validated with one real request before it was stored."));
+  } else if (S.keyState === "local") {
+    L.push("  " + c("ok", "✓ Pointed at http://localhost:11434") + c("dim", "  3 models available"));
+  } else if (S.keyState === "skipped") {
+    L.push("  " + c("warn", "○ Skipped.") + c("dim", "  Offered again the first time a feature needs it."));
+  } else {
+    L.push("  " + c("dim", "Nothing chosen yet."));
+  }
+  L.push("");
+  L.push("  " + rule(70));
+  L.push("  " + c("soft", "1 2 3") + c("dim", " choose    ") + c("soft", "enter") + c("dim", " continue"));
+  return L;
+};
+
+R.grantPerms = function () {
+  const d = derived();
+  const L = [];
+  L.push(c("ac", "  GRANT") + c("dim", "  2 of 3, macOS permissions"));
+  L.push("");
+  if (!d.perms.length) {
+    L.push("  " + c("ok", "Nothing you picked needs a macOS permission."));
+    L.push("  " + c("dim", "  So none is requested, and macOS will not show you a single dialog."));
+    L.push("");
+    L.push("  " + rule(70));
+    L.push("  " + c("soft", "enter") + c("dim", " continue"));
+    return L;
+  }
+  // BLOCKER A MADE VISIBLE. macOS attributes a TCC request to the responsible process,
+  // so a prompt raised by this binary would grant the permission to the terminal, not to
+  // Grux. The CLI therefore never raises one: it hands the queue to the app, which asks
+  // under its own signature. The screen says so, because a person watching a dialog come
+  // from a different application than the one they are configuring deserves the reason.
+  L.push("  " + c("b", "The app asks for these, not this terminal."));
+  L.push(...wrap("macOS grants a permission to the program that asks for it. If this command "
+    + "asked, your terminal would end up holding the grant and Grux still would not have it. "
+    + "So Grux.app comes forward and asks, and you will see its name on every dialog.", 72, 2)
+    .map(s => c("soft", s)));
+  L.push("");
+  d.perms.forEach((id, i) => {
+    const done = S.granted.has(id), no = S.declined.has(id);
+    const mark = done ? c("ok", "✓") : no ? c("dim", "·") : (i === S.permIndex ? c("cur", "❯") : c("dim", "○"));
+    const req = d.permsBlocking.indexOf(id) !== -1;
+    const tag = req ? c("warn", " required") : c("dim", " optional");
+    L.push("  " + mark + " " + c(done ? "sel" : "soft", capLabel(id)) + tag
+      + (no ? c("dim", "  skipped, and that is a fine answer") : ""));
+  });
+  L.push("");
+  const cur = d.perms[S.permIndex];
+  if (cur) {
+    L.push("  " + rule(70));
+    L.push("  " + c("b", capLabel(cur)));
+    const why = cap(cur).why || cap(cur).remediation;
+    wrap(why, 70, 0).forEach(s => L.push("  " + c("soft", s)));
+    L.push("");
+    L.push("  " + c("dim", (S.permIndex + 1) + " of " + d.perms.length + ". None of these are required to continue."));
+    L.push("  " + c("soft", "a") + c("dim", " allow    ") + c("soft", "s") + c("dim", " skip    ")
+      + c("soft", "enter") + c("dim", " skip the rest"));
+  } else {
+    L.push("  " + rule(70));
+    L.push("  " + c("soft", "enter") + c("dim", " continue"));
+  }
+  return L;
+};
+
+R.grantCreds = function () {
+  const d = derived();
+  const L = [];
+  const creds = d.keys.concat(d.endpoints);
+  L.push(c("ac", "  GRANT") + c("dim", "  3 of 3, accounts"));
+  L.push("");
+  if (!creds.length) {
+    L.push("  " + c("ok", "Nothing you picked needs an account."));
+    L.push("");
+    L.push("  " + rule(70));
+    L.push("  " + c("soft", "enter") + c("dim", " continue"));
+    return L;
+  }
+  L.push("  " + c("soft", "Each of these needs a browser session and sometimes a card, so each one is"));
+  L.push("  " + c("soft", "yours rather than your agent's. Every one can wait."));
+  L.push("");
+  creds.forEach((id, i) => {
+    const done = S.granted.has(id), no = S.declined.has(id);
+    const mark = done ? c("ok", "✓") : no ? c("dim", "·") : (i === S.credIndex ? c("cur", "❯") : c("dim", "○"));
+    const req = d.blocking.indexOf(id) !== -1;
+    L.push("  " + mark + " " + c(done ? "sel" : "soft", capLabel(id))
+      + (req ? c("warn", " required") : c("dim", " optional")));
+  });
+  L.push("");
+  const cur = creds[S.credIndex];
+  if (cur) {
+    L.push("  " + rule(70));
+    L.push("  " + c("b", capLabel(cur)));
+    wrap(cap(cur).remediation, 70, 0).forEach(s => L.push("  " + c("soft", s)));
+    L.push("");
+    L.push("  " + c("ac", "> ") + c("caret", " ") + c("dim", "  paste it here, or:"));
+    L.push("  " + c("soft", "s") + c("dim", " later    ") + c("soft", "a") + c("dim", " pretend a paste, for this prototype    ")
+      + c("soft", "enter") + c("dim", " do the rest later"));
+  } else {
+    L.push("  " + rule(70));
+    L.push("  " + c("soft", "enter") + c("dim", " continue"));
+  }
+  return L;
+};
+
+// The handoff prompt, rendered in the SAME six beats as the flow that produced it.
+// AgentHandoff.swift already ships the split (what an agent may do, what it may not, the
+// four consent steps that are never delegated); this is that structure generalised so
+// every future command can emit one and a reader recognises the shape instantly.
+function handoffText() {
+  const d = derived();
+  const DELEGABLE = ["step.agent_cli_installed", "endpoint.ollama"];
+  const CONSENT = ["step.recording_consent_acknowledged", "step.capture_exclusions_confirmed",
+                   "step.corpus_sources_confirmed", "step.first_frame_reviewed"];
+  const outstanding = [...d.blocking, ...d.degrading]
+    .filter(id => !S.granted.has(id));
+  const yours = outstanding.filter(id => DELEGABLE.indexOf(id) !== -1);
+  const mineKeys = outstanding.filter(id => cap(id).kind === "key");
+  const minePerms = outstanding.filter(id => cap(id).kind === "perm");
+  const mineSteps = outstanding.filter(id => cap(id).kind === "step" && CONSENT.indexOf(id) === -1
+                                              && DELEGABLE.indexOf(id) === -1);
+  const decisions = outstanding.filter(id => CONSENT.indexOf(id) !== -1);
+
+  const T = [];
+  T.push("CONTEXT");
+  T.push("I am setting up Grux on my Mac. Grux is a native macOS assistant with no account");
+  T.push("and no server: every credential lives in my Keychain and every model call goes");
+  T.push("from this Mac straight to the provider I chose. I picked " + S.selected.size + " features and this");
+  T.push("is what is still outstanding.");
+  T.push("");
+  T.push("YOURS, please do these and tell me what changed");
+  if (yours.length) {
+    yours.forEach(id => T.push("  - " + capLabel(id) + ". " + cap(id).remediation));
+  } else {
+    T.push("  - Nothing. Everything an agent can do here is already done.");
+  }
+  T.push("");
+  T.push("MINE, please do not attempt these");
+  if (mineKeys.length) {
+    T.push("  Credentials, each needs a browser session and sometimes a card:");
+    mineKeys.forEach(id => T.push("    - " + capLabel(id)));
+  }
+  if (minePerms.length) {
+    T.push("  macOS permissions, which only I can grant and only to Grux.app:");
+    minePerms.forEach(id => T.push("    - " + capLabel(id)));
+  }
+  if (mineSteps.length) {
+    T.push("  Things that happen inside Grux. Not decisions, they just live in the app:");
+    mineSteps.forEach(id => T.push("    - " + capLabel(id)));
+  }
+  if (decisions.length) {
+    T.push("  Decisions that are mine. Please do not answer these for me:");
+    decisions.forEach(id => T.push("    - " + capLabel(id)));
+  }
+  T.push("");
+  T.push("NEVER");
+  T.push("  - Do not write an API key into a dotfile, a shell profile, or the repo.");
+  T.push("  - Do not tick a consent step on my behalf, in any file or any command.");
+  T.push("  - Do not install anything not named above.");
+  T.push("");
+  T.push("VERIFY");
+  T.push("  grux status --json");
+  T.push("  Every id above appears in that output with its own state. Read it rather than");
+  T.push("  assuming your install worked.");
+  T.push("");
+  T.push("REPORT");
+  T.push("  Tell me which ids moved to satisfied, which did not, and anything you hit that");
+  T.push("  is not in either list above.");
+  // ONE wrapper for the whole prompt rather than hand-wrapped prose plus a special case
+  // for the generated lines. This text is pasted into a terminal, so 80 columns is a real
+  // constraint and not a style preference, and the two ways of meeting it drift: the
+  // hardcoded paragraphs sat at 77 to 80 characters while the generated ones ran to 120,
+  // and only the generated ones looked wrong. selfTest asserts the invariant now, so the
+  // next person to edit a sentence here finds out immediately rather than in a screenshot.
+  return fitTerminal(T, 76);
+}
+
+R.handoff = function () {
+  const L = [];
+  L.push(c("ac", "  HAND OFF") + c("dim", "  the dull half, for the agent already in your terminal"));
+  L.push("");
+  L.push("  " + c("soft", "Every grux command can emit one of these and they all have the same six"));
+  L.push("  " + c("soft", "headings, so the tenth one you paste reads like the first."));
+  L.push("");
+  L.push("  " + rule(70));
+  handoffText().forEach(t => {
+    const heading = /^[A-Z][A-Z ,]+$/.test(t.split(",")[0]) && !t.startsWith(" ");
+    L.push("  " + (heading ? c("ac", t) : c("soft", t)));
+  });
+  L.push("  " + rule(70));
+  L.push("");
+  L.push("  " + (S.copied ? c("ok", "✓ Copied to the clipboard") : c("soft", "c") + c("dim", " copy it"))
+    + c("dim", "    ") + c("soft", "enter") + c("dim", " continue"));
+  return L;
+};
+
+R.prove = function () {
+  const d = derived();
+  const L = [];
+  const sat = [...d.blocking, ...d.degrading].filter(id => S.granted.has(id));
+  const open = [...d.blocking].filter(id => !S.granted.has(id));
+  L.push(c("ac", "  PROVE") + c("dim", "  what is true now, and how to check it without me"));
+  L.push("");
+  L.push("  " + c("b", "Setup finished.") + c("soft", " Grux is open behind this window."));
+  L.push("");
+  L.push("  " + c("ok", "✓ ") + c("sel", S.selected.size + " features on") + c("dim", ", " + (REGISTRY.features.length - S.selected.size) + " left off and asking for nothing"));
+  L.push("  " + c("ok", "✓ ") + c("sel", sat.length + " capabilities satisfied"));
+  L.push("  " + (open.length ? c("warn", "○ ") + c("sel", open.length + " still required") + c("dim", ", each one named in grux status")
+                             : c("ok", "✓ ") + c("sel", "nothing required is missing")));
+  L.push("  " + c("ok", "✓ ") + c("sel", d.never.length + " capabilities never requested") + c("dim", ", because nothing you picked uses them"));
+  L.push("");
+  L.push("  " + rule(70));
+  L.push("");
+  L.push("  " + c("dim", "Check any of that yourself, at any time:"));
+  L.push("");
+  L.push("  " + c("ok", "$ ") + c("b", "grux status") + c("dim", "              the table above, any time"));
+  L.push("  " + c("ok", "$ ") + c("b", "grux status --json") + c("dim", "       all 43 ids and their state, for an agent"));
+  L.push("  " + c("ok", "$ ") + c("b", "grux add <feature>") + c("dim", "       turn one on, and ask only for what it needs"));
+  L.push("  " + c("ok", "$ ") + c("b", "grux handoff") + c("dim", "             regenerate the prompt above"));
+  L.push("");
+  L.push("  " + rule(70));
+  L.push("  " + c("soft", "r") + c("dim", " run it again from the top"));
+  return L;
+};
+
+// ---- shell -----------------------------------------------------------------------------
+function frameId() { return FRAMES[S.frame].id; }
+
+function render() {
+  const beats = document.getElementById("beats");
+  const nowBeat = FRAMES[S.frame].beat;
+  const nowIdx = BEATS.indexOf(nowBeat);
+  beats.innerHTML = BEATS.map(function (b, i) {
+    const cls = i < nowIdx ? "beat done" : i === nowIdx ? "beat now" : "beat";
+    const mark = i === nowIdx ? '<span class="dotmark">● </span>' : "";
+    return '<span class="' + cls + '">' + mark + b
+      + (i < BEATS.length - 1 ? '<span class="sep">›</span>' : "") + "</span>";
+  }).join("");
+
+  document.getElementById("bartitle").textContent =
+    "grux setup" + (S.name ? "  |  " + S.name : "");
+  document.getElementById("screen").innerHTML = R[frameId()]().join("\n");
+
+  const foot = {
+    launch:     [["enter", "start"]],
+    look:       [["type", "your name"], ["enter", "continue"]],
+    choose:     [["↑ ↓", "move"], ["space", "toggle"], ["1 2 3", "preset"], ["a", "all"], ["n", "none"], ["enter", "see the cost"]],
+    cost:       [["enter", "accept"], ["b", "back"]],
+    grantKey:   [["1 2 3", "choose"], ["enter", "continue"]],
+    grantPerms: [["a", "allow"], ["s", "skip"], ["enter", "skip the rest"]],
+    grantCreds: [["a", "paste"], ["s", "later"], ["enter", "rest later"]],
+    handoff:    [["c", "copy"], ["enter", "continue"]],
+    prove:      [["r", "run again"]]
+  }[frameId()] || [];
+  document.getElementById("foot").innerHTML = foot
+    .map(f => "<span><kbd>" + esc(f[0]) + "</kbd> " + esc(f[1]) + "</span>").join("");
+}
+
+function goto(id) {
+  const i = FRAMES.findIndex(f => f.id === id);
+  if (i === -1) return false;
+  S.frame = i;
+  S.cursor = 0;
+  S.permIndex = 0;
+  S.credIndex = 0;
+  if (S.visited[S.visited.length - 1] !== id) S.visited.push(id);
+  render();
+  return true;
+}
+
+function next() { if (S.frame < FRAMES.length - 1) goto(FRAMES[S.frame + 1].id); }
+
+function applyPreset(n) {
+  const p = PRESETS[n];
+  if (!p) return;
+  S.selected.clear();
+  if (p.pick === "all") REGISTRY.features.forEach(f => S.selected.add(f.id));
+  else p.pick.forEach(id => { if (REGISTRY.features.some(f => f.id === id)) S.selected.add(id); });
+}
+
+// One entry point for every input, so the keyboard and the driver cannot diverge.
+// A prototype whose scripted path and whose human path are different code is proving
+// something nobody will ever use.
+function send(key) {
+  const id = frameId();
+  const rows = orderedFeatures();
+  const d = derived();
+
+  if (id === "launch") { if (key === "enter") next(); }
+
+  else if (id === "look") {
+    if (key === "enter") { S.name = S.typing.trim(); S.typing = ""; next(); }
+    else if (key === "backspace") S.typing = S.typing.slice(0, -1);
+    else if (key.length === 1) S.typing += key;
+  }
+
+  else if (id === "choose") {
+    if (key === "down") S.cursor = Math.min(rows.length - 1, S.cursor + 1);
+    else if (key === "up") S.cursor = Math.max(0, S.cursor - 1);
+    else if (key === "space") {
+      const f = rows[S.cursor].f;
+      if (S.selected.has(f.id)) S.selected.delete(f.id); else S.selected.add(f.id);
+    }
+    else if (key === "1" || key === "2" || key === "3") applyPreset(Number(key));
+    else if (key === "a") REGISTRY.features.forEach(f => S.selected.add(f.id));
+    else if (key === "n") S.selected.clear();
+    else if (key === "enter") next();
+  }
+
+  else if (id === "cost") {
+    if (key === "enter") next();
+    else if (key === "b") goto("choose");
+  }
+
+  else if (id === "grantKey") {
+    if (key === "1") { S.cursor = 0; S.keyState = "pasted"; S.granted.add("key.anthropic"); }
+    else if (key === "2") { S.cursor = 1; S.keyState = "local"; S.granted.add("endpoint.ollama"); }
+    else if (key === "3") { S.cursor = 2; S.keyState = "skipped"; }
+    else if (key === "enter") next();
+  }
+
+  else if (id === "grantPerms") {
+    const cur = d.perms[S.permIndex];
+    if (key === "a" && cur) { S.granted.add(cur); S.permIndex++; }
+    else if (key === "s" && cur) { S.declined.add(cur); S.permIndex++; }
+    else if (key === "enter") { if (S.permIndex < d.perms.length) S.permIndex = d.perms.length; else next(); }
+  }
+
+  else if (id === "grantCreds") {
+    const creds = d.keys.concat(d.endpoints);
+    const cur = creds[S.credIndex];
+    if (key === "a" && cur) { S.granted.add(cur); S.credIndex++; }
+    else if (key === "s" && cur) { S.declined.add(cur); S.credIndex++; }
+    else if (key === "enter") { if (S.credIndex < creds.length) S.credIndex = creds.length; else next(); }
+  }
+
+  else if (id === "handoff") {
+    if (key === "c") S.copied = true;
+    else if (key === "enter") next();
+  }
+
+  else if (id === "prove") {
+    if (key === "r") {
+      S.selected.clear(); S.granted.clear(); S.declined.clear();
+      S.name = ""; S.typing = ""; S.keyState = "none"; S.copied = false;
+      S.visited = [];
+      goto("launch");
+      return;
+    }
+  }
+
+  render();
+}
+
+const KEYMAP = {
+  ArrowDown: "down", ArrowUp: "up", ArrowRight: "right", ArrowLeft: "left",
+  Enter: "enter", " ": "space", Backspace: "backspace", Escape: "esc"
+};
+
+document.addEventListener("keydown", function (e) {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const mapped = KEYMAP[e.key] || (e.key.length === 1 ? e.key.toLowerCase() : null);
+  if (!mapped) return;
+  e.preventDefault();
+  send(mapped);
+});
+
+// ---- the driver ------------------------------------------------------------------------
+// THE POINT OF THE WHOLE FILE, and the reason it is not a set of mockups.
+//
+// A screenshot proves a frame was drawn. It cannot prove the arithmetic behind it, and the
+// arithmetic is the product claim. Everything the keyboard can do is reachable from here,
+// through the same send(), so a browser session can walk the flow and ASSERT what it sees
+// rather than a person squinting at it. Any future flow that ships with this shape is
+// checkable the same way on the day it is written.
+window.__grux = {
+  version: "proto-1",
+  beats: BEATS,
+  frames: FRAMES.map(f => f.id),
+  send: send,
+  type: function (text) { String(text).split("").forEach(ch => send(ch)); },
+  drive: function (keys) { keys.forEach(k => send(k)); return this.state(); },
+  goto: goto,
+  select: function (ids) { S.selected = new Set(ids); render(); return this.derived(); },
+  preset: function (n) { applyPreset(n); render(); return this.derived(); },
+  derived: derived,
+  registry: REGISTRY,
+  state: function () {
+    return {
+      frame: frameId(),
+      beat: FRAMES[S.frame].beat,
+      cursor: S.cursor,
+      name: S.name,
+      keyState: S.keyState,
+      selected: [...S.selected],
+      granted: [...S.granted],
+      declined: [...S.declined],
+      visited: S.visited.slice(),
+      counts: {
+        features: REGISTRY.features.length,
+        capabilities: Object.keys(REGISTRY.capabilities).length,
+        selected: S.selected.size
+      }
+    };
+  },
+  handoffText: function () { return handoffText().join("\n"); },
+  screenText: function () { return document.getElementById("screen").innerText; },
+
+  // THE PRACTICE, not a one-off. Every claim this flow makes is checked here, in the
+  // prototype, so anybody reviewing it gets a verdict instead of an impression and so the
+  // next flow built on this shape inherits the harness rather than a set of screenshots.
+  //
+  // It restores whatever was on screen when it started, because a check that leaves the
+  // demo in a strange state gets run once and then avoided.
+  selfTest: function () {
+    const before = { selected: [...S.selected], frame: frameId() };
+    const out = [];
+    const check = (name, cond, detail) => out.push({ name: name, pass: !!cond, detail: detail });
+    const ALL = Object.keys(REGISTRY.capabilities);
+    let d;
+
+    // 1. The website's sentence, as an assertion.
+    d = this.select([]);
+    check("pick nothing and it asks for nothing",
+      d.perms.length === 0 && d.keys.length === 0 && d.endpoints.length === 0 && d.steps.length === 0,
+      { perms: d.perms.length, keys: d.keys.length });
+    check("pick nothing and all " + ALL.length + " capabilities are never asked for",
+      d.never.length === ALL.length, d.never.length);
+
+    // 2. One feature must cost exactly its own declaration and not a byte more.
+    // `asked` folds the any-of groups back in. A capability inside a group is still
+    // something this feature can use, it is just not individually mandatory, so it belongs
+    // on this side of the partition even though it is deliberately absent from `blocking`.
+    const askedFor = dd => new Set([].concat(
+      dd.blocking, dd.degrading, ...dd.choices.map(g => g.capabilities)));
+
+    let bad = null;
+    REGISTRY.features.forEach(f => {
+      const dd = this.select([f.id]);
+      const own = new Set([].concat(f.requires, f.steps, f.optional, f.optionalSteps));
+      const asked = askedFor(dd);
+      if (asked.size !== own.size || [...asked].some(x => !own.has(x))) bad = f.id;
+    });
+    check("every feature alone costs exactly its own declaration, all "
+      + REGISTRY.features.length + " checked", bad === null, bad);
+
+    // 3. Partition, on every feature, both directions. This is the trust claim.
+    let split = null;
+    REGISTRY.features.forEach(f => {
+      const dd = this.select([f.id]);
+      const touched = askedFor(dd);
+      if (touched.size + dd.never.length !== ALL.length) split = f.id + " count";
+      if (dd.never.some(x => touched.has(x))) split = f.id + " overlap";
+    });
+    check("asked-for and never-asked-for partition the contract exactly", split === null, split);
+
+    // 3b. The over-asking guard. `chat` on wave-2 declares an Anthropic key AND Ollama in
+    // `requires` with a group of min 1, so reading `requires` alone would demand two
+    // credentials for a feature that needs one. No capability inside a group may ever be
+    // reported as individually required.
+    let overAsked = null;
+    REGISTRY.features.forEach(f => {
+      const dd = this.select([f.id]);
+      dd.choices.forEach(g => g.capabilities.forEach(cap => {
+        if (dd.blocking.indexOf(cap) !== -1) overAsked = f.id + " / " + cap;
+      }));
+    });
+    check("nothing inside an any-of group is reported as individually required",
+      overAsked === null, overAsked);
+
+    // 4. Required must beat optional wherever two features disagree.
+    d = this.select(REGISTRY.features.map(f => f.id));
+    check("nothing is reported optional while another feature requires it",
+      !d.blocking.some(x => d.degrading.indexOf(x) !== -1), null);
+
+    // 5. Permissions arrive in the app's own cheapest-to-refuse order.
+    const rank = c => { const i = REGISTRY.permissionOrder.indexOf(c); return i === -1 ? 999 : i; };
+    const ranks = d.perms.map(rank);
+    check("permissions follow the app's onboarding order",
+      ranks.every((v, i) => i === 0 || ranks[i - 1] <= v), d.perms);
+
+    // 6. Dead vocabulary. Not a prototype bug, a finding about the contract, which is why
+    //    it reports the ids rather than merely passing or failing.
+    //
+    // A BLUEPRINT DECLARES CAPABILITIES TOO, and the first version of this check did not
+    // know that. It reported 10 unclaimed ids; 8 of them were claimed all along by
+    // blueprints, which are units that require capabilities in their own right. Calling
+    // eight live capabilities dead is a worse failure than missing two, because it is the
+    // kind of finding somebody acts on.
+    const bpClaimed = new Set();
+    (REGISTRY.blueprints || []).forEach(b => b.capabilities.forEach(x => bpClaimed.add(x.id)));
+    const unclaimed = d.never.filter(x => !bpClaimed.has(x));
+    check("every capability is claimed by a feature or a blueprint",
+      unclaimed.length === 0,
+      { unclaimed: unclaimed,
+        claimedOnlyByBlueprint: d.never.filter(x => bpClaimed.has(x)),
+        blueprintsScanned: (REGISTRY.blueprints || []).length });
+
+    // 7. The prompt is pasted into a terminal, so 80 columns is a hard constraint.
+    let over = null;
+    [[], ["meetings"], ["chat", "mailbox"], REGISTRY.features.map(f => f.id)].forEach(sel => {
+      this.select(sel);
+      handoffText().forEach(l => { if (l.length > 80) over = { sel: sel.length, line: l }; });
+    });
+    check("the handoff prompt fits 80 columns at every selection size", over === null, over);
+
+    // 8. The flow has to be walkable to the end on the keys the footer advertises, or the
+    //    screenshots above are of screens a person cannot actually reach.
+    goto("launch");
+    S.selected.clear(); S.granted.clear(); S.declined.clear();
+    for (let i = 0; i < 400 && frameId() !== "prove"; i++) {
+      send(frameId() === "choose" ? (S.selected.size ? "enter" : "2") : "enter");
+    }
+    check("the whole flow is reachable with enter alone", frameId() === "prove", frameId());
+    check("every one of the " + FRAMES.length + " frames was visited on that walk",
+      FRAMES.every(f => S.visited.indexOf(f.id) !== -1),
+      FRAMES.filter(f => S.visited.indexOf(f.id) === -1).map(f => f.id));
+
+    // 9. The beat rail must never run backwards, or the six beats teach nothing.
+    const seq = S.visited.map(id => BEATS.indexOf(FRAMES.find(f => f.id === id).beat));
+    check("the six beats only ever move forward",
+      seq.every((v, i) => i === 0 || v >= seq[i - 1]), seq);
+
+    this.select(before.selected);
+    goto(before.frame);
+    const fail = out.filter(o => !o.pass);
+    return { pass: out.length - fail.length, fail: fail.length, results: out };
+  }
+};
+
+S.visited.push("launch");
+render();
+document.getElementById("screen").focus();
+
+})();
+</script>
+</body>
+</html>

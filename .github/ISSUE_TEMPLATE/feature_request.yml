@@ -1,0 +1,45 @@
+name: Feature request
+description: Suggest something Grux should do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: >
+        The problem, not the solution. What you are trying to get done and where
+        Grux currently gets in the way.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you have in mind
+      description: Optional. If you already have a shape in mind, describe it.
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Which part of the app
+      options:
+        - Chat
+        - Mail, Calendar or Contacts
+        - Meetings and transcription
+        - Local models
+        - Shell and tools
+        - Projects, tasks or schedules
+        - The phone companion
+        - Onboarding and setup
+        - Something else, or a new surface
+    validations:
+      required: true
+
+  - type: textarea
+    id: credentials
+    attributes:
+      label: Would this need a new credential or permission
+      description: >
+        If it would, say which. New requirements go through a dated amendment to
+        the setup contract, so knowing this up front shapes the whole change.
+        See CONTRIBUTING.md.

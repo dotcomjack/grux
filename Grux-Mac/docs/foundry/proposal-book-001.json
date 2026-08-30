@@ -1,0 +1,627 @@
+[
+ {
+  "createdAt": "2026-06-10T19:30:00Z",
+  "domain": "mac",
+  "estCostLabel": "$8 estimated",
+  "evidence": [
+   {
+    "detail": "blueprint section 02: eighteen flat sidebar entries collapse into Command / Workspace / Intelligence / Ambient groups with a pinned-favorites row",
+    "source": "manual"
+   },
+   {
+    "detail": "the owner: it just feels very v1, hard to prefer using Grux over claude code; sidebar overload named as a primary driver",
+    "source": "transcript"
+   },
+   {
+    "detail": "verify/app-main.png shows the flat 18-entry sidebar with no grouping",
+    "source": "screenshot"
+   }
+  ],
+  "expectedGain": 0.86,
+  "id": "E69A9252-F4F8-496E-8732-1BFDCBB1444F",
+  "lane": "uxPolish",
+  "readyPrompt": "You are Claude Code in the Grux worktree at ~/Code/.worktrees/grux-roadmap (Swift package at Grux-Mac, branch roadmap/phases-1-2-3-4-5, build green, full suite at baseline with 6 skips and 2 known pre-existing failures). Hard rules: native Swift and SwiftUI only, zero new SwiftPM dependencies, no em or en dashes anywhere in code or comments, dollar amounts written as $N and always labeled estimated (the engine is subscription powered), GruxTheme tokens and the tight house control scale for any UI, stores follow the @MainActor singleton + @Published + JSON-on-disk debounced scheduleSave pattern (see Sources/Grux/Foundry/ProposalStore.swift). Stay clear of the protected zones: the phone wire protocol files, the keychain store, and the security module are off limits at any tier. Verify with: cd Grux-Mac && swift build && swift test (suite stays at baseline). Conventional commits on specific files, never git add -A. Log progress to the dashboard with roadmap-dashboard/log_event.sh as you work.\n\nTASK: Restructure the sidebar in Sources/Grux/LaunchRootView.swift into four collapsible groups: Command (Chat, Agents, Projects, Tasks), Workspace (Mailbox, Calendar, Notes, Documents, Contacts, Schedules, Folders), Intelligence (Research, Skills, Compare, Local Models, Studio), Ambient (Meetings, Speakers, Usage). Add a pinned-favorites row floating above the groups with right-click pin and unpin via context menu. Persist collapse state and pins in a new @MainActor SidebarPrefsStore (JSON on disk, scheduleSave pattern). Extend OrbCommandPalette so it jumps to any tab plus recent items. Keep the existing Tab enum cases and the applyTab launch-arg seam working unchanged, including selfUpgrade. Self-Upgrade stays visible between groups as today. VERIFY: swift build, swift test at baseline, then launch the app and capture before and after screenshots of the sidebar via the --open-tab rail and screencapture. Attach the screenshots to the proposal timeline.\n\nWHEN DONE: log a done event via roadmap-dashboard/log_event.sh, list every file you touched, and report the test delta versus baseline. Estimated cost budget for this proposal: $8 estimated.",
+  "riskClass": "medium",
+  "status": "proposed",
+  "tierRequired": 0,
+  "title": "Sidebar IA: four collapsible groups plus pinned favorites",
+  "touchedPaths": [
+   "Grux-Mac/Sources/Grux/LaunchRootView.swift",
+   "Grux-Mac/Sources/Grux/Shell/OrbCommandPalette.swift",
+   "Grux-Mac/Sources/Grux/SidebarPrefsStore.swift"
+  ],
+  "updatedAt": "2026-06-10T19:30:00Z"
+ },
+ {
+  "createdAt": "2026-06-10T19:30:01Z",
+  "domain": "mac",
+  "estCostLabel": "$10 estimated",
+  "evidence": [
+   {
+    "detail": "blueprint section 02: every PIM tab reinvented the list + detail split; extract the scaffolds and stop hand-rolling",
+    "source": "manual"
+   },
+   {
+    "detail": "verify screenshots app-notes.png, app-documents.png, app-schedules.png, app-mailbox.png each show a hand-rolled list-detail split with inconsistent empty states and toolbars",
+    "source": "screenshot"
+   }
+  ],
+  "expectedGain": 0.78,
+  "id": "E17F6E76-BB2C-4129-9BA7-FE8FF48FCEE8",
+  "lane": "codeHealth",
+  "readyPrompt": "You are Claude Code in the Grux worktree at ~/Code/.worktrees/grux-roadmap (Swift package at Grux-Mac, branch roadmap/phases-1-2-3-4-5, build green, full suite at baseline with 6 skips and 2 known pre-existing failures). Hard rules: native Swift and SwiftUI only, zero new SwiftPM dependencies, no em or en dashes anywhere in code or comments, dollar amounts written as $N and always labeled estimated (the engine is subscription powered), GruxTheme tokens and the tight house control scale for any UI, stores follow the @MainActor singleton + @Published + JSON-on-disk debounced scheduleSave pattern (see Sources/Grux/Foundry/ProposalStore.swift). Stay clear of the protected zones: the phone wire protocol files, the keychain store, and the security module are off limits at any tier. Verify with: cd Grux-Mac && swift build && swift test (suite stays at baseline). Conventional commits on specific files, never git add -A. Log progress to the dashboard with roadmap-dashboard/log_event.sh as you work.\n\nTASK: Create Sources/Grux/DesignSystem/ with four primitives: GruxListDetailScaffold (the list plus detail split), GruxEmptyState (icon, one line, CTA, optional voice hint string like: say Grux, note that...), GruxToolbar, and GruxFormSection. Add a 4/8/12/16/24 spacing token set and a type scale on ThemeConfig. Then sweep Notes, Documents, Schedules, Contacts, and Mailbox tabs onto the primitives, removing the duplicated scaffolding. Do not change behavior, only structure and tokens. VERIFY: swift build, swift test at baseline, before and after screenshots of each swept tab via --open-tab plus screencapture, and a grep proving the old hand-rolled split code is gone from the swept tabs.\n\nWHEN DONE: log a done event via roadmap-dashboard/log_event.sh, list every file you touched, and report the test delta versus baseline. Estimated cost budget for this proposal: $10 estimated.",
+  "riskClass": "medium",
+  "status": "proposed",
+  "tierRequired": 0,
+  "title": "Design primitives: extract GruxListDetailScaffold, GruxEmptyState, GruxToolbar, GruxFormSection and sweep the PIM tabs",
+  "touchedPaths": [
+   "Grux-Mac/Sources/Grux/DesignSystem/",
+   "Grux-Mac/Sources/Grux/ThemeConfig.swift"
+  ],
+  "updatedAt": "2026-06-10T19:30:01Z"
+ },
+ {
+  "createdAt": "2026-06-10T19:30:02Z",
+  "domain": "mac",
+  "estCostLabel": "$7 estimated",
+  "evidence": [
+   {
+    "detail": "blueprint section 02: General, Voice & Ambient, Models, Appearance, Data & Security; Models absorbs api, offline, endpoints, presets, MCP; Data & Security absorbs backup, security, upgrades",
+    "source": "manual"
+   },
+   {
+    "detail": "verify/app-settings.png shows an 11-tab settings bar: Focus Terminal Ambient Appearance Voice Presets Upgrades Backup Model-and-API Security About",
+    "source": "screenshot"
+   },
+   {
+    "detail": "verify results 2026-06-10: settings sub-tab automation initially skipped because the TabView had no programmatic selection binding; the --open-settings-tab seam shipped in f2f689e and must keep working",
+    "source": "swarm"
+   }
+  ],
+  "expectedGain": 0.75,
+  "id": "BEE418F6-0D09-460D-A3D0-11F3738B9DDC",
+  "lane": "uxPolish",
+  "readyPrompt": "You are Claude Code in the Grux worktree at ~/Code/.worktrees/grux-roadmap (Swift package at Grux-Mac, branch roadmap/phases-1-2-3-4-5, build green, full suite at baseline with 6 skips and 2 known pre-existing failures). Hard rules: native Swift and SwiftUI only, zero new SwiftPM dependencies, no em or en dashes anywhere in code or comments, dollar amounts written as $N and always labeled estimated (the engine is subscription powered), GruxTheme tokens and the tight house control scale for any UI, stores follow the @MainActor singleton + @Published + JSON-on-disk debounced scheduleSave pattern (see Sources/Grux/Foundry/ProposalStore.swift). Stay clear of the protected zones: the phone wire protocol files, the keychain store, and the security module are off limits at any tier. Verify with: cd Grux-Mac && swift build && swift test (suite stays at baseline). Conventional commits on specific files, never git add -A. Log progress to the dashboard with roadmap-dashboard/log_event.sh as you work.\n\nTASK: Consolidate SettingsView from 12 panes to 5: General, Voice & Ambient, Models, Appearance, Data & Security. Models absorbs the api, offline, endpoints, presets, and MCP panes as sections. Data & Security absorbs backup, security, and upgrades panes as sections. Add a filter field that searches setting labels across all panes and jumps to the match. Preserve the --open-settings-tab launch-arg deep links from f2f689e by mapping old tag names to the new panes compatibly. Reuse GruxFormSection if the primitives proposal landed first, otherwise match existing section style. VERIFY: swift build, swift test at baseline, then exercise --open-settings-tab for every legacy tag and screenshot each of the 5 panes.\n\nWHEN DONE: log a done event via roadmap-dashboard/log_event.sh, list every file you touched, and report the test delta versus baseline. Estimated cost budget for this proposal: $7 estimated.",
+  "riskClass": "medium",
+  "status": "proposed",
+  "tierRequired": 0,
+  "title": "Settings consolidation: 12 tabs down to 5 with a search filter",
+  "touchedPaths": [
+   "Grux-Mac/Sources/Grux/SettingsView.swift"
+  ],
+  "updatedAt": "2026-06-10T19:30:02Z"
+ },
+ {
+  "createdAt": "2026-06-10T19:30:03Z",
+  "domain": "mac",
+  "estCostLabel": "$4 estimated",
+  "evidence": [
+   {
+    "detail": "blueprint section 02: one motion spec; duration and curve tokens on ThemeConfig, orb-state to glow-hue mapping documented as a single table, Stage entrances standardized",
+    "source": "manual"
+   },
+   {
+    "detail": "ecf7723 wired reduceMotion into orb, glow, and stage animations; durations and curves remain hand-tuned per call site",
+    "source": "swarm"
+   }
+  ],
+  "expectedGain": 0.6,
+  "id": "D706A8EF-DCDF-4C8D-9791-48D629D916FB",
+  "lane": "uxPolish",
+  "readyPrompt": "You are Claude Code in the Grux worktree at ~/Code/.worktrees/grux-roadmap (Swift package at Grux-Mac, branch roadmap/phases-1-2-3-4-5, build green, full suite at baseline with 6 skips and 2 known pre-existing failures). Hard rules: native Swift and SwiftUI only, zero new SwiftPM dependencies, no em or en dashes anywhere in code or comments, dollar amounts written as $N and always labeled estimated (the engine is subscription powered), GruxTheme tokens and the tight house control scale for any UI, stores follow the @MainActor singleton + @Published + JSON-on-disk debounced scheduleSave pattern (see Sources/Grux/Foundry/ProposalStore.swift). Stay clear of the protected zones: the phone wire protocol files, the keychain store, and the security module are off limits at any tier. Verify with: cd Grux-Mac && swift build && swift test (suite stays at baseline). Conventional commits on specific files, never git add -A. Log progress to the dashboard with roadmap-dashboard/log_event.sh as you work.\n\nTASK: Add motion tokens to ThemeConfig: a small set of named durations and curves (fast, standard, gentle, dramatic). Document the orb-state to glow-hue mapping as a single table in one source file with a doc comment. Standardize Stage entrance animations and HUD typography onto the type scale. Sweep the orb, glow, AmbientHUD, and Stage call sites onto the tokens, honoring the existing reduceMotion wiring from ecf7723. No behavioral change when reduceMotion is on. VERIFY: swift build, swift test at baseline, grep that no animation call site in the shell files uses a raw numeric duration outside the token set.\n\nWHEN DONE: log a done event via roadmap-dashboard/log_event.sh, list every file you touched, and report the test delta versus baseline. Estimated cost budget for this proposal: $4 estimated.",
+  "riskClass": "low",
+  "status": "proposed",
+  "tierRequired": 0,
+  "title": "Shell motion spec: duration and curve tokens for orb, glow, HUD, and Stage",
+  "touchedPaths": [
+   "Grux-Mac/Sources/Grux/ThemeConfig.swift",
+   "Grux-Mac/Sources/Grux/Shell/"
+  ],
+  "updatedAt": "2026-06-10T19:30:03Z"
+ },
+ {
+  "createdAt": "2026-06-10T19:30:04Z",
+  "domain": "mac",
+  "estCostLabel": "$9 estimated",
+  "evidence": [
+   {
+    "detail": "blueprint section 03: a slim persistent bar with live swarm jobs as phase dots, an estimated-cost ticker, click-through to the job, orb badge count, mirrored to the phone",
+    "source": "manual"
+   },
+   {
+    "detail": "roadmap events.ndjson shows 354 agent events across the mission with no in-app surface to watch them; the owner tracked progress via an external HTML dashboard",
+    "source": "swarm"
+   },
+   {
+    "detail": "you never dig for what your agents are doing again is the stated acceptance bar",
+    "source": "transcript"
+   }
+  ],
+  "expectedGain": 0.84,
+  "id": "B50ED410-BD3B-40EC-81D3-7BFB8C1DCDC1",
+  "lane": "capability",
+  "readyPrompt": "You are Claude Code in the Grux worktree at ~/Code/.worktrees/grux-roadmap (Swift package at Grux-Mac, branch roadmap/phases-1-2-3-4-5, build green, full suite at baseline with 6 skips and 2 known pre-existing failures). Hard rules: native Swift and SwiftUI only, zero new SwiftPM dependencies, no em or en dashes anywhere in code or comments, dollar amounts written as $N and always labeled estimated (the engine is subscription powered), GruxTheme tokens and the tight house control scale for any UI, stores follow the @MainActor singleton + @Published + JSON-on-disk debounced scheduleSave pattern (see Sources/Grux/Foundry/ProposalStore.swift). Stay clear of the protected zones: the phone wire protocol files, the keychain store, and the security module are off limits at any tier. Verify with: cd Grux-Mac && swift build && swift test (suite stays at baseline). Conventional commits on specific files, never git add -A. Log progress to the dashboard with roadmap-dashboard/log_event.sh as you work.\n\nTASK: Build an Activity Strip: a slim persistent bar across the bottom of the main window showing live swarm jobs from SwarmOrchestrator and AgentStore as phase dots (sense, build, verify, land states as colored dots), with an estimated-cost ticker (always say $N estimated) and click-through to the job detail. Add a badge count to the orb. Mirror a compact strip state to GruxPhone over the existing SurfaceSync envelope, following its version-negotiation pattern, without touching the wire protocol files themselves: use the established surface payload extension seam. VERIFY: swift build, swift test at baseline plus new tests for strip state derivation from mock job records; screenshot the strip with a fake running job injected via the test seam.\n\nWHEN DONE: log a done event via roadmap-dashboard/log_event.sh, list every file you touched, and report the test delta versus baseline. Estimated cost budget for this proposal: $9 estimated.",
+  "riskClass": "medium",
+  "status": "proposed",
+  "tierRequired": 0,
+  "title": "Activity Strip: persistent swarm job bar with phase dots and estimated-cost ticker",
+  "touchedPaths": [
+   "Grux-Mac/Sources/Grux/Foundry/",
+   "Grux-Mac/Sources/Grux/Shell/",
+   "Grux-Mac/Sources/Grux/Agents/"
+  ],
+  "updatedAt": "2026-06-10T19:30:04Z"
+ },
+ {
+  "createdAt": "2026-06-10T19:30:05Z",
+  "domain": "mac",
+  "estCostLabel": "$6 estimated",
+  "evidence": [
+   {
+    "detail": "blueprint section 03: every notification routes through a priority classifier; interrupt speaks plus banner, batch folds into the hourly or daily recap, silent logs only; one matrix screen plus quiet hours",
+    "source": "manual"
+   },
+   {
+    "detail": "notification noise named in the CX wave as a core v1-feel complaint",
+    "source": "transcript"
+   }
+  ],
+  "expectedGain": 0.72,
+  "id": "49785218-4D37-48F8-9052-6D6B3C25705E",
+  "lane": "capability",
+  "readyPrompt": "You are Claude Code in the Grux worktree at ~/Code/.worktrees/grux-roadmap (Swift package at Grux-Mac, branch roadmap/phases-1-2-3-4-5, build green, full suite at baseline with 6 skips and 2 known pre-existing failures). Hard rules: native Swift and SwiftUI only, zero new SwiftPM dependencies, no em or en dashes anywhere in code or comments, dollar amounts written as $N and always labeled estimated (the engine is subscription powered), GruxTheme tokens and the tight house control scale for any UI, stores follow the @MainActor singleton + @Published + JSON-on-disk debounced scheduleSave pattern (see Sources/Grux/Foundry/ProposalStore.swift). Stay clear of the protected zones: the phone wire protocol files, the keychain store, and the security module are off limits at any tier. Verify with: cd Grux-Mac && swift build && swift test (suite stays at baseline). Conventional commits on specific files, never git add -A. Log progress to the dashboard with roadmap-dashboard/log_event.sh as you work.\n\nTASK: Route NotificationManager through a priority classifier: a single cheap Haiku call (via the existing ClaudeClient seam, model claude-haiku) classifies each notification as interrupt (speak plus banner), batch (folded into the hourly or daily recap), or silent (log only). Cache per-category decisions so repeat categories skip the model call. Add a matrix settings screen to tune category routing and quiet hours. Fall back to the current behavior when offline or when the classifier errors. VERIFY: swift build, swift test at baseline plus new tests with a stubbed classifier covering all three routes, quiet hours, and offline fallback.\n\nWHEN DONE: log a done event via roadmap-dashboard/log_event.sh, list every file you touched, and report the test delta versus baseline. Estimated cost budget for this proposal: $6 estimated.",
+  "riskClass": "medium",
+  "status": "proposed",
+  "tierRequired": 0,
+  "title": "Notification triage: interrupt, batch, or silent via a Haiku priority classifier",
+  "touchedPaths": [
+   "Grux-Mac/Sources/Grux/Notifications/",
+   "Grux-Mac/Sources/Grux/SettingsView.swift"
+  ],
+  "updatedAt": "2026-06-10T19:30:05Z"
+ },
+ {
+  "createdAt": "2026-06-10T19:30:06Z",
+  "domain": "mac",
+  "estCostLabel": "$8 estimated",
+  "evidence": [
+   {
+    "detail": "blueprint section 03: the tools already exist (calendar, notes, email, documents); wire IntentClassifier routes plus a confirmation card in the HUD with spoken acknowledgment, end to end, phone included",
+    "source": "manual"
+   },
+   {
+    "detail": "add that to my calendar just works is the stated acceptance bar",
+    "source": "transcript"
+   }
+  ],
+  "expectedGain": 0.8,
+  "id": "C1C50A40-994A-448C-8C37-1D860AAE8944",
+  "lane": "capability",
+  "readyPrompt": "You are Claude Code in the Grux worktree at ~/Code/.worktrees/grux-roadmap (Swift package at Grux-Mac, branch roadmap/phases-1-2-3-4-5, build green, full suite at baseline with 6 skips and 2 known pre-existing failures). Hard rules: native Swift and SwiftUI only, zero new SwiftPM dependencies, no em or en dashes anywhere in code or comments, dollar amounts written as $N and always labeled estimated (the engine is subscription powered), GruxTheme tokens and the tight house control scale for any UI, stores follow the @MainActor singleton + @Published + JSON-on-disk debounced scheduleSave pattern (see Sources/Grux/Foundry/ProposalStore.swift). Stay clear of the protected zones: the phone wire protocol files, the keychain store, and the security module are off limits at any tier. Verify with: cd Grux-Mac && swift build && swift test (suite stays at baseline). Conventional commits on specific files, never git add -A. Log progress to the dashboard with roadmap-dashboard/log_event.sh as you work.\n\nTASK: Wire IntentClassifier routes for add-to-calendar, take-a-note, draft-email, and find-document into the existing calendar, notes, email, and documents tools. On a recognized intent, show a confirmation card in the AmbientHUD with the parsed fields and speak a short acknowledgment; confirm executes the tool, cancel discards. Mirror the confirmation card to GruxPhone via the established surface payload seam. VERIFY: swift build, swift test at baseline plus new tests for intent parsing into tool arguments with fixture utterances; live voice test where possible and screenshot of the HUD confirmation card.\n\nWHEN DONE: log a done event via roadmap-dashboard/log_event.sh, list every file you touched, and report the test delta versus baseline. Estimated cost budget for this proposal: $8 estimated.",
+  "riskClass": "medium",
+  "status": "proposed",
+  "tierRequired": 0,
+  "title": "Voice-first PIM: add to calendar, take a note, draft an email by voice with HUD confirmation",
+  "touchedPaths": [
+   "Grux-Mac/Sources/Grux/Voice/",
+   "Grux-Mac/Sources/Grux/Shell/"
+  ],
+  "updatedAt": "2026-06-10T19:30:06Z"
+ },
+ {
+  "createdAt": "2026-06-10T19:30:07Z",
+  "domain": "mac",
+  "estCostLabel": "$12 estimated",
+  "evidence": [
+   {
+    "detail": "blueprint section 03: the UX lane screenshots every tab, critiques against the design tokens, and files the top twenty paper cuts; fixing them is how the UX lane earns Tier 1",
+    "source": "manual"
+   },
+   {
+    "detail": "UXAuditSource shipped in Phase A and can drive --open-tab plus screencapture plus vision today",
+    "source": "screenshot"
+   }
+  ],
+  "expectedGain": 0.7,
+  "id": "C4F47B8C-8DD0-4BAC-82B6-36E275919E6B",
+  "lane": "uxPolish",
+  "readyPrompt": "You are Claude Code in the Grux worktree at ~/Code/.worktrees/grux-roadmap (Swift package at Grux-Mac, branch roadmap/phases-1-2-3-4-5, build green, full suite at baseline with 6 skips and 2 known pre-existing failures). Hard rules: native Swift and SwiftUI only, zero new SwiftPM dependencies, no em or en dashes anywhere in code or comments, dollar amounts written as $N and always labeled estimated (the engine is subscription powered), GruxTheme tokens and the tight house control scale for any UI, stores follow the @MainActor singleton + @Published + JSON-on-disk debounced scheduleSave pattern (see Sources/Grux/Foundry/ProposalStore.swift). Stay clear of the protected zones: the phone wire protocol files, the keychain store, and the security module are off limits at any tier. Verify with: cd Grux-Mac && swift build && swift test (suite stays at baseline). Conventional commits on specific files, never git add -A. Log progress to the dashboard with roadmap-dashboard/log_event.sh as you work.\n\nTASK: Run the UX audit rail: drive every sidebar tab via the --open-tab launch arg, capture a screenshot per tab, and critique each against the GruxTheme tokens and the tight house control scale (spacing, type scale, control sizes, empty states, alignment). File the top 20 paper cuts as individual small fixes and fix them in this pass: each fix is its own conventional commit touching only the files it names. No behavioral changes, only polish. VERIFY: swift build, swift test at baseline, and an after screenshot per touched tab attached alongside the before shot.\n\nWHEN DONE: log a done event via roadmap-dashboard/log_event.sh, list every file you touched, and report the test delta versus baseline. Estimated cost budget for this proposal: $12 estimated.",
+  "riskClass": "low",
+  "status": "proposed",
+  "tierRequired": 0,
+  "title": "The v1-feel sweep: screenshot every tab and fix the top 20 paper cuts",
+  "touchedPaths": [
+   "Grux-Mac/Sources/Grux/"
+  ],
+  "updatedAt": "2026-06-10T19:30:07Z"
+ },
+ {
+  "createdAt": "2026-06-10T19:30:08Z",
+  "domain": "mac",
+  "estCostLabel": "$5 estimated",
+  "evidence": [
+   {
+    "detail": "~/Library/Application Support/Grux/semantic_memory.json is 40MB on disk and is encoded with prettyPrinted plus sortedKeys on every save",
+    "source": "fs-audit"
+   },
+   {
+    "detail": "c7f380c added a SemanticMemory flush on app termination, so the full 40MB encode now sits on the quit path",
+    "source": "swarm"
+   },
+   {
+    "detail": "a slow termination flush risks SIGKILL mid-write during logout or shutdown, exactly the dataloss class the flush was added to prevent",
+    "source": "crash"
+   }
+  ],
+  "expectedGain": 0.74,
+  "id": "895F39E7-4144-4AD2-9B7E-D1B024B3E953",
+  "lane": "performance",
+  "readyPrompt": "You are Claude Code in the Grux worktree at ~/Code/.worktrees/grux-roadmap (Swift package at Grux-Mac, branch roadmap/phases-1-2-3-4-5, build green, full suite at baseline with 6 skips and 2 known pre-existing failures). Hard rules: native Swift and SwiftUI only, zero new SwiftPM dependencies, no em or en dashes anywhere in code or comments, dollar amounts written as $N and always labeled estimated (the engine is subscription powered), GruxTheme tokens and the tight house control scale for any UI, stores follow the @MainActor singleton + @Published + JSON-on-disk debounced scheduleSave pattern (see Sources/Grux/Foundry/ProposalStore.swift). Stay clear of the protected zones: the phone wire protocol files, the keychain store, and the security module are off limits at any tier. Verify with: cd Grux-Mac && swift build && swift test (suite stays at baseline). Conventional commits on specific files, never git add -A. Log progress to the dashboard with roadmap-dashboard/log_event.sh as you work.\n\nTASK: Stop rewriting the entire 40MB semantic memory as pretty-printed JSON on every save. Steps: (1) give SemanticMemory its own compact encoder (no prettyPrinted; keep sortedKeys only if a digest depends on it, check e15f030 first), (2) split the store into an append-friendly layout: a compact snapshot file plus an NDJSON append journal that is folded into the snapshot on load or on a size threshold, (3) keep the public SemanticMemory API unchanged so call sites do not move, (4) migrate the existing semantic_memory.json transparently on first load and keep a one-time .pre-journal backup. VERIFY: swift build, swift test at baseline plus new round-trip tests covering migration, journal fold, and crash-mid-journal recovery (truncated last line must not lose the snapshot). Measure and report before and after flush time in the PR notes.\n\nWHEN DONE: log a done event via roadmap-dashboard/log_event.sh, list every file you touched, and report the test delta versus baseline. Estimated cost budget for this proposal: $5 estimated.",
+  "riskClass": "medium",
+  "status": "proposed",
+  "tierRequired": 0,
+  "title": "Semantic memory store: 40MB pretty-printed JSON rewritten wholesale on every flush",
+  "touchedPaths": [
+   "Grux-Mac/Sources/Grux/Memory/"
+  ],
+  "updatedAt": "2026-06-10T19:30:08Z"
+ },
+ {
+  "createdAt": "2026-06-10T19:30:09Z",
+  "domain": "mac",
+  "estCostLabel": "$3 estimated",
+  "evidence": [
+   {
+    "detail": "integrator report: 634 tests executed, 2 failures are exactly the pre-existing baseline failures SemanticMemoryKindsFilterTests.test_retrievedAsSystemBlock_honorsKindsFilter and SwarmAgentCoreTests.testScaffoldEmptyWhenAllStripped",
+    "source": "swarm"
+   },
+   {
+    "detail": "hard rail: full test suite at baseline before any install; a baseline that contains failures weakens every future Foundry verify gate",
+    "source": "manual"
+   }
+  ],
+  "expectedGain": 0.66,
+  "id": "4DF50B24-8561-42FA-A45F-125D480A9ED7",
+  "lane": "codeHealth",
+  "readyPrompt": "You are Claude Code in the Grux worktree at ~/Code/.worktrees/grux-roadmap (Swift package at Grux-Mac, branch roadmap/phases-1-2-3-4-5, build green, full suite at baseline with 6 skips and 2 known pre-existing failures). Hard rules: native Swift and SwiftUI only, zero new SwiftPM dependencies, no em or en dashes anywhere in code or comments, dollar amounts written as $N and always labeled estimated (the engine is subscription powered), GruxTheme tokens and the tight house control scale for any UI, stores follow the @MainActor singleton + @Published + JSON-on-disk debounced scheduleSave pattern (see Sources/Grux/Foundry/ProposalStore.swift). Stay clear of the protected zones: the phone wire protocol files, the keychain store, and the security module are off limits at any tier. Verify with: cd Grux-Mac && swift build && swift test (suite stays at baseline). Conventional commits on specific files, never git add -A. Log progress to the dashboard with roadmap-dashboard/log_event.sh as you work.\n\nTASK: Root-cause and fix the two pre-existing failures: SemanticMemoryKindsFilterTests.test_retrievedAsSystemBlock_honorsKindsFilter and SwarmAgentCoreTests.testScaffoldEmptyWhenAllStripped. Read each test, decide whether the test or the product code is wrong, and fix the right side: do not delete or skip the tests, and do not loosen assertions to pass. If a fix requires touching a protected zone, stop and file a follow-up proposal instead. VERIFY: swift build, then swift test twice in a row showing 0 failures both runs; record the new green baseline number in the commit body.\n\nWHEN DONE: log a done event via roadmap-dashboard/log_event.sh, list every file you touched, and report the test delta versus baseline. Estimated cost budget for this proposal: $3 estimated.",
+  "riskClass": "low",
+  "status": "proposed",
+  "tierRequired": 0,
+  "title": "Fix the two pre-existing baseline test failures so the verify gate is trustworthy",
+  "touchedPaths": [
+   "Grux-Mac/Tests/GruxTests/",
+   "Grux-Mac/Sources/Grux/Memory/",
+   "Grux-Mac/Sources/Grux/Agents/"
+  ],
+  "updatedAt": "2026-06-10T19:30:09Z"
+ },
+ {
+  "createdAt": "2026-06-10T19:30:10Z",
+  "domain": "mac",
+  "estCostLabel": "$6 estimated",
+  "evidence": [
+   {
+    "detail": "events.ndjson 2026-06-10T00:03: orchestrator paused Phase 5 on a Claude session limit and queued a manual resume for the 10:40pm reset",
+    "source": "swarm"
+   },
+   {
+    "detail": "blueprint cadence section: the governor watches session limits (the AccountSwitcher seam) and yields instantly",
+    "source": "manual"
+   }
+  ],
+  "expectedGain": 0.68,
+  "id": "7CEDA617-A817-4868-AA17-68DC3D897A7A",
+  "lane": "reliability",
+  "readyPrompt": "You are Claude Code in the Grux worktree at ~/Code/.worktrees/grux-roadmap (Swift package at Grux-Mac, branch roadmap/phases-1-2-3-4-5, build green, full suite at baseline with 6 skips and 2 known pre-existing failures). Hard rules: native Swift and SwiftUI only, zero new SwiftPM dependencies, no em or en dashes anywhere in code or comments, dollar amounts written as $N and always labeled estimated (the engine is subscription powered), GruxTheme tokens and the tight house control scale for any UI, stores follow the @MainActor singleton + @Published + JSON-on-disk debounced scheduleSave pattern (see Sources/Grux/Foundry/ProposalStore.swift). Stay clear of the protected zones: the phone wire protocol files, the keychain store, and the security module are off limits at any tier. Verify with: cd Grux-Mac && swift build && swift test (suite stays at baseline). Conventional commits on specific files, never git add -A. Log progress to the dashboard with roadmap-dashboard/log_event.sh as you work.\n\nTASK: Make swarm runs survive session limits without a human. In SwarmOrchestrator and the Foundry worker path: (1) detect the rate-limit or session-cap response shape from the CLI or API stream, (2) checkpoint the in-flight job state (completed steps, pending steps, partial outputs) into the job record on disk, (3) schedule an automatic resume at the stated reset time plus jitter, (4) surface a paused-until badge in the job UI and the morning recap, (5) consult the AccountSwitcher seam before resuming. VERIFY: swift build, swift test at baseline plus new tests that simulate a session-limit event mid-job and assert checkpoint, scheduled resume, and idempotent continuation.\n\nWHEN DONE: log a done event via roadmap-dashboard/log_event.sh, list every file you touched, and report the test delta versus baseline. Estimated cost budget for this proposal: $6 estimated.",
+  "riskClass": "medium",
+  "status": "proposed",
+  "tierRequired": 0,
+  "title": "Swarm session-limit resilience: checkpoint and auto-resume when the Claude session cap hits",
+  "touchedPaths": [
+   "Grux-Mac/Sources/Grux/Agents/",
+   "Grux-Mac/Sources/Grux/Foundry/"
+  ],
+  "updatedAt": "2026-06-10T19:30:10Z"
+ },
+ {
+  "createdAt": "2026-06-10T19:30:11Z",
+  "domain": "mac",
+  "estCostLabel": "$3 estimated",
+  "evidence": [
+   {
+    "detail": "~/Library/Application Support/Grux/fs-audit.log last entry is 2026-05-08T14:39; the audit writer has been silent for a month while the app ran daily",
+    "source": "fs-audit"
+   },
+   {
+    "detail": "SignalHarvester ships an fs-audit source that will harvest stale data forever without noticing",
+    "source": "swarm"
+   }
+  ],
+  "expectedGain": 0.58,
+  "id": "67DCDB81-E20D-4DB7-AEA0-A773F47FD1D3",
+  "lane": "reliability",
+  "readyPrompt": "You are Claude Code in the Grux worktree at ~/Code/.worktrees/grux-roadmap (Swift package at Grux-Mac, branch roadmap/phases-1-2-3-4-5, build green, full suite at baseline with 6 skips and 2 known pre-existing failures). Hard rules: native Swift and SwiftUI only, zero new SwiftPM dependencies, no em or en dashes anywhere in code or comments, dollar amounts written as $N and always labeled estimated (the engine is subscription powered), GruxTheme tokens and the tight house control scale for any UI, stores follow the @MainActor singleton + @Published + JSON-on-disk debounced scheduleSave pattern (see Sources/Grux/Foundry/ProposalStore.swift). Stay clear of the protected zones: the phone wire protocol files, the keychain store, and the security module are off limits at any tier. Verify with: cd Grux-Mac && swift build && swift test (suite stays at baseline). Conventional commits on specific files, never git add -A. Log progress to the dashboard with roadmap-dashboard/log_event.sh as you work.\n\nTASK: Two fixes. (1) Find why fs-audit.log stopped receiving entries after 2026-05-08 (likely the audit write path was dropped or redirected in a refactor of the filesystem tool) and restore writes with a small retention cap. (2) Teach the fs-audit and telemetry signal sources in Sources/Grux/Foundry/Signals/ a freshness guard: when a source file's newest entry is older than 7 days, emit a stale-source signal instead of silently harvesting old data. VERIFY: swift build, swift test at baseline plus new tests for the freshness guard (fresh file, stale file, missing file) and a manual check that a new fs_read appends a line to fs-audit.log.\n\nWHEN DONE: log a done event via roadmap-dashboard/log_event.sh, list every file you touched, and report the test delta versus baseline. Estimated cost budget for this proposal: $3 estimated.",
+  "riskClass": "low",
+  "status": "proposed",
+  "tierRequired": 0,
+  "title": "fs-audit signal source reads a dead log: writes stopped 2026-05-08",
+  "touchedPaths": [
+   "Grux-Mac/Sources/Grux/Foundry/Signals/",
+   "Grux-Mac/Sources/Grux/Tools/"
+  ],
+  "updatedAt": "2026-06-10T19:30:11Z"
+ },
+ {
+  "createdAt": "2026-06-10T19:30:12Z",
+  "domain": "mac",
+  "estCostLabel": "$3 estimated",
+  "evidence": [
+   {
+    "detail": "live verify 2026-06-10: Strategy A gets HTTP 200 plus a 0-byte timedtext body for ALL videos due to YouTube POT-token enforcement; every transcript now rides the yt-dlp fallback",
+    "source": "swarm"
+   },
+   {
+    "detail": "f6e7b1f salvages the json3 file on nonzero yt-dlp exit and drops the auto-translated track glob; the primary path is still dead weight and yt-dlp is an unmanaged external dependency",
+    "source": "swarm"
+   }
+  ],
+  "expectedGain": 0.56,
+  "id": "DE7BCDEB-F22B-4F6A-B6A7-0D682235E35C",
+  "lane": "reliability",
+  "readyPrompt": "You are Claude Code in the Grux worktree at ~/Code/.worktrees/grux-roadmap (Swift package at Grux-Mac, branch roadmap/phases-1-2-3-4-5, build green, full suite at baseline with 6 skips and 2 known pre-existing failures). Hard rules: native Swift and SwiftUI only, zero new SwiftPM dependencies, no em or en dashes anywhere in code or comments, dollar amounts written as $N and always labeled estimated (the engine is subscription powered), GruxTheme tokens and the tight house control scale for any UI, stores follow the @MainActor singleton + @Published + JSON-on-disk debounced scheduleSave pattern (see Sources/Grux/Foundry/ProposalStore.swift). Stay clear of the protected zones: the phone wire protocol files, the keychain store, and the security module are off limits at any tier. Verify with: cd Grux-Mac && swift build && swift test (suite stays at baseline). Conventional commits on specific files, never git add -A. Log progress to the dashboard with roadmap-dashboard/log_event.sh as you work.\n\nTASK: In the youtube_transcript tool: (1) demote the watch-page timedtext fetch to a cheap first probe that gives up immediately on an empty body instead of retrying it as the primary strategy, (2) detect yt-dlp availability at startup and surface a clear in-chat error with the brew install hint when it is missing, (3) cache successful transcripts on disk keyed by video id so repeat asks skip the network, (4) add a rate-limit backoff for the 429 path seen live. VERIFY: swift build, swift test at baseline plus the env-gated LiveVerificationTests transcript test passing, and new unit tests for the availability probe and cache hit path.\n\nWHEN DONE: log a done event via roadmap-dashboard/log_event.sh, list every file you touched, and report the test delta versus baseline. Estimated cost budget for this proposal: $3 estimated.",
+  "riskClass": "low",
+  "status": "proposed",
+  "tierRequired": 0,
+  "title": "YouTube transcripts: retire the dead timedtext path and harden the yt-dlp fallback",
+  "touchedPaths": [
+   "Grux-Mac/Sources/Grux/Research/"
+  ],
+  "updatedAt": "2026-06-10T19:30:12Z"
+ },
+ {
+  "createdAt": "2026-06-10T19:30:13Z",
+  "domain": "mac",
+  "estCostLabel": "$3 estimated",
+  "evidence": [
+   {
+    "detail": "integrator report unverified item: visual rendering of the Self-Upgrade tab not exercised in a running app, compile and unit-test verified only",
+    "source": "manual"
+   },
+   {
+    "detail": "no verify/*.png exists for the selfUpgrade tab; every other surface has one",
+    "source": "screenshot"
+   }
+  ],
+  "expectedGain": 0.55,
+  "id": "DC9BA754-1429-4632-946B-DA01DEEEE913",
+  "lane": "uxPolish",
+  "readyPrompt": "You are Claude Code in the Grux worktree at ~/Code/.worktrees/grux-roadmap (Swift package at Grux-Mac, branch roadmap/phases-1-2-3-4-5, build green, full suite at baseline with 6 skips and 2 known pre-existing failures). Hard rules: native Swift and SwiftUI only, zero new SwiftPM dependencies, no em or en dashes anywhere in code or comments, dollar amounts written as $N and always labeled estimated (the engine is subscription powered), GruxTheme tokens and the tight house control scale for any UI, stores follow the @MainActor singleton + @Published + JSON-on-disk debounced scheduleSave pattern (see Sources/Grux/Foundry/ProposalStore.swift). Stay clear of the protected zones: the phone wire protocol files, the keychain store, and the security module are off limits at any tier. Verify with: cd Grux-Mac && swift build && swift test (suite stays at baseline). Conventional commits on specific files, never git add -A. Log progress to the dashboard with roadmap-dashboard/log_event.sh as you work.\n\nTASK: Launch the built app, open the Self-Upgrade tab via --open-tab selfUpgrade, and screenshot it in three states: empty store, store seeded with proposal book 001 (the live proposals.json already carries it), and a proposal expanded showing evidence and the ready prompt. Fix any rendering issues found: clipped text, broken layout at narrow widths, missing GruxTheme tokens, chunky controls violating the tight house scale. File anything bigger than polish as a follow-up proposal instead of fixing inline. VERIFY: swift build, swift test at baseline, three screenshots attached, and a note in the timeline for each fix made.\n\nWHEN DONE: log a done event via roadmap-dashboard/log_event.sh, list every file you touched, and report the test delta versus baseline. Estimated cost budget for this proposal: $3 estimated.",
+  "riskClass": "low",
+  "status": "proposed",
+  "tierRequired": 0,
+  "title": "Self-Upgrade tab visual verification and first-render polish",
+  "touchedPaths": [
+   "Grux-Mac/Sources/Grux/Foundry/SelfUpgradeView.swift"
+  ],
+  "updatedAt": "2026-06-10T19:30:13Z"
+ },
+ {
+  "createdAt": "2026-06-10T19:30:14Z",
+  "domain": "mac",
+  "estCostLabel": "$4 estimated",
+  "evidence": [
+   {
+    "detail": "llm spend state: anthropic 301 generations $1.88 estimated over 30d versus ollama 145 generations at $0.02 estimated; the local lane is proven and nearly free",
+    "source": "posthog"
+   },
+   {
+    "detail": "upcoming notification triage and transcript-correction detection add recurring classifier calls that do not need a frontier model",
+    "source": "manual"
+   }
+  ],
+  "expectedGain": 0.52,
+  "id": "7AF73E43-9557-41A7-B8E8-969C8DE65045",
+  "lane": "cost",
+  "readyPrompt": "You are Claude Code in the Grux worktree at ~/Code/.worktrees/grux-roadmap (Swift package at Grux-Mac, branch roadmap/phases-1-2-3-4-5, build green, full suite at baseline with 6 skips and 2 known pre-existing failures). Hard rules: native Swift and SwiftUI only, zero new SwiftPM dependencies, no em or en dashes anywhere in code or comments, dollar amounts written as $N and always labeled estimated (the engine is subscription powered), GruxTheme tokens and the tight house control scale for any UI, stores follow the @MainActor singleton + @Published + JSON-on-disk debounced scheduleSave pattern (see Sources/Grux/Foundry/ProposalStore.swift). Stay clear of the protected zones: the phone wire protocol files, the keychain store, and the security module are off limits at any tier. Verify with: cd Grux-Mac && swift build && swift test (suite stays at baseline). Conventional commits on specific files, never git add -A. Log progress to the dashboard with roadmap-dashboard/log_event.sh as you work.\n\nTASK: Add a routing preference for low-stakes internal classifier calls (notification triage, transcript correction detection, ambient summary labeling): when ModelRegistry has a healthy local backend discovered, route these calls to the local model first with a quality floor: if the local response fails schema validation, retry once on Haiku. Add a settings toggle (default on when a local model is present) and per-route counters so the savings show up in the spend snapshot as $N estimated. VERIFY: swift build, swift test at baseline plus new tests for the routing decision matrix (local healthy, local missing, schema fail retry).\n\nWHEN DONE: log a done event via roadmap-dashboard/log_event.sh, list every file you touched, and report the test delta versus baseline. Estimated cost budget for this proposal: $4 estimated.",
+  "riskClass": "medium",
+  "status": "proposed",
+  "tierRequired": 0,
+  "title": "Route low-stakes classifier calls to local Ollama models when available",
+  "touchedPaths": [
+   "Grux-Mac/Sources/Grux/Backend/ModelRegistry.swift",
+   "Grux-Mac/Sources/Grux/Foundry/Signals/"
+  ],
+  "updatedAt": "2026-06-10T19:30:14Z"
+ },
+ {
+  "createdAt": "2026-06-10T19:30:15Z",
+  "domain": "mini",
+  "estCostLabel": "$3 estimated",
+  "evidence": [
+   {
+    "detail": "blueprint stage 4: health probes for Mini are a named verify gate; nothing implements them yet",
+    "source": "manual"
+   },
+   {
+    "detail": "the mini domain has zero signal sources today, so the TrustLedger mini lanes can never earn streaks",
+    "source": "swarm"
+   }
+  ],
+  "expectedGain": 0.5,
+  "id": "3EB76008-8E6D-4A8A-AA36-16AFF3043C39",
+  "lane": "reliability",
+  "readyPrompt": "You are Claude Code in the Grux worktree at ~/Code/.worktrees/grux-roadmap (Swift package at Grux-Mac, branch roadmap/phases-1-2-3-4-5, build green, full suite at baseline with 6 skips and 2 known pre-existing failures). Hard rules: native Swift and SwiftUI only, zero new SwiftPM dependencies, no em or en dashes anywhere in code or comments, dollar amounts written as $N and always labeled estimated (the engine is subscription powered), GruxTheme tokens and the tight house control scale for any UI, stores follow the @MainActor singleton + @Published + JSON-on-disk debounced scheduleSave pattern (see Sources/Grux/Foundry/ProposalStore.swift). Stay clear of the protected zones: the phone wire protocol files, the keychain store, and the security module are off limits at any tier. Verify with: cd Grux-Mac && swift build && swift test (suite stays at baseline). Conventional commits on specific files, never git add -A. Log progress to the dashboard with roadmap-dashboard/log_event.sh as you work.\n\nTASK: Add a MiniHealthProbe to the Foundry: an async check that hits the Mac Mini service endpoints over the tailnet (http://<your-mini-host>:3847/api/projects and the images scenes endpoint) with a short timeout, recording status, latency, and a pass or fail verdict as Foundry signals under domain mini. Wire it into the verify gate list for proposals with domain mini and into the nightly sense pass. Probes are read-only GETs; never POST from a probe. VERIFY: swift build, swift test at baseline plus new tests with a stubbed URLProtocol covering pass, timeout, and non-200; a live probe run against the Mini host when the tailnet is reachable, skipped cleanly otherwise.\n\nWHEN DONE: log a done event via roadmap-dashboard/log_event.sh, list every file you touched, and report the test delta versus baseline. Estimated cost budget for this proposal: $3 estimated.",
+  "riskClass": "low",
+  "status": "proposed",
+  "tierRequired": 0,
+  "title": "Mini health probes: wire Mac Mini service checks into the Foundry verify gates",
+  "touchedPaths": [
+   "Grux-Mac/Sources/Grux/Foundry/Signals/"
+  ],
+  "updatedAt": "2026-06-10T19:30:15Z"
+ },
+ {
+  "createdAt": "2026-06-10T19:30:16Z",
+  "domain": "mac",
+  "estCostLabel": "$2 estimated",
+  "evidence": [
+   {
+    "detail": "~/Library/Application Support/Grux/wake.log is 14MB and append-only with no rotation; security-audit.log and music-ranking.log grow the same way",
+    "source": "fs-audit"
+   },
+   {
+    "detail": "unbounded logs slow grep-based debugging and inflate every backup archive",
+    "source": "crash"
+   }
+  ],
+  "expectedGain": 0.48,
+  "id": "36C8F5B1-8D84-4EEB-8E53-7E517AC282FF",
+  "lane": "reliability",
+  "readyPrompt": "You are Claude Code in the Grux worktree at ~/Code/.worktrees/grux-roadmap (Swift package at Grux-Mac, branch roadmap/phases-1-2-3-4-5, build green, full suite at baseline with 6 skips and 2 known pre-existing failures). Hard rules: native Swift and SwiftUI only, zero new SwiftPM dependencies, no em or en dashes anywhere in code or comments, dollar amounts written as $N and always labeled estimated (the engine is subscription powered), GruxTheme tokens and the tight house control scale for any UI, stores follow the @MainActor singleton + @Published + JSON-on-disk debounced scheduleSave pattern (see Sources/Grux/Foundry/ProposalStore.swift). Stay clear of the protected zones: the phone wire protocol files, the keychain store, and the security module are off limits at any tier. Verify with: cd Grux-Mac && swift build && swift test (suite stays at baseline). Conventional commits on specific files, never git add -A. Log progress to the dashboard with roadmap-dashboard/log_event.sh as you work.\n\nTASK: Add a small LogRotator utility: size-capped rotation (default 2MB, keep 3 generations, gzip older generations) applied to wake.log, security-audit.log, and music-ranking.log at app launch and once per day. Rotation must be atomic (rename then recreate) so concurrent writers never lose lines. Make the caps constants in one place. VERIFY: swift build, swift test at baseline plus new tests for rotation thresholds, generation pruning, and the atomic rename path using temp dirs.\n\nWHEN DONE: log a done event via roadmap-dashboard/log_event.sh, list every file you touched, and report the test delta versus baseline. Estimated cost budget for this proposal: $2 estimated.",
+  "riskClass": "low",
+  "status": "proposed",
+  "tierRequired": 0,
+  "title": "Log rotation for wake.log and the other unbounded Application Support logs",
+  "touchedPaths": [
+   "Grux-Mac/Sources/Grux/"
+  ],
+  "updatedAt": "2026-06-10T19:30:16Z"
+ },
+ {
+  "createdAt": "2026-06-10T19:30:17Z",
+  "domain": "phone",
+  "estCostLabel": "$2 estimated",
+  "evidence": [
+   {
+    "detail": "verify 2026-06-10: phone sim build needed a manual destination override because no iPhone 15 Pro Max simulator exists on this machine; iPhone 16 Pro Max was used by hand",
+    "source": "swarm"
+   },
+   {
+    "detail": "the Foundry phone verify gate will run unattended at 2am; a hardcoded device name fails the whole gate",
+    "source": "manual"
+   }
+  ],
+  "expectedGain": 0.46,
+  "id": "59F01DA5-B71B-4B9B-9628-F53F73685A63",
+  "lane": "reliability",
+  "readyPrompt": "You are Claude Code in the Grux worktree at ~/Code/.worktrees/grux-roadmap (Swift package at Grux-Mac, branch roadmap/phases-1-2-3-4-5, build green, full suite at baseline with 6 skips and 2 known pre-existing failures). Hard rules: native Swift and SwiftUI only, zero new SwiftPM dependencies, no em or en dashes anywhere in code or comments, dollar amounts written as $N and always labeled estimated (the engine is subscription powered), GruxTheme tokens and the tight house control scale for any UI, stores follow the @MainActor singleton + @Published + JSON-on-disk debounced scheduleSave pattern (see Sources/Grux/Foundry/ProposalStore.swift). Stay clear of the protected zones: the phone wire protocol files, the keychain store, and the security module are off limits at any tier. Verify with: cd Grux-Mac && swift build && swift test (suite stays at baseline). Conventional commits on specific files, never git add -A. Log progress to the dashboard with roadmap-dashboard/log_event.sh as you work.\n\nTASK: In the Foundry phone verify gate (and any GruxPhone build scripts in the worktree), resolve the simulator destination dynamically: query xcrun simctl list devices available --json, prefer the newest booted iPhone, else the newest available iPhone, and pass that UDID to xcodebuild. Fail with a clear message only when no iPhone simulator exists at all. Cache the resolution per run. VERIFY: swift build, swift test at baseline plus a unit test parsing a fixture simctl JSON (booted preferred, newest fallback, none found), and one real xcodebuild against the resolved destination.\n\nWHEN DONE: log a done event via roadmap-dashboard/log_event.sh, list every file you touched, and report the test delta versus baseline. Estimated cost budget for this proposal: $2 estimated.",
+  "riskClass": "low",
+  "status": "proposed",
+  "tierRequired": 0,
+  "title": "Phone verify rail: pick the best available simulator instead of assuming one exists",
+  "touchedPaths": [
+   "Grux-Mac/Sources/Grux/Foundry/"
+  ],
+  "updatedAt": "2026-06-10T19:30:17Z"
+ },
+ {
+  "createdAt": "2026-06-10T19:30:18Z",
+  "domain": "site",
+  "estCostLabel": "$3 estimated",
+  "evidence": [
+   {
+    "detail": "e691504 shipped real product preview clips on the site; verify 2026-06-10 confirmed playback manually (readyState 4, time advancing) with no automated re-check since",
+    "source": "swarm"
+   },
+   {
+    "detail": "blueprint stage 4 names a render check for site as a verify gate; the site domain currently has no signal source so its TrustLedger lanes are dead",
+    "source": "manual"
+   }
+  ],
+  "expectedGain": 0.45,
+  "id": "3197F839-E555-4E8E-8112-206038AACF56",
+  "lane": "reliability",
+  "readyPrompt": "You are Claude Code in the Grux worktree at ~/Code/.worktrees/grux-roadmap (Swift package at Grux-Mac, branch roadmap/phases-1-2-3-4-5, build green, full suite at baseline with 6 skips and 2 known pre-existing failures). Hard rules: native Swift and SwiftUI only, zero new SwiftPM dependencies, no em or en dashes anywhere in code or comments, dollar amounts written as $N and always labeled estimated (the engine is subscription powered), GruxTheme tokens and the tight house control scale for any UI, stores follow the @MainActor singleton + @Published + JSON-on-disk debounced scheduleSave pattern (see Sources/Grux/Foundry/ProposalStore.swift). Stay clear of the protected zones: the phone wire protocol files, the keychain store, and the security module are off limits at any tier. Verify with: cd Grux-Mac && swift build && swift test (suite stays at baseline). Conventional commits on specific files, never git add -A. Log progress to the dashboard with roadmap-dashboard/log_event.sh as you work.\n\nTASK: Add a SiteRenderProbe to the Foundry signal sources: fetch the gruxai.com homepage, assert HTTP 200, presence of the previews section markup, and that each preview MP4 URL answers a ranged GET with video content. Record latency and verdicts as Foundry signals under domain site and wire the probe into the verify gates for site-domain proposals plus the nightly sense pass. VERIFY: swift build, swift test at baseline plus stubbed URLProtocol tests (200, missing section, 404 clip), and one live run against gruxai.com.\n\nWHEN DONE: log a done event via roadmap-dashboard/log_event.sh, list every file you touched, and report the test delta versus baseline. Estimated cost budget for this proposal: $3 estimated.",
+  "riskClass": "low",
+  "status": "proposed",
+  "tierRequired": 0,
+  "title": "Site verify gate: automated render and preview-clip probe for gruxai.com",
+  "touchedPaths": [
+   "Grux-Mac/Sources/Grux/Foundry/Signals/"
+  ],
+  "updatedAt": "2026-06-10T19:30:18Z"
+ },
+ {
+  "createdAt": "2026-06-10T19:30:19Z",
+  "domain": "mac",
+  "estCostLabel": "$2 estimated",
+  "evidence": [
+   {
+    "detail": "llm-spend-state.json providerTotals30d: dashscope 13 generations, usd 0; the pricing table has no dashscope rates so estimated spend underreports",
+    "source": "posthog"
+   },
+   {
+    "detail": "the Foundry budget governor reads estimated spend; blind spots in the table skew nightly budget decisions",
+    "source": "manual"
+   }
+  ],
+  "expectedGain": 0.44,
+  "id": "86BFB2F8-D0E8-41F1-9863-23904A1CD9E5",
+  "lane": "cost",
+  "readyPrompt": "You are Claude Code in the Grux worktree at ~/Code/.worktrees/grux-roadmap (Swift package at Grux-Mac, branch roadmap/phases-1-2-3-4-5, build green, full suite at baseline with 6 skips and 2 known pre-existing failures). Hard rules: native Swift and SwiftUI only, zero new SwiftPM dependencies, no em or en dashes anywhere in code or comments, dollar amounts written as $N and always labeled estimated (the engine is subscription powered), GruxTheme tokens and the tight house control scale for any UI, stores follow the @MainActor singleton + @Published + JSON-on-disk debounced scheduleSave pattern (see Sources/Grux/Foundry/ProposalStore.swift). Stay clear of the protected zones: the phone wire protocol files, the keychain store, and the security module are off limits at any tier. Verify with: cd Grux-Mac && swift build && swift test (suite stays at baseline). Conventional commits on specific files, never git add -A. Log progress to the dashboard with roadmap-dashboard/log_event.sh as you work.\n\nTASK: Add DashScope per-model rates to the spend pricing table (qwen image edit plus and the wan image models at their public per-image rates, text models per token) so dashscope generations price into the estimated totals. Keep all displayed figures labeled estimated. Add a fallback bucket: any provider or model missing from the table prices at a conservative default and emits a one-time unknown-rate signal instead of pricing at $0. VERIFY: swift build, swift test at baseline plus new tests: known dashscope model prices correctly, unknown model hits the fallback and emits the signal once.\n\nWHEN DONE: log a done event via roadmap-dashboard/log_event.sh, list every file you touched, and report the test delta versus baseline. Estimated cost budget for this proposal: $2 estimated.",
+  "riskClass": "low",
+  "status": "proposed",
+  "tierRequired": 0,
+  "title": "DashScope spend is invisible: 13 generations priced at $0 in the spend tracker",
+  "touchedPaths": [
+   "Grux-Mac/Sources/Grux/Telemetry/"
+  ],
+  "updatedAt": "2026-06-10T19:30:19Z"
+ },
+ {
+  "createdAt": "2026-06-10T19:30:20Z",
+  "domain": "mac",
+  "estCostLabel": "$2 estimated",
+  "evidence": [
+   {
+    "detail": "8 macros.*.bak.json siblings (Apr 21 to May 9), chat.legacy.json (Apr 24), and events.json (296KB, stale since Apr 25) sit loose in Application Support/Grux",
+    "source": "fs-audit"
+   },
+   {
+    "detail": "loose ad hoc backups predate BackupManager (222b4eb, 5ab24e6) which now owns archival; the loose files inflate every backup zip",
+    "source": "manual"
+   }
+  ],
+  "expectedGain": 0.4,
+  "id": "B77E4CDA-655E-4B12-AAAE-675E7DAC00CC",
+  "lane": "codeHealth",
+  "readyPrompt": "You are Claude Code in the Grux worktree at ~/Code/.worktrees/grux-roadmap (Swift package at Grux-Mac, branch roadmap/phases-1-2-3-4-5, build green, full suite at baseline with 6 skips and 2 known pre-existing failures). Hard rules: native Swift and SwiftUI only, zero new SwiftPM dependencies, no em or en dashes anywhere in code or comments, dollar amounts written as $N and always labeled estimated (the engine is subscription powered), GruxTheme tokens and the tight house control scale for any UI, stores follow the @MainActor singleton + @Published + JSON-on-disk debounced scheduleSave pattern (see Sources/Grux/Foundry/ProposalStore.swift). Stay clear of the protected zones: the phone wire protocol files, the keychain store, and the security module are off limits at any tier. Verify with: cd Grux-Mac && swift build && swift test (suite stays at baseline). Conventional commits on specific files, never git add -A. Log progress to the dashboard with roadmap-dashboard/log_event.sh as you work.\n\nTASK: Add a one-time migration sweep at launch: move the loose macros.*.bak.json siblings, chat.legacy.json, and any other *.bak/*.legacy files in Application Support/Grux into a single legacy/ subfolder (never delete), and confirm events.json is no longer read by any code path before moving it (grep call sites first; if still read, leave it and note why). Teach BackupManager to exclude the legacy/ folder from future archives. The sweep runs once, records completion in a marker file, and is fully reversible. VERIFY: swift build, swift test at baseline plus tests for the sweep on a fixture directory (moves, marker idempotence, never deletes).\n\nWHEN DONE: log a done event via roadmap-dashboard/log_event.sh, list every file you touched, and report the test delta versus baseline. Estimated cost budget for this proposal: $2 estimated.",
+  "riskClass": "low",
+  "status": "proposed",
+  "tierRequired": 0,
+  "title": "Application Support hygiene: retire stale sibling backups and legacy stores",
+  "touchedPaths": [
+   "Grux-Mac/Sources/Grux/Backup/",
+   "Grux-Mac/Sources/Grux/Persistence.swift"
+  ],
+  "updatedAt": "2026-06-10T19:30:20Z"
+ },
+ {
+  "createdAt": "2026-06-10T19:30:21Z",
+  "domain": "mac",
+  "estCostLabel": "$2 estimated",
+  "evidence": [
+   {
+    "detail": "verify 2026-06-10: surface digest determinism flake root-caused to unsorted JSON keys, fixed in e15f030 after 5 consecutive full-suite runs were needed to confirm",
+    "source": "swarm"
+   },
+   {
+    "detail": "any future digest or snapshot encoder without sortedKeys reintroduces the same flake class silently",
+    "source": "manual"
+   }
+  ],
+  "expectedGain": 0.38,
+  "id": "DCBB9AC5-9477-4D25-828C-E42DECC46C7E",
+  "lane": "codeHealth",
+  "readyPrompt": "You are Claude Code in the Grux worktree at ~/Code/.worktrees/grux-roadmap (Swift package at Grux-Mac, branch roadmap/phases-1-2-3-4-5, build green, full suite at baseline with 6 skips and 2 known pre-existing failures). Hard rules: native Swift and SwiftUI only, zero new SwiftPM dependencies, no em or en dashes anywhere in code or comments, dollar amounts written as $N and always labeled estimated (the engine is subscription powered), GruxTheme tokens and the tight house control scale for any UI, stores follow the @MainActor singleton + @Published + JSON-on-disk debounced scheduleSave pattern (see Sources/Grux/Foundry/ProposalStore.swift). Stay clear of the protected zones: the phone wire protocol files, the keychain store, and the security module are off limits at any tier. Verify with: cd Grux-Mac && swift build && swift test (suite stays at baseline). Conventional commits on specific files, never git add -A. Log progress to the dashboard with roadmap-dashboard/log_event.sh as you work.\n\nTASK: Prevent the unsorted-keys flake class from coming back. (1) Add a shared Persistence.digestEncoder() helper that always sets sortedKeys, and sweep every digest or snapshot hash call site onto it. (2) Add a guard test that scans the package source for JSONEncoder() instances feeding a hash or digest (grep-based test over the Sources tree for the known call-site patterns) and fails with a pointed message when one lacks sortedKeys. Keep the guard test cheap and dependency-free. VERIFY: swift build, swift test at baseline plus the new guard test passing; run the previously flaky surface digest suite 5 times in a row green.\n\nWHEN DONE: log a done event via roadmap-dashboard/log_event.sh, list every file you touched, and report the test delta versus baseline. Estimated cost budget for this proposal: $2 estimated.",
+  "riskClass": "low",
+  "status": "proposed",
+  "tierRequired": 0,
+  "title": "Deterministic snapshot guard: enforce sortedKeys on every digest encoder",
+  "touchedPaths": [
+   "Grux-Mac/Sources/Grux/Persistence.swift",
+   "Grux-Mac/Tests/GruxTests/"
+  ],
+  "updatedAt": "2026-06-10T19:30:21Z"
+ }
+]

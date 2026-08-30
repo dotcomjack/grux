@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      Intentionally minimal. The phone is a TCP client only: it dials a host:port
+      stored in the iOS Keychain (populated from the Mac QR scan), so it needs no
+      server or Bonjour-advertise privilege. Browsing `_grux-phone._tcp` is
+      covered by the Info.plist NSBonjourServices carve-out, which does NOT
+      need the multicast entitlement (iOS 14+). Adding the multicast key would
+      have required an Apple manual-approval step that personal-team dev
+      profiles can't satisfy, so we keep this file empty and let the default
+      personal-team dev profile just work.
+    -->
+</dict>
+</plist>

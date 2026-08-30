@@ -1,0 +1,294 @@
+name: CI
+
+# The documentation filter used to sit on the trigger below, as
+# `paths-ignore: ["**.md", "docs/**"]` on both push and pull_request. It was
+# added 2026-08-23 for a real reason that still holds: a macOS minute bills at
+# ten times a Linux one, and August measured this repo at the top of the account
+# bill from full Swift builds started by commits that could not change the
+# build.
+#
+# It moved down onto the macOS job on 2026-08-26, because the saving had blinded
+# the one guard whose subject is prose. `NoPersonalIdentityTests` scans every
+# `.md` file in the shipping tree, so markdown is precisely the file type it
+# exists for, and a filter that skips the entire workflow on a markdown commit
+# skips that guard exactly when it is most likely to matter. Measured on the
+# public repo: the last two commits were markdown only, started no run at all,
+# one of them turned the suite red, and the newest run on `main` sat two commits
+# stale while the branch read green.
+#
+# `paths-ignore` is a property of `on.<event>` and has no per-job form, so there
+# is no way to filter one job and spare another from up here. The filter is
+# therefore computed once, in the `changes` job below, and applied as an `if:`
+# on the macOS job alone. A documentation-only commit still starts ZERO macOS
+# minutes, which is the whole of the saving. What it starts instead is two short
+# Linux jobs, and Linux bills at roughly a sixth of the macOS rate, so the trade
+# is a fraction of one macOS minute in exchange for a verdict where there used
+# to be silence.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Supersede an in-flight run when a branch is pushed again. Without this, every
+# superseded push is billed in full, and a macOS runner bills at ten times the
+# Linux rate, so a burst of pushes to one branch is the single most expensive
+# thing that can happen to this workflow.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Decides whether the expensive job runs, replacing the trigger-level filter.
+  #
+  # Deliberately FAILS OPEN. Anything it cannot answer with confidence, a force
+  # push that rewrote the base away, a first commit on a new branch, a git error,
+  # returns "code changed" and the macOS build runs. A wrong "skip" here is a
+  # green tick over a commit nobody compiled, which is the exact failure this
+  # workflow exists to prevent, and it is far worse than paying for one build
+  # that turns out to have been unnecessary.
+  changes:
+    name: What changed
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history, because the comparison base is an arbitrary earlier
+          # commit and a shallow clone does not contain it. Without this every
+          # run falls through to the fail-open branch: still correct, but the
+          # filter then saves nothing and the macOS job is back to building on
+          # every doc commit.
+          fetch-depth: 0
+
+      - id: filter
+        # Read the event through the environment rather than interpolating
+        # `${{ }}` into the script body. These two fields are commit shas today,
+        # and a workflow that pastes event data straight into a shell is one
+        # upstream field change away from executing it.
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_PUSH: ${{ github.event.before }}
+          BASE_PR: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -uo pipefail
+
+          if [ "$EVENT" = "pull_request" ]; then BASE="$BASE_PR"; else BASE="$BASE_PUSH"; fi
+
+          build_anyway() {
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "$1"
+            exit 0
+          }
+
+          case "$BASE" in
+            ""|0000000000000000000000000000000000000000)
+              build_anyway "no usable base (new branch or first commit), so building" ;;
+          esac
+
+          git cat-file -e "${BASE}^{commit}" 2>/dev/null \
+            || build_anyway "base ${BASE} is not in this clone (force push?), so building"
+
+          CHANGED="$(git diff --name-only "$BASE" "$HEAD_SHA")" \
+            || build_anyway "git diff failed, so building"
+
+          echo "changed files:"
+          printf '%s\n' "$CHANGED"
+
+          # The two patterns the old `paths-ignore` carried, and nothing more:
+          # any `.md` anywhere, and the repo-root `docs/` tree. A single file
+          # outside them means this commit can change the build.
+          #
+          # An empty diff prints one empty line, which does not match either
+          # pattern, so it lands on the build side. That is the fail-open
+          # direction and it is intentional.
+          if printf '%s\n' "$CHANGED" | grep -qvE '(\.md$|^docs/)'; then
+            build_anyway "code changed, so building"
+          fi
+
+          echo "code=false" >> "$GITHUB_OUTPUT"
+          echo "documentation only, so the macOS build is skipped"
+
+  # The guards that read markdown and need no Swift toolchain, on Linux, with no
+  # path filter of any kind in front of them. This is what gives a
+  # documentation-only commit a CI verdict at all instead of silence.
+  #
+  # BE PRECISE ABOUT WHAT THIS COVERS, because a job named after a gap it only
+  # half closes is worse than no job: it makes the remaining half invisible.
+  #
+  # check-contract.py reads `Grux-Mac/docs/*.md` and
+  # `Grux-Mac/docs/blueprints/*.md`, and deliberately nothing else. So this job
+  # catches contract drift and the em dash / en dash house rule across the
+  # contract corpus, on every commit including markdown-only ones.
+  #
+  # It does NOT run `NoPersonalIdentityTests`, and that is the guard that reads
+  # GOVERNANCE.md, SECURITY.md, README.md and the rest of the shipping tree. It
+  # is a Swift test in a package that links AppKit, so it cannot build on Linux
+  # at all, and the macOS job that does run it is still gated by `changes`
+  # above. A markdown-only commit that plants a name in README.md therefore
+  # still reaches `main` unchecked. Closing that needs the scan reimplemented as
+  # a toolchain-free script, which is a separate change, and this job does not
+  # claim to have done it.
+  markdown-guards:
+    name: Documentation guards (Linux)
+    runs-on: ubuntu-latest
+    # Its own group, distinct from the workflow's. A job may not share the
+    # concurrency group of the workflow that contains it: GitHub deadlocks the
+    # run waiting for itself.
+    concurrency:
+      group: ${{ github.workflow }}-markdown-guards-${{ github.ref }}
+      cancel-in-progress: true
+    # Two python scripts over a few dozen markdown files, which is seconds.
+    # Anything approaching this number is hung, not slow.
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The contract checker guards itself first. A checker that cannot fail
+      # would report a broken contract as clean, and the self-test is the only
+      # thing that distinguishes the two.
+      - name: Contract checker self-test
+        working-directory: Grux-Mac
+        run: python3 scripts/check-contract.py --self-test
+
+      - name: Contract check
+        working-directory: Grux-Mac
+        run: python3 scripts/check-contract.py
+
+  build-and-test:
+    name: Build and test
+    runs-on: macos-15
+    # The documentation filter, moved off the trigger. See the comment at the
+    # top of this file for why it had to move and why it lands here.
+    #
+    # `!cancelled()` rather than a bare condition: if `changes` fails outright
+    # its output is empty, and a plain `needs.*` condition would SKIP this job,
+    # which turns a broken filter into an unbuilt commit reporting green. Empty
+    # is not `'false'`, so the build runs.
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    # GitHub's default is 360 minutes. On a macOS runner one hung job at that
+    # default is worth more than a month of normal usage, so this is a spend
+    # guard rather than a patience setting.
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Swift 6.0 or newer is REQUIRED, and not because this package asks for it.
+      # Package.swift declares swift-tools-version:5.9, but swift-transformers
+      # pulls swift-jinja 2.x, which is itself written against tools-version 6.0.
+      # An older toolchain cannot even RESOLVE the graph, let alone compile it:
+      # macos-14 failed here with "swift-jinja >= 2.0.0 contains incompatible
+      # tools version (6.0.0)". Reading the tools-version line and calling it the
+      # requirement is the trap; the dependencies set the real floor.
+      - name: Toolchain
+        run: |
+          swift --version
+          xcodebuild -version
+          ls /Applications | grep -i '^Xcode' || true
+
+      # NO BUILD CACHE, deliberately. Removed 2026-08-20 after it broke CI twice.
+      #
+      # Caching Grux-Mac/.build stores compiled Clang module artifacts that are
+      # stamped against one SDK. Restore them onto a runner image carrying a
+      # different SDK patch and the C dependency fails to find system headers:
+      # yyjson.c died on <sys/cdefs.h>, <machine/types.h> and <_bounds.h>, 19
+      # errors, with nothing in the message suggesting a stale cache.
+      #
+      # Proven, not guessed. The one green run logged "Cache not found for input
+      # keys" and built from scratch. Every run after it logged "Cache restored
+      # successfully" and failed, on the SAME Swift 6.1.2. The toolchain never
+      # moved; the cache did.
+      #
+      # A cold build here is about four minutes. That is a cheap price for a CI
+      # signal that means something, and a cache that turns green into red on an
+      # unrelated commit is worse than no cache at all.
+
+      - name: Build
+        working-directory: Grux-Mac
+        run: swift build
+
+      # `swift build` does NOT compile the test target, so the step above says
+      # nothing about the suite. Run the tests, then assert a test actually ran:
+      # an exit code of 0 with no "Executed N tests" line is indistinguishable
+      # from zero tests collected, and zero collected is a failure.
+      - name: Test
+        working-directory: Grux-Mac
+        run: |
+          set -o pipefail
+          swift test 2>&1 | tee /tmp/grux-test.log
+          if ! grep -qE "Executed [0-9]+ tests" /tmp/grux-test.log; then
+            echo "::error::no 'Executed N tests' line, so zero tests were collected"
+            exit 1
+          fi
+          grep -E "Executed [0-9]+ tests" /tmp/grux-test.log | tail -1
+
+      # The contract checker guards itself first. A checker that cannot fail
+      # would report a broken contract as clean, and the self-test is the only
+      # thing that distinguishes the two.
+      - name: Contract checker self-test
+        working-directory: Grux-Mac
+        run: python3 scripts/check-contract.py --self-test
+
+      - name: Contract check
+        working-directory: Grux-Mac
+        run: python3 scripts/check-contract.py
+
+      # THE OSS GUARANTEE NO LONGER RUNS IN CI, and this comment is here so
+      # nobody restores it without reading why.
+      #
+      # It used to run on every push, which sounded continuous and was in fact
+      # the leak. The guard needs the banned list to work, the list was carried
+      # inside the scanner so CI could reach it, and a detector cannot match a
+      # string without containing it. So the scanner shipped a labelled index of
+      # every value it existed to protect. Splitting the literals across a join
+      # helper hid them from byte scanning, including the scanner's own pass over
+      # itself, and hid them from nothing else.
+      #
+      # Measured 2026-08-30: four never-publish values were recoverable from the
+      # published copy, public since the first commit and present in all five
+      # tags.
+      #
+      # The list now lives in a file under the maintainer's home directory,
+      # outside every repository, and the scanner EXITS 1 when it cannot find it
+      # rather than scanning with no patterns and reporting clean. A hosted
+      # runner has no copy, so the guard is a local pre-publish step:
+      #
+      #     Grux-Mac/scripts/oss-guarantee.sh
+      #
+      # Putting it back in CI means putting the list somewhere CI can read,
+      # which is the whole problem again wearing a different hat.
+
+
+      # The release path, which nothing in CI compiled until 2026-08-26. Debug
+      # and release are different compilations: release runs the optimiser, and
+      # a release-only failure was reaching users through build.sh with no
+      # earlier signal, because build.sh is the only thing that had ever run it.
+      #
+      # `swift build -c release` rather than `./build.sh`, and that is a choice
+      # rather than a shortcut. build.sh codesigns with a TCC-stable identity
+      # this runner does not hold, installs to /Applications, and quits and
+      # relaunches the app. None of those belong on a CI runner, and the first
+      # of them cannot succeed on one.
+      #
+      # WHAT THIS DOES NOT DO, said out loud so nobody reads it as more than it
+      # is. The bundle hygiene guard in ShippedBundleHygieneTests skips itself
+      # unless `Grux-Mac/.build/release` exists, and this step is the only thing
+      # in CI that would create it. It runs AFTER the test step, so during
+      # `swift test` that directory still does not exist and the guard still
+      # skips. Compiling release is what this step buys, and that is all.
+      #
+      # Unskipping the guard needs the release build to run BEFORE the test
+      # step, and that ordering trades away the attribution this one protects:
+      # a release-mode compile failure would then abort the job before the suite
+      # ran, so a red build would say nothing about whether the tests pass.
+      # Worth doing, but it is a deliberate call rather than a tidy-up.
+      - name: Release build
+        working-directory: Grux-Mac
+        run: swift build -c release --arch arm64

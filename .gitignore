@@ -1,0 +1,59 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+
+# Swift / SPM
+.build/
+Packages/
+*.xcodeproj
+!default.xcodeproj
+
+# Xcode
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+.swiftpm/xcode/xcuserdata/
+.swiftpm/xcode/package.xcworkspace/xcuserdata/
+*.xcworkspace/xcuserdata/
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Superpowers / Claude Code session state
+.superpowers/
+.claude/
+CLAUDE.local.md
+
+# Secrets (none expected, keys live in Keychain, but belt and suspenders)
+.env
+.env.*
+*.secret
+secrets.json
+credentials.json
+
+# Ignore compiled app bundle (derived from ./build.sh, not source of truth)
+Grux-Mac/build/
+GruxGlasses/build/
+
+# Cloudflare Wrangler build cache + account state (regenerated on every
+# deploy, not source of truth, contains workspace-scoped account ids).
+**/.wrangler/
+
+# iCloud sync artifacts
+.icloud
+*.icloud
+
+# Python byte-cache. No Python is part of this product; the only .py files here
+# are developer tooling under tools/, and their cache directories were showing
+# up as untracked noise in every `git status`. Noise in status is not cosmetic:
+# it is what makes a stray file easy to miss.
+__pycache__/
+*.py[cod]

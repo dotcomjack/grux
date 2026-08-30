@@ -1,0 +1,76 @@
+name: Bug report
+description: Something in Grux does not do what it says it does
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please do not paste API keys, tokens or passwords
+        into this form. Naming the credential is enough.
+
+        If the issue is exploitable, close this and use
+        [private reporting](https://github.com/dotcomjack/grux/security/advisories/new)
+        instead.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open the Meetings tab
+        2. Start a recording
+        3. ...
+    validations:
+      required: true
+
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: "14.6"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: How did you get Grux
+      options:
+        - Built from source with build.sh
+        - Built from source with swift build
+        - Downloaded a release
+    validations:
+      required: true
+
+  - type: input
+    id: commit
+    attributes:
+      label: Commit or release
+      description: Output of `git rev-parse --short HEAD`, or the release tag.
+
+  - type: textarea
+    id: feature
+    attributes:
+      label: Which feature
+      description: >
+        The sidebar tab, and whether it showed a needs-setup dot or a BETA badge
+        at the time.
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output
+      description: >
+        The filesystem audit log lives at
+        `~/Library/Application Support/Grux/fs-audit.log`. Redact anything
+        sensitive before pasting; the log records paths, and a path can be
+        revealing on its own.
+      render: text

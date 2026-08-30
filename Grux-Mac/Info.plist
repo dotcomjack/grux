@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>Grux OS</string>
+	<key>CFBundleExecutable</key>
+	<string>Grux</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIconName</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.gruxai.grux</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Grux OS</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.2.1</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.gruxai.grux.oauth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>grux</string>
+			</array>
+		</dict>
+	</array>
+	<key>CFBundleVersion</key>
+	<string>7</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Grux reads the frontmost app and window title to judge focus.</string>
+	<key>NSAppleMusicUsageDescription</key>
+	<string>Grux plays music from your Apple Music library and catalog when you ask it to.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_grux-phone._tcp</string>
+		<string>_grux-phone._tcp.local</string>
+	</array>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Grux reads your calendar events so the workday log can show which meetings you attended and align them with ambient transcripts.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>Grux reads your calendar events so the workday log can show which meetings you attended and align them with ambient transcripts.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Grux reads your contacts so it can look up emails and phone numbers for you and link meeting speakers to real people.</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Grux listens on your Wi-Fi so the Grux Phone app on your iPhone can stream audio directly to this Mac. Nothing leaves your network.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Grux uses the microphone for dictation and voice commands. If you turn it on in Settings, it can also listen for a wake word, or continuously transcribe your meetings and conversations. Continuous listening is off by default, and audio is transcribed on this Mac and never uploaded.</string>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>Grux watches the screen to keep you on your current focus task and nudge you when you drift.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Grux transcribes your voice into chat so you can talk to your assistant hands-free.</string>
+	<key>NSSystemAudioRecordingUsageDescription</key>
+	<string>Grux captures system audio (calls, meetings) to transcribe them locally with WhisperKit.</string>
+</dict>
+</plist>

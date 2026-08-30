@@ -1,0 +1,32 @@
+{
+  "_doc": "Per-project Commands V2 ship config. Lives at <project-root>/.grux/ship-config.json. Without this file, Phase 5 (publish) refuses to run rather than guess at signing identities. Copy this template and fill in the concrete values for each iOS app.",
+
+  "ascAppId": "0000000000",
+  "_ascAppId": "App Store Connect numeric app id (the ASC URL ends with this). Required.",
+
+  "bundleId": "com.example.app",
+  "_bundleId": "iOS bundle identifier. Must match the .pbxproj's PRODUCT_BUNDLE_IDENTIFIER for the Release config.",
+
+  "teamId": "AAAAAAAAAA",
+  "_teamId": "Apple Developer team id (10-char). Used in xcodebuild DEVELOPMENT_TEAM. Required.",
+
+  "ascApiKeyId": "XXXXXXXXXX",
+  "ascApiKeyIssuerId": "00000000-0000-0000-0000-000000000000",
+  "ascApiKeyPath": "./AuthKey_XXXXXXXXXX.p8",
+  "_ascApiKey": "App Store Connect API key. Required for publish + status checks. Path is relative to project root; can also live at ~/.appstoreconnect/private_keys/.",
+
+  "distSigningIdentity": "Apple Distribution: Your Name (AAAAAAAAAA)",
+  "_distSigningIdentity": "Codesign identity used by xcodebuild -exportArchive. Must exist in the local keychain. Run `security find-identity -v -p codesigning` to confirm.",
+
+  "distProvisioningProfile": "App Store Distribution Profile",
+  "_distProvisioningProfile": "Provisioning profile name (NOT UUID, the human-readable name shown in Xcode). The .mobileprovision file should be installed via Xcode or `cp ~/Downloads/foo.mobileprovision ~/Library/MobileDevice/Provisioning\\ Profiles/`.",
+
+  "infoPlistPath": "ios/MyApp/Info.plist",
+  "_infoPlistPath": "Path to the main target's Info.plist (relative to project root). The publish phase bumps CFBundleShortVersionString + CFBundleVersion here.",
+
+  "subTargetPlists": [],
+  "_subTargetPlists": "Optional list of additional Info.plist files (widget, watch app, share extension) that need synchronized version bumps. Paths relative to project root.",
+
+  "submissionOrchestrator": "asc-submit.js",
+  "_submissionOrchestrator": "Path to the project's submission orchestrator script (relative to project root). Some projects version this per release, for example asc-fix-04-submit-<version>.js. Must accept no args and read its config from env vars or this file."
+}
