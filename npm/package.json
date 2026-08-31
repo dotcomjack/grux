@@ -1,0 +1,43 @@
+{
+  "name": "@dotcomjack/grux",
+  "version": "1.2.1",
+  "description": "The one command front door to Grux OS. Finds the app, puts grux on your PATH, and hands you to the real command line.",
+  "bin": {
+    "grux": "bin/grux.js"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "darwin"
+  ],
+  "files": [
+    "bin",
+    "lib",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "keywords": [
+    "grux",
+    "macos",
+    "cli",
+    "agent",
+    "local-first"
+  ],
+  "homepage": "https://gruxai.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dotcomjack/grux.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dotcomjack/grux/issues"
+  },
+  "license": "MIT",
+  "author": "DotcomJack",
+  "publishConfig": {
+    "access": "public"
+  }
+}

@@ -92,6 +92,24 @@ It is that the coding agent already sitting in that terminal can do the work
 with you: install Grux, wire it into the rest of your machine, and go on
 extending it long after setup is done.
 
+Start here. One command, nothing to install first:
+
+```sh
+npx @dotcomjack/grux
+```
+
+That finds Grux.app, puts `grux` on your PATH, and runs setup. After the first
+run, drop the `npx`. The launcher is a dependency free shim that only locates
+the binary and steps aside, so there is one implementation of everything below
+and no second front door to drift. Details in [npm/README.md](npm/README.md).
+
+The binary itself lives at `Grux.app/Contents/MacOS/grux-cli`, so you can link
+it by hand instead if you prefer:
+
+```sh
+ln -s /Applications/Grux.app/Contents/MacOS/grux-cli ~/.local/bin/grux
+```
+
 ```sh
 grux setup                 # the whole first run, unattended
 grux status --json         # what is configured, what is missing
