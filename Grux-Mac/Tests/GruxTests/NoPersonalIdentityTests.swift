@@ -81,6 +81,15 @@ final class NoPersonalIdentityTests: XCTestCase {
         // public contact address above: published project identity, not a
         // private detail that leaked.
         "github.com/dotcomjack/",
+        // The npm scope the launcher publishes under, for exactly the reason
+        // above. `grux` is not an available name on npm: the registry's
+        // typosquatting filter rejects it as too close to grunt, grpc, flux,
+        // rax, rx and urix, and a SCOPED name is npm's own suggested remedy. So
+        // the install command a reader has to type is `npx @dotcomjack/grux`,
+        // and a guard that fails on it makes the README impossible to write.
+        // Published project identity, same class as the repository URL, and it
+        // is narrow: it matches the scope prefix and nothing else.
+        "@dotcomjack/",
     ]
 
     /// Files whose JOB is to hold the banned vocabulary, so they must contain it.
