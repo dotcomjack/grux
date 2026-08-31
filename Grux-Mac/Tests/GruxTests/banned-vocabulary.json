@@ -1,0 +1,63 @@
+{
+  "_comment": "THE SHARED BANNED VOCABULARY. Read by BOTH guards, so neither can gain a term the other lacks. NoPersonalIdentityTests.swift reads it and applies word boundary matching to .swift and .md files. scripts/oss-scan.py reads it and applies the same word boundaries to EVERY file type in the publishing set. Neither guard carries its own copy any more. Everything here is already public: it ships inside the test that reads it. The never publish values live outside every repository and are python only.",
+  "banned": [
+    "jack",
+    "dotcomjack",
+    "jackbrandt",
+    "detroit",
+    "dcj-mini",
+    "ai anyone",
+    "aianyone",
+    "motor city organics",
+    "motorcityorganics",
+    "mut demon",
+    "djbnb",
+    "holdable",
+    "the binaural",
+    "boardsnap",
+    "10xdesign",
+    "10xbuilds",
+    "robinbot",
+    "pocketcurio",
+    "thudletter",
+    "arc raiders",
+    "flashtribes",
+    "fledgify",
+    "mco",
+    "dcj",
+    "mac mini"
+  ],
+  "allowed_contexts": [
+    "com.gruxai.grux",
+    "gruxai.com",
+    "jack@dotcomjack.com",
+    "com.dcj.gruxphone",
+    "github.com/dotcomjack/",
+    "@dotcomjack/",
+    "Copyright (c) 2026 DotcomJack",
+    "\"author\": \"DotcomJack\"",
+    "com.dcj.",
+    "bundleIdPrefix: com.dcj"
+  ],
+  "allowed_contexts_why": {
+    "com.gruxai.grux": "The shipping bundle id. Changing it revokes every macOS TCC permission grant the app holds.",
+    "gruxai.com": "The product domain. Product identity, not personal identity.",
+    "jack@dotcomjack.com": "The sanctioned PUBLIC contact address.",
+    "com.dcj.gruxphone": "The iPhone companion's bundle id, deliberately not renamed when the Mac app moved. Changing it revokes every grant the paired app holds and orphans the pairing. A shipping identifier a stranger re-signs under their own team anyway.",
+    "github.com/dotcomjack/": "The repository's own URL. Every clone command, issue template link and advisory link has to name the account the project is hosted under, and a guard that fails on the project's own address makes documentation impossible to write.",
+    "@dotcomjack/": "The npm scope the launcher publishes under. npm rejects the bare name `grux` through its typosquatting filter, so the scope is not a preference and the install command a reader types is `npx @dotcomjack/grux`. Same class as the repository URL.",
+    "Copyright (c) 2026 DotcomJack": "The licence attribution. DotcomJack is the sanctioned PUBLIC builder alias.",
+    "\"author\": \"DotcomJack\"": "The npm package author field. Same public alias.",
+    "com.dcj.": "The sanctioned bundle id prefix for shipped apps. Product identity.",
+    "bundleIdPrefix: com.dcj": "The same prefix as declared in the iOS project file, where it has no trailing dot."
+  },
+  "banned_why": {
+    "dcj": "Word boundary matched, so it catches `DCJ Command` without catching `com.gruxai.grux`.",
+    "mco": "The bare brand ABBREVIATIONS. The first version of this list carried `motorcityorganics` but not `mco`, so `case .mco: return \"MCO\"` was invisible to the very guard written to catch it. An adversarial reviewer found that, not the guard.",
+    "mac mini": "The owner's hardware, referred to in user facing copy as `the Mini`. A stranger running a Linux box was once told their host was a Mac Mini."
+  },
+  "holder_files": [
+    "Grux-Mac/Tests/GruxTests/banned-vocabulary.json"
+  ],
+  "holder_files_why": "Files whose JOB is to hold this vocabulary, so they necessarily contain every term. A guard cannot check for a word without naming it. Kept to files a maintainer reads, never ordinary source. This list is deliberately tiny: the other two holders, scripts/oss-scan.py and tools/leak-gate.py, are excluded from publishing altogether rather than exempted, because unlike this file nothing at runtime needs to read them."
+}

@@ -36,61 +36,66 @@ import XCTest
 /// id: changing it revokes every macOS TCC permission grant the app holds.
 final class NoPersonalIdentityTests: XCTestCase {
 
-    /// Terms that must never appear in a shipped string. Lowercased; matching
-    /// is case-insensitive.
+    /// The shared banned vocabulary, read from `banned-vocabulary.json` beside
+    /// this file.
     ///
-    /// `dcj` is word-boundary matched so it catches `DCJ Command` without
-    /// catching `com.gruxai.grux`, which is handled by the allowlist below anyway
-    /// but would otherwise make every failure message noisy.
-    static let bannedWords = [
-        "jack", "dotcomjack", "jackbrandt", "detroit", "dcj-mini",
-        "ai anyone", "aianyone", "motor city organics", "motorcityorganics",
-        "mut demon", "djbnb", "holdable", "the binaural", "boardsnap",
-        "10xdesign", "10xbuilds", "robinbot", "pocketcurio", "thudletter",
-        "arc raiders", "flashtribes", "fledgify",
-        // The bare brand ABBREVIATIONS, which the first version of this list
-        // missed entirely. It carried "motorcityorganics" but not "mco", and
-        // "dcj-mini" but not bare "dcj", so `case .mco: return "MCO"` was
-        // invisible to the very guard written to catch it. An adversarial
-        // reviewer found this, not the guard.
-        "mco", "dcj",
-        // The owner's hardware, referred to in user-facing copy as "the Mini".
-        // A stranger running a Linux box was told their host was a Mac Mini.
-        "mac mini",
-    ]
+    /// A FILE RATHER THAN TWO LITERAL ARRAYS, because there used to be two
+    /// copies of this vocabulary, one here and one inside `scripts/oss-scan.py`,
+    /// and they drifted. Measured 2026-08-31 by probing the scanner with one
+    /// file per term: the scanner, which is the PRE-PUBLISH gate, knew 13 of
+    /// these 25 and missed twelve, `dotcomjack` among them. That is exactly why
+    /// a tree the scanner passed went on to fail this test in CI. Both read this
+    /// file now, so neither can gain a term the other lacks.
+    ///
+    /// The two guards still MATCH differently, on purpose. This one understands
+    /// Swift string literals, tells code from comments, and reads only `.swift`
+    /// and `.md`. The scanner reads every byte of every file type in the
+    /// publishing set and knows nothing about syntax. One vocabulary, two
+    /// lenses, and the lenses are the point: neither alone covers the tree.
+    ///
+    /// Matching is word boundary and case insensitive, which is why `dcj`
+    /// catches `DCJ Command` without catching `com.gruxai.grux`.
+    ///
+    /// ABSENT IS A FAILURE, never an empty pass. A vocabulary that does not load
+    /// reports every tree as clean, which is indistinguishable from a tree that
+    /// is actually clean, and that is the precise shape of the bug this file
+    /// exists to prevent. So this traps rather than defaulting to empty. The
+    /// crash also leaves no "Executed N tests" line, which trips the floor in
+    /// the CI workflow, so the failure is loud from two directions.
+    private struct Vocabulary: Decodable {
+        let banned: [String]
+        let allowedContexts: [String]
+        enum CodingKeys: String, CodingKey {
+            case banned
+            case allowedContexts = "allowed_contexts"
+        }
+    }
+
+    private static let vocabulary: Vocabulary = {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .appendingPathComponent("banned-vocabulary.json")
+        guard let data = try? Data(contentsOf: url),
+              let loaded = try? JSONDecoder().decode(Vocabulary.self, from: data),
+              !loaded.banned.isEmpty,
+              !loaded.allowedContexts.isEmpty
+        else {
+            fatalError("""
+                banned-vocabulary.json is missing, unreadable or empty at \(url.path). \
+                This guard refuses to run without its vocabulary, because an empty \
+                list reports every tree as clean. Restore the file.
+                """)
+        }
+        return loaded
+    }()
+
+    /// Terms that must never appear in a shipped string.
+    static var bannedWords: [String] { vocabulary.banned }
 
     /// Substrings that make a literal legitimate even though it matches a
     /// banned word. Kept small on purpose: a long allowlist is how a guard
-    /// becomes decorative.
-    static let allowedContexts = [
-        "com.gruxai.grux",     // shipping bundle id, tied to TCC grants
-        "gruxai.com",       // product domain
-        "jack@dotcomjack.com", // the sanctioned PUBLIC contact address
-        // The iPhone companion's bundle id, DELIBERATELY not renamed when the Mac
-        // app moved to com.gruxai.grux. Changing it revokes every macOS and iOS
-        // permission grant the paired app holds and orphans the existing pairing,
-        // which is a LOCKED rule in this repo's CLAUDE.md. It matches `dcj` for
-        // the same reason `com.gruxai.grux` used to match, and it is product
-        // identity rather than personal identity: it is a shipping identifier a
-        // stranger re-signs under their own team anyway.
-        "com.dcj.gruxphone",
-        // The repository's own URL. Every clone command, every issue template
-        // link and every advisory link has to name the account the project is
-        // hosted under, and a guard that fails on the project's own address
-        // makes documentation impossible to write. Same class as the sanctioned
-        // public contact address above: published project identity, not a
-        // private detail that leaked.
-        "github.com/dotcomjack/",
-        // The npm scope the launcher publishes under, for exactly the reason
-        // above. `grux` is not an available name on npm: the registry's
-        // typosquatting filter rejects it as too close to grunt, grpc, flux,
-        // rax, rx and urix, and a SCOPED name is npm's own suggested remedy. So
-        // the install command a reader has to type is `npx @dotcomjack/grux`,
-        // and a guard that fails on it makes the README impossible to write.
-        // Published project identity, same class as the repository URL, and it
-        // is narrow: it matches the scope prefix and nothing else.
-        "@dotcomjack/",
-    ]
+    /// becomes decorative. Each entry's reasoning lives in the json.
+    static var allowedContexts: [String] { vocabulary.allowedContexts }
 
     /// Files whose JOB is to hold the banned vocabulary, so they must contain it.
     ///
@@ -294,7 +299,6 @@ final class NoPersonalIdentityTests: XCTestCase {
         // with `com.gruxai.`. It also cannot rot, because
         // `testKnownRemainingIsNotStale` fails the moment this file stops
         // matching, which is the day the migration can finally be deleted.
-        "Grux-Mac/Sources/Grux/KeychainServiceMigrator.swift": ["dcj"],
 
         // The three documents that DESCRIBE that migration. They have to name
         // the service being migrated away from, or the migration is undocumented
@@ -311,9 +315,6 @@ final class NoPersonalIdentityTests: XCTestCase {
         // (`.graph`, `.vault`, `.webhooks`), so allowlisting it would stop the
         // migrator matching at all and turn the entry above stale. Measured, not
         // assumed.
-        "Grux-Mac/docs/capability-system.md": ["dcj"],
-        "Grux-Mac/docs/contract.md": ["dcj"],
-        "Grux-Mac/SECURITY.md": ["dcj"],
 
         // The repository's own instructions file. Same keychain migration story,
         // plus the published author alias in the passage explaining why the
