@@ -229,6 +229,68 @@ jobs:
           fi
           grep -E "Executed [0-9]+ tests" /tmp/grux-test.log | tail -1
 
+      # The npm launcher's own suite. A STEP on this job rather than a job of
+      # its own, and both halves of that are deliberate.
+      #
+      # It has to run on macOS. `bin/grux.js` exits 1 on any non-darwin platform
+      # by design, `"os": ["darwin"]` in its package.json says the same, and the
+      # tests spawn the real binary rather than importing around it. On a Linux
+      # runner every one of them would fail, and a job that cannot pass is worse
+      # than no job because somebody will eventually "fix" it by deleting the
+      # assertions.
+      #
+      # And it has to be THIS macOS job. A second macOS job means a second macOS
+      # runner, billed at ten times the Linux rate, to run eleven tests that
+      # finish in under half a second. Here it is a couple of seconds on a
+      # runner already paid for.
+      #
+      # Placed AFTER the Swift suite for the reason the release build below
+      # carries: a launcher failure that aborted the job earlier would leave the
+      # Swift result unknown, and attribution is the thing that makes a red run
+      # actionable.
+      #
+      # WHAT THIS DOES NOT COVER, so the green tick is not read as more than it
+      # is. `package.json` declares `engines.node >= 18` and this pins 20, so
+      # that floor is asserted and never exercised. It also does not pack or
+      # install the tarball, so what is tested is the source tree, not the
+      # artifact a stranger downloads from the registry.
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Same shape as the Swift test step above, and for the same reason: exit 0
+      # with nothing collected is indistinguishable from exit 0 with everything
+      # passing.
+      #
+      # A FLOOR, not a presence check, and that distinction was measured rather
+      # than assumed. `node --test` on a file that declares no tests at all
+      # reports `tests 1 / pass 1`, counting the file itself, and exits 0. So
+      # "did a count line appear" passes an emptied suite, and only catches the
+      # narrower case of a glob matching no files. Gutting smoke.test.js would
+      # have sailed through.
+      #
+      # Same contract as ToolCatalogueTests pinning 116: the number is a floor,
+      # so adding tests never breaks it, and removing one is meant to make
+      # somebody come here and say so on purpose.
+      - name: Launcher tests
+        working-directory: npm
+        env:
+          MIN_TESTS: 11
+        run: |
+          set -o pipefail
+          node --test test/*.test.js 2>&1 | tee /tmp/grux-npm-test.log
+          COUNT="$(grep -oE '[[:space:]]tests [0-9]+' /tmp/grux-npm-test.log | head -1 | awk '{print $2}')"
+          if [ -z "$COUNT" ]; then
+            echo "::error::no test count line, so zero launcher tests were collected"
+            exit 1
+          fi
+          if [ "$COUNT" -lt "$MIN_TESTS" ]; then
+            echo "::error::only $COUNT launcher tests ran, expected at least $MIN_TESTS. If a test was removed on purpose, lower MIN_TESTS in this workflow in the same commit."
+            exit 1
+          fi
+          echo "launcher tests collected: $COUNT (floor $MIN_TESTS)"
+
       # The contract checker guards itself first. A checker that cannot fail
       # would report a broken contract as clean, and the self-test is the only
       # thing that distinguishes the two.
