@@ -218,15 +218,41 @@ jobs:
       # nothing about the suite. Run the tests, then assert a test actually ran:
       # an exit code of 0 with no "Executed N tests" line is indistinguishable
       # from zero tests collected, and zero collected is a failure.
+      # A FLOOR, not a presence check. This step used to assert only that an
+      # "Executed N tests" line appeared anywhere, which passes a suite that has
+      # silently collapsed. 2491 tests is a number nobody reads, so a run that
+      # quietly dropped to 40 would show the same green tick as a full one, and
+      # the realistic causes are all silent: a test target dropped from
+      # Package.swift, a `--filter` left in from debugging, a target that stops
+      # being discovered.
+      #
+      # TAKE THE MAXIMUM, not the first match and not the last. `swift test`
+      # prints one line per suite BEFORE the grand total, so on the real CI log
+      # `head -1` reads 4 and would wave through a fully collapsed run. `tail -1`
+      # happens to be right today because the total is printed last, but it
+      # breaks the moment anything prints after it. The largest number in the
+      # output is the total by definition, whatever the ordering.
+      #
+      # Same contract as the launcher floor below and ToolCatalogueTests pinning
+      # 116: adding tests never trips it, and removing enough to cross the floor
+      # is meant to make somebody come here and lower it on purpose.
       - name: Test
         working-directory: Grux-Mac
+        env:
+          MIN_TESTS: 2400
         run: |
           set -o pipefail
           swift test 2>&1 | tee /tmp/grux-test.log
-          if ! grep -qE "Executed [0-9]+ tests" /tmp/grux-test.log; then
+          COUNT="$(grep -oE 'Executed [0-9]+ tests' /tmp/grux-test.log | grep -oE '[0-9]+' | sort -n | tail -1)"
+          if [ -z "$COUNT" ]; then
             echo "::error::no 'Executed N tests' line, so zero tests were collected"
             exit 1
           fi
+          if [ "$COUNT" -lt "$MIN_TESTS" ]; then
+            echo "::error::only $COUNT Swift tests ran, expected at least $MIN_TESTS. A drop this size means a target or filter changed, not that somebody deleted one test. If it was deliberate, lower MIN_TESTS in this workflow in the same commit."
+            exit 1
+          fi
+          echo "Swift tests collected: $COUNT (floor $MIN_TESTS)"
           grep -E "Executed [0-9]+ tests" /tmp/grux-test.log | tail -1
 
       # The npm launcher's own suite. A STEP on this job rather than a job of
