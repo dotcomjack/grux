@@ -115,9 +115,13 @@ struct ProjectsView: View {
             } label: {
                 Image(systemName: obs.isRefreshing ? "arrow.triangle.2.circlepath" : "arrow.clockwise")
                     .rotationEffect(.degrees(obs.isRefreshing ? 360 : 0))
-                    .animation(obs.isRefreshing
+                    // Gated like every other loop in the app. A spinner that
+                    // is honestly reporting work still has no business turning
+                    // while the user asked for less motion, or while the window
+                    // it lives in is behind something else.
+                    .animation(MotionTokens.gated(obs.isRefreshing
                                ? .linear(duration: 1).repeatForever(autoreverses: false)
-                               : .default, value: obs.isRefreshing)
+                               : .default), value: obs.isRefreshing)
             }
             .help("Refresh now")
             .buttonStyle(.borderless)

@@ -426,10 +426,19 @@ enum MotionTokens {
     static var spring: Animation { .spring(response: 0.35, dampingFraction: 0.8) }
 
     // reduceMotion gate for decorative animation: returns nil (no animation)
-    // when the user opted out. Reads the lock-guarded palette snapshot, so
-    // it is safe from any thread and matches GruxTheme.reduceMotion exactly.
+    // when motion is off. BOTH halves of the gate, deliberately: the palette
+    // opt-out and MotionSuspension, which is the "nobody is looking" half.
+    //
+    // Until 2026-08-31 this read the palette alone while its own comment
+    // claimed it "matches GruxTheme.reduceMotion exactly". It did not.
+    // GruxTheme.reduceMotion ORs in MotionSuspension.suspended, so every call
+    // site kept animating with the app in the background, which is the exact
+    // cost MotionSuspension exists to remove. Deferring to GruxTheme rather
+    // than repeating the OR is the point: one expression, so a third reason
+    // to stop motion cannot be added to one of them and missed by the other.
+    // Both reads are lock-guarded snapshots, so this stays safe from any thread.
     static func gated(_ animation: Animation) -> Animation? {
-        ThemeConfig.currentPalette.reduceMotion ? nil : animation
+        GruxTheme.reduceMotion ? nil : animation
     }
 }
 

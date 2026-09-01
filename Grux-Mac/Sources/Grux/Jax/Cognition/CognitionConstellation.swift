@@ -32,10 +32,13 @@ struct CognitionConstellation: View {
         VStack(alignment: .leading, spacing: 8) {
             MetaAdsEyebrow(text: "Heuristic constellation", icon: "point.3.connected.trianglepath.dotted", tint: GruxTheme.accentPrimaryLight)
 
-            // TimelineView drives continuous ambient motion. It only ticks while
-            // this tab is on screen (LaunchRootView instantiates the view per tab),
-            // so there is no background battery cost.
-            TimelineView(.animation(minimumInterval: 1.0 / 40.0)) { tl in
+            // TimelineView drives continuous ambient motion. Being on screen is
+            // NOT on its own a reason to keep ticking: the tab stays instantiated
+            // while the app sits in the background, where 40fps buys nobody
+            // anything. `paused:` is what the three Reactor timelines already do,
+            // and this one was the only ambient timeline missing it.
+            TimelineView(.animation(minimumInterval: 1.0 / 40.0,
+                                    paused: GruxTheme.reduceMotion)) { tl in
                 let t = tl.date.timeIntervalSinceReferenceDate
                 GeometryReader { geo in
                     let layout = self.layout(in: geo.size)

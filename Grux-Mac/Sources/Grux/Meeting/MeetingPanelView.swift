@@ -42,7 +42,7 @@ struct MeetingPanelView: View {
                         .strokeBorder(Color.red.opacity(service.isCapturing ? 0.6 : 0), lineWidth: 2)
                         .scaleEffect(service.isCapturing ? 1.6 : 1.0)
                         .opacity(service.isCapturing ? 0.3 : 0)
-                        .animation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true), value: service.isCapturing)
+                        .animation(MotionTokens.gated(.easeInOut(duration: 1.0).repeatForever(autoreverses: true)), value: service.isCapturing)
                 )
             VStack(alignment: .leading, spacing: 1) {
                 Text("MEETING")

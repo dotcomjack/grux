@@ -565,7 +565,8 @@ struct ChatView: View {
                         Image(systemName: voice.isRecording ? "mic.fill" : "mic")
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundStyle(voice.isRecording ? Color.white : GruxTheme.accentPrimary)
-                            .symbolEffect(.pulse, options: .repeating, isActive: voice.isRecording)
+                            .symbolEffect(.pulse, options: .repeating,
+                                           isActive: voice.isRecording && !GruxTheme.reduceMotion)
                     }
                 }.buttonStyle(.plain).help(voice.isRecording ? "Stop listening" : "Dictate")
 
@@ -1072,6 +1073,12 @@ struct WaveformBar: View {
             }
         }
         .onAppear {
+            // Bars keep their level-driven heights with motion off. Only the
+            // travelling jitter stops, so the strip still shows the mic is live.
+            guard !GruxTheme.reduceMotion else {
+                phase = 0
+                return
+            }
             withAnimation(.linear(duration: 1.2).repeatForever(autoreverses: false)) {
                 phase = 2 * .pi
             }

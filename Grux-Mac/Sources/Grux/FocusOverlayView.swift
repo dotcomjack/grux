@@ -284,6 +284,15 @@ private struct PulseOrb: View {
     }
 
     private func startAnimating() {
+        // Decorative motion gate. This one matters more than most: the overlay
+        // is a `.canJoinAllSpaces` panel, so it follows the user onto every
+        // Space and is composited on all of them. Freeze at rest rather than
+        // wherever the cycle happened to be, so the ring reads as deliberate.
+        guard !GruxTheme.reduceMotion else {
+            phase = 0
+            breath = 0
+            return
+        }
         withAnimation(.linear(duration: 9).repeatForever(autoreverses: false)) {
             phase = 2 * .pi
         }

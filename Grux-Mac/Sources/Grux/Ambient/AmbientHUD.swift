@@ -275,7 +275,8 @@ struct AmbientHUDRoot: View {
             HStack(spacing: 8) {
                 Image(systemName: isFlushingTurn ? "hourglass" : "hand.raised.fill")
                     .font(.system(size: 12, weight: .bold))
-                    .symbolEffect(.pulse, options: .repeating, isActive: isFlushingTurn)
+                    .symbolEffect(.pulse, options: .repeating,
+                                  isActive: isFlushingTurn && !GruxTheme.reduceMotion)
                 Text(isFlushingTurn ? "PROCESSING…" : "I'M DONE TALKING")
                     .font(.system(size: 11, weight: .heavy, design: .monospaced))
                     .kerning(1.8)
@@ -317,7 +318,8 @@ struct AmbientHUDRoot: View {
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(.cyan)
                         .frame(width: 20)
-                        .symbolEffect(.variableColor.iterative, isActive: ambient.coachIsSpeaking)
+                        .symbolEffect(.variableColor.iterative,
+                                      isActive: ambient.coachIsSpeaking && !GruxTheme.reduceMotion)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("COACH")
                             .font(.system(size: 9, weight: .heavy)).kerning(1.5).foregroundStyle(.cyan)
