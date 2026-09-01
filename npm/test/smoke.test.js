@@ -22,11 +22,32 @@ function fakeApp(withBinary = true) {
   return { root, app }
 }
 
-const run = (args, env = {}) =>
-  spawnSync(process.execPath, [BIN, ...args], {
-    encoding: 'utf8',
-    env: { ...process.env, ...env },
-  })
+// EVERY SPAWN GETS A THROWAWAY HOME, and that is not tidiness.
+//
+// The launcher links `grux` into the first writable directory on PATH before it
+// does anything else, so a test that spawns it with the real environment
+// rewrites the developer's OWN ~/.local/bin/grux. Measured 2026-08-31: after a
+// test run that symlink pointed at a fixture under /var/folders that the test
+// had already deleted, so `grux` was broken on the machine until it was relinked
+// by hand. A test suite that breaks the tool it is testing is worse than no
+// suite, because the damage outlives the run and looks like a product bug.
+//
+// PATH is narrowed to the temp bin as well. Inheriting the real PATH would send
+// the link back to whichever writable directory happened to be on it first,
+// which is the very thing being isolated.
+const run = (args, env = {}) => {
+  const home = mkdtempSync(join(tmpdir(), 'grux-home-'))
+  const bin = join(home, '.local', 'bin')
+  mkdirSync(bin, { recursive: true })
+  try {
+    return spawnSync(process.execPath, [BIN, ...args], {
+      encoding: 'utf8',
+      env: { ...process.env, HOME: home, PATH: `${bin}:/usr/bin:/bin`, ...env },
+    })
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+}
 
 // ---------------------------------------------------------------------------
 // The bug this file exists for.
