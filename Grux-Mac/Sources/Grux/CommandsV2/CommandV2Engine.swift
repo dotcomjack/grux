@@ -264,7 +264,7 @@ public final class CommandV2Engine: ObservableObject {
     /// Two different rules, because the two slots fail differently.
     ///
     /// A `{project}` capture has to NAME a project that exists. That is precise, it needs no
-    /// heuristic, and it keeps every intended phrasing working: "ship Thudletter" still
+    /// heuristic, and it keeps every intended phrasing working: "ship Grux" still
     /// fires, "ship it when you get a chance" does not.
     ///
     /// A `{content}` capture can be anything by definition, so there is nothing to check
