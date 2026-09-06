@@ -347,11 +347,22 @@ final class ShellOutputGuardTests: XCTestCase {
     /// table never had. Guards against someone reintroducing a local table that happens
     /// to satisfy the equality above by reimplementing a subset.
     func testShellRedactionCoversShapesTheOldLocalTableMissed() {
+        // SPLIT ACROSS `+` LIKE EVERY OTHER FIXTURE IN THIS FILE, and the reason is not
+        // style. These are synthetic, but a scanner reads bytes and cannot know that.
+        // Committed whole on 2026-09-06, the Stripe one tripped GitHub secret scanning on
+        // the public mirror within a minute (alert 1, "Stripe Webhook Signing Secret",
+        // validity unknown because there is nothing real to validate). A repository
+        // carrying an open secret alert teaches everyone who sees it to ignore the next
+        // one, which is the actual cost.
+        //
+        // `whsec_` is one of the prefixes GitHub validity-checks with the provider, which
+        // is why this one alerted while older unsplit fixtures in this same file never
+        // have. Split all four rather than only the one that fired.
         let cases: [(String, String)] = [
-            ("Google API key", "AIzaSyA1234567890123456789012345678901234"),
-            ("HuggingFace token", "hf_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789"),
-            ("Linear API key", "lin_api_aBcDeFgHiJkLmNoPqRsTuV12"),
-            ("Stripe webhook secret", "whsec_aBcDeFgHiJkLmNoPqRsTuV12"),
+            ("Google API key", "AIzaSy" + "A123456789012345678901" + "2345678901234"),
+            ("HuggingFace token", "hf_" + "aBcDeFgHiJkLmNoPqRs" + "TuVwXyZ0123456789"),
+            ("Linear API key", "lin_api_" + "aBcDeFgHiJkL" + "mNoPqRsTuV12"),
+            ("Stripe webhook secret", "whsec_" + "aBcDeFgHiJkL" + "mNoPqRsTuV12"),
         ]
         for (label, sample) in cases {
             let out = ShellOutputGuard.redact("token is \(sample) end")
