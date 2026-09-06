@@ -1,5 +1,8 @@
 # Grux
 
+A native macOS app that gives an AI agent your mail, your calendar, your meetings
+and a shell it can undo. Your own API key, or a local model and no key at all.
+
 [![CI](https://github.com/dotcomjack/grux/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dotcomjack/grux/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/dotcomjack/grux?label=download&color=7C5CFF)](https://github.com/dotcomjack/grux/releases/latest)
 [![Licence](https://img.shields.io/badge/licence-MIT-7C5CFF)](LICENSE)
@@ -46,12 +49,49 @@ those are not yours to look at.
 
 ---
 
+## Install
+
+**Download the notarized build.** This is the front door. It is signed with a
+Developer ID, notarized by Apple and stapled, so it opens on a Mac that has never
+seen it without a right click and without a trip through System Settings.
+
+[**Download Grux 1.2.1 for Apple silicon**](https://github.com/dotcomjack/grux/releases/latest) (23 MB, macOS 14+)
+
+Unzip it, drag `Grux.app` to Applications, open it. There is no installer and no
+updater phoning home. To check what you got before you run it:
+
+```sh
+shasum -a 256 Grux-macOS-arm64.zip     # compare against the checksum in the release notes
+
+spctl -a -vv /Applications/Grux.app
+# Grux.app: accepted
+# source=Notarized Developer ID
+```
+
+The checksum lives in the release notes rather than here, because it changes every
+release and a copy in this file is a copy that goes stale.
+
+**Or through Homebrew.**
+
+```sh
+brew install --cask dotcomjack/tap/grux
+```
+
+**Then wire up the command line**, if you want one. This finds the app you just
+installed, puts `grux` on your PATH and runs setup. It installs nothing itself:
+
+```sh
+npx @dotcomjack/grux
+```
+
+Building from source is in [Building](#building) below, and it is the path to take
+if you want to change something rather than run it.
+
 ## Table of contents
 
 - [What it actually does](#what-it-actually-does)
 - [The command line](#the-command-line)
 - [What it costs](#what-it-costs)
-- [Install](#install)
 - [Requirements](#requirements)
 - [Building](#building)
 - [First run](#first-run)
@@ -59,12 +99,15 @@ those are not yours to look at.
 - [Privacy posture](#privacy-posture)
 - [Feature tiers](#feature-tiers)
 - [The phone companion](#the-phone-companion)
+- [Build on it](#build-on-it)
 - [Repository layout](#repository-layout)
 - [Tests](#tests)
 - [Who made this](#who-made-this)
 - [Security](#security)
 - [Contributing](#contributing)
 - [License](#license)
+
+---
 
 ---
 
@@ -145,44 +188,6 @@ never proxies a request through anything we run, so there is no markup and no
 middleman with a copy of your prompts.
 
 If you run a local model through Ollama, it costs nothing at all.
-
-## Install
-
-**Download the notarized build.** This is the front door. It is signed with a
-Developer ID, notarized by Apple and stapled, so it opens on a Mac that has never
-seen it without a right click and without a trip through System Settings.
-
-[**Download Grux 1.2.1 for Apple silicon**](https://github.com/dotcomjack/grux/releases/latest) (23 MB, macOS 14+)
-
-Unzip it, drag `Grux.app` to Applications, open it. There is no installer and no
-updater phoning home. To check what you got before you run it:
-
-```sh
-shasum -a 256 Grux-macOS-arm64.zip     # compare against the checksum in the release notes
-
-spctl -a -vv /Applications/Grux.app
-# Grux.app: accepted
-# source=Notarized Developer ID
-```
-
-The checksum lives in the release notes rather than here, because it changes every
-release and a copy in this file is a copy that goes stale.
-
-**Or through Homebrew.**
-
-```sh
-brew install --cask dotcomjack/tap/grux
-```
-
-**Then wire up the command line**, if you want one. This finds the app you just
-installed, puts `grux` on your PATH and runs setup. It installs nothing itself:
-
-```sh
-npx @dotcomjack/grux
-```
-
-Building from source is in [Building](#building) below, and it is the path to take
-if you want to change something rather than run it.
 
 ## Requirements
 
@@ -336,6 +341,65 @@ traffic never leaves your LAN.
 
 It is a labs feature and it is opt in. If you never pair a phone, the Mac never
 opens a listening socket.
+
+## Build on it
+
+The reason this is MIT and not a download is that most of what is in here is
+plumbing, and plumbing is the part nobody wants to write twice. If you are building a
+Mac agent, the four modules below are usable without the app around them.
+
+**The pieces.** `GruxShellCore` is a PTY, the safety gates and the snapshot store.
+`GruxAgentCore` is orchestration. `GruxSetupCore` is the capability and permission
+model. `GruxMCPCore` is the read only MCP server. None of the four imports AppKit or
+SwiftUI, so they build and test without the UI stack, and all four are `.library`
+products in `Grux-Mac/Package.swift`. You can depend on one without taking the other
+three or the app.
+
+**To add a tool**, which is the most common thing anyone will want. Tools are declared
+in `ChatService.allTools()` in `Grux-Mac/Sources/Grux/ChatService.swift` and handled in
+the `switch` further down the same file. Copy `add_task`: the declaration is at the top
+of `allTools()` and its handler is the first `case`. Two edits, same file, and the
+model can call it. `ToolCatalogueTests` pins the count at 116, so adding one turns the
+suite red until you move the pin on purpose.
+
+**To add a surface**, meaning a row in the sidebar with its own screen. Add a
+`FeatureRow` to `FeatureRegistry.rows` in
+`Grux-Mac/Sources/Grux/Onboarding/FeatureRegistry.swift`, naming what it `requires` and
+what is merely `optional`. The dot on the sidebar row, the setup sheet, the permission
+table in this README and the BETA badge are all read from that one entry, so getting
+the row right is the whole job.
+
+**What you must not break.** Four guards, and each one exists because the thing it
+catches already happened here:
+
+```sh
+cd Grux-Mac
+swift test                          # 2498 tests
+python3 scripts/check-contract.py   # the setup contract is frozen
+```
+
+The setup contract will not let a capability change meaning without a dated amendment
+in `Grux-Mac/docs/`. `PermissionTableTests` fails if the permission table above stops
+matching the registry. `NoPersonalIdentityTests` fails on a personal name anywhere in
+the shipping tree. The dash guard fails on an em dash or en dash, comments included.
+Several of them plant the fault they detect and assert they catch it, because a guard
+that cannot fail is not a guard.
+
+**What is unfinished, and what I would take.** Honestly said, since this is the part
+that matters if you are deciding whether to spend an evening here:
+
+- **A second model backend.** Chat talks to Anthropic or to Ollama. The seam is real
+  but it has only ever had two implementations, so it is shaped by both of them rather
+  than by the general case. A third would tell you where it is wrong.
+- **The MCP server is read only.** Writes go over a Unix socket instead. Making it a
+  full bidirectional surface is a contained piece of work and it would let any agent
+  drive the whole app.
+- **The 14 BETA surfaces.** Every one of them is real and none of them is finished.
+  Workflows and Agents are the two with the most left in them.
+- **Nothing here runs on an Intel Mac.** One arm64 slice, and no reason beyond nobody
+  having needed it.
+
+If you build something on this, open an issue and tell me. I would rather know.
 
 ## Repository layout
 
