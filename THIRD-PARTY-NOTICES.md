@@ -16,7 +16,7 @@ is included verbatim below.
 
 | Package | Version | Licence |
 |---|---|---|
-| [grux-guardrails](https://github.com/dotcomjack/grux-guardrails) | 0.8.1 | MIT |
+| [grux-guardrails](https://github.com/dotcomjack/grux-guardrails) | 0.8.2 | MIT |
 | [swift-argument-parser](https://github.com/apple/swift-argument-parser) | 1.7.1 | Apache 2.0 |
 | [swift-asn1](https://github.com/apple/swift-asn1) | 1.7.0 | Apache 2.0 |
 | [swift-collections](https://github.com/apple/swift-collections) | 1.4.1 | Apache 2.0 |
@@ -30,7 +30,7 @@ is included verbatim below.
 
 ## grux-guardrails
 
-https://github.com/dotcomjack/grux-guardrails, version 0.8.1, MIT
+https://github.com/dotcomjack/grux-guardrails, version 0.8.2, MIT
 
 ### Licence
 

@@ -29,67 +29,36 @@ import Darwin
 // prompt. So the only control available on the read side of the shell door is
 // what happens to the bytes between the PTY and the model, which is this file.
 //
-// ## Why this owns its own copy of the secret patterns
+// ## Why this no longer owns a copy of the secret patterns
 //
-// `GruxShellCore` is deliberately free of AppKit and SwiftUI so the demo
-// harness and the tests can exercise the whole shell surface without linking
-// the UI stack, and `Package.swift` gives it NO dependency on the `Grux` app
-// target. `SecretRedactor` lives in `Sources/Grux/Redaction.swift`, inside that
-// app target. This file therefore cannot call it, and inverting the dependency
-// would mean moving a redactor that OCR, ambient transcripts and file contents
-// all depend on across a module boundary to serve one new caller.
+// It used to, and two whole sections here argued for it: `GruxShellCore` is free of
+// AppKit and SwiftUI and had no dependency on the `Grux` app target, where
+// `SecretRedactor` lived, so it carried a hand-maintained superset and a test parsed both
+// source files to hold the drift shut. A third section argued that importing the
+// high-entropy sweep would be a mistake because it redacts the output of `pwd` in a deep
+// tree.
 //
-// So the list is duplicated, and a duplicated security list that can drift
-// silently is worse than the gap it closes: the generous copy is the one people
-// quote, and a missing entry produces exactly as much output as a working one.
-// `Tests/GruxTests/ShellOutputGuardTests.swift` holds the drift shut by parsing
-// BOTH source files at runtime and asserting that every pair in
-// `SecretRedactor` appears here verbatim. That test lives in the app test
-// target because it is the only target that can see both sides.
+// ALL THREE ARE NOW FALSE, and they are recorded rather than deleted because this file's
+// own opening paragraph indicts SECURITY.md for exactly this failure: a stale security
+// doc that an auditor believes and then stops reading.
 //
-// ## Why the high-entropy sweep from SecretRedactor is NOT here
+//   - The table is gone. `SecretRedactor` moved to the `grux-guardrails` package, which
+//     has zero dependencies and no UI, so this target depends on it directly. No cycle,
+//     nothing to invert.
+//   - The parity test is gone with it. There are no longer two lists to compare, so
+//     "shell is a superset of the redactor" is true by construction.
+//   - The entropy sweep IS imported now, because `redact` delegates with the full pass
+//     set. The old objection was measured against the app's own entropy rule, not the
+//     package's, and the package rejects path-shaped tokens structurally: the benign
+//     corpus, 64 fixtures including deep source paths and `ls -l` output, comes back with
+//     zero mangles.
 //
-// `SecretRedactor` finishes with a generic rule: any run of 40 or more
-// characters from `[A-Za-z0-9+/=_-]` spanning four character classes is
-// replaced. That rule is right for the text it was written for, which is OCR
-// output and file contents. It is wrong here, and importing it would have been
-// the easy mistake to make while calling this file finished.
-//
-// Shell output is mostly PATHS. `/Users/someone/Code/repo/pkg/Sources/Feature`
-// is 46 characters, is drawn entirely from that character class, and spans
-// upper, lower, digit and symbol the moment any segment carries a numeral. So
-// the entropy rule redacts the output of `pwd` in a deep tree, and most of the
-// output of `find`, `ls -R` and any build log that prints absolute paths. A
-// redactor that mangles ordinary output is worse than none, because the model
-// then reasons about a directory listing that has holes in it and the user
-// cannot tell why. `testAnOrdinaryDirectoryListingIsUntouched` pins that.
-//
-// The two shapes the entropy rule was actually earning its keep on are covered
-// by named patterns instead: the body of a PEM private key (the `PEM` entry
-// below matches the whole block, not just the header line, which is the
-// difference between redacting `cat ~/.ssh/id_rsa` and redacting one line of
-// it) and an AWS secret access key. The residual gap is honest and worth
-// stating: a high-entropy credential in a shape nobody has named, printed by a
-// command nobody anticipated, still reaches the model. That is a smaller gap
-// than the one this file closes and it is not a reason to accept the larger.
+// The copy was not merely redundant, it had fallen behind: fourteen patterns here against
+// twenty six in the package, and the parity test read GREEN because it could no longer
+// find the other table and a comparison against nothing is vacuously true.
+
 public enum ShellOutputGuard {
 
-    /// The tagged patterns, in one place, ordered most-specific-first.
-    ///
-    /// The first fourteen entries are a superset of `SecretRedactor.patterns`
-    /// in `Sources/Grux/Redaction.swift`. Twelve of them are BYTE IDENTICAL to
-    /// their counterparts there, deliberately, so the parity test can compare
-    /// pairs rather than compare behaviour through a sample corpus that would
-    /// itself need maintaining. Do not "tidy" a pattern here without making the
-    /// same edit there, and do not reorder these past each other: the more
-    /// specific prefixes have to win so a Stripe live key keeps its own tag.
-    ///
-    /// `PEM` appears TWICE on purpose. The whole-block entry runs first and eats
-    /// an entire private key; the header-only entry that follows is the exact
-    /// pair `SecretRedactor` carries, kept verbatim so the parity check is a
-    /// plain set comparison, and it still catches an orphan header with no
-    /// matching END line. Both produce the same marker, so the two redactors
-    /// read identically to the model for the input they both handle.
     /// THE PATTERN TABLE THAT USED TO BE HERE IS GONE, and its absence is the fix.
     ///
     /// This file carried a hand-copied superset of `SecretRedactor`'s patterns because

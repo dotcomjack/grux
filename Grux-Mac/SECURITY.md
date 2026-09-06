@@ -195,11 +195,13 @@ filesystem door on purpose.
 
 For what happens to shell OUTPUT before it re-enters the model's context, read
 rows 13 and 14 of section 3 and then check them against the call sites of
-`ShellOutputGuard.redact` and `ShellAuditLog.record` in the tree. Note the
-symbol: shell output does NOT pass through `SecretRedactor`, which is row 4 and
-lives in the app target the shell module cannot reach. A control is applied
-where it is called, not where it is defined, and those rows list the call sites
-for exactly that reason. Do not infer coverage from this document. It was wrong
+`ShellOutputGuard.redact` and `ShellAuditLog.record` in the tree. Shell output DOES
+pass through `SecretRedactor` as of 2026-09-06: it is the one in the
+`grux-guardrails` package, which `GruxShellCore` depends on directly, and
+`ShellOutputGuard.redact` is now a delegation to it. Until that date this
+paragraph said the opposite, correctly for the code of the time. A control is
+applied where it is called, not where it is defined, and those rows list the call
+sites for exactly that reason. Do not infer coverage from this document. It was wrong
 about the shell path once already, for months, and wrong about the `ios_*` path
 in the same edit that fixed the shell one, and both times the wrongness was
 invisible because the sentence was confident.
@@ -255,7 +257,7 @@ the next. File anchors point to the source of truth.
 | 1 | Trust-boundary system prompt                 | `Sources/Grux/ChatService.swift` (`buildSystemBlocks`)              |
 | 2 | Focus-watch system prompt                    | `Sources/Grux/FocusWatcher.swift` (`systemPrompt`)                  |
 | 3 | `<untrusted_data>` wrapping                  | `Sources/Grux/Redaction.swift`                                      |
-| 4 | Secret regex redaction                       | `Sources/Grux/Redaction.swift`, applied in `FocusWatcher.swift` and `Sources/Grux/Ambient/AmbientListener.swift`. Shell output is covered by a SECOND copy of this list in `Sources/GruxShellCore/ShellOutputGuard.swift`, row 13, not by a call into this one |
+| 4 | Secret regex redaction                       | `grux-guardrails` (`SecretRedactor`), aliased at `Sources/Grux/Redaction.swift` and applied in `FocusWatcher.swift` and `Sources/Grux/Ambient/AmbientListener.swift`. Shell output (row 13) and `fs_read`'s content scan both call the same package now, not private copies |
 | 5 | Filesystem allowlist + denylist + rate limit | `Sources/Grux/FilesystemTool.swift`                                 |
 | 6 | Filesystem audit log                         | `Sources/Grux/FilesystemTool.swift` (same file, audit section)      |
 | 7 | Keychain-backed API keys                     | `Sources/Grux/KeychainStore.swift`                                  |
@@ -285,21 +287,34 @@ mode including strict, their stdout went into the prompt verbatim, and no line
 was written anywhere, while `fs_read` on the identical path was refused by the
 section 5 denylist and audit logged.
 
-**Row 13 is a SEPARATE pattern list from row 4, not a second call site of it, and
-that is a cost rather than a detail.** `GruxShellCore` is built with no
-dependency on the `Grux` app target on purpose, so the demo harness and the tests
-can drive the whole shell surface without linking the UI stack. `SecretRedactor`
-lives inside that app target, in `Sources/Grux/Redaction.swift`, so nothing in
-`GruxShellCore` can call it, and inverting the dependency would drag a redactor
-that OCR, ambient transcripts and file contents all depend on across a module
-boundary to serve one new caller. The list is therefore duplicated, and a
-duplicated security list that can drift silently is worse than the gap it closes:
-the more generous copy is the one people quote, and a missing entry produces
-exactly as much output as a working one.
-`Tests/GruxTests/ShellOutputGuardTests.swift` is what keeps that honest.
-`testTheShellPatternSetIsASupersetOfSecretRedactor` parses BOTH source files at
-runtime and fails if any tag and pattern pair in `SecretRedactor` has no verbatim
-counterpart in `ShellOutputGuard`. Superset rather than equality, because the
+**Row 13 was a SEPARATE pattern list from row 4 until 2026-09-06. It is now the same
+list.** `GruxShellCore` is built with no dependency on the `Grux` app target on
+purpose, so the demo harness and the tests can drive the whole shell surface
+without linking the UI stack. `SecretRedactor` used to live inside that app
+target, so nothing in `GruxShellCore` could call it, and the list was duplicated
+by hand with a test parsing both source files to hold the drift shut.
+
+That reason is void. `SecretRedactor` moved to the `grux-guardrails` package,
+which has zero dependencies and no UI, so `GruxShellCore` depends on it directly.
+There is no cycle and nothing to invert. The local table is deleted and
+`ShellOutputGuard.redact` delegates.
+
+**Worth recording why the duplication had to go rather than be re-tested.** By the
+time it was removed the shell copy carried fourteen patterns against the
+package's twenty six, and the parity test read GREEN, because it could no longer
+locate the other table and a comparison against nothing is vacuously true. The
+anti-vacuity assertion beside it is what caught that. A duplicated security list
+that can drift silently is worse than the gap it closes: the more generous copy
+is the one people quote, and a missing entry produces exactly as much output as a
+working one.
+
+**One deliberate exception, at the dispatch exit.** `ShellDispatcher.dispatch`
+re-runs the redactor over every tool result as defence in depth, and that string
+is mostly Grux's own: session ids, snapshot ids, error messages it composed.
+Running the inferring passes over it destroyed them, so that one call site uses
+`ShellOutputGuard.redactControlPlane`, which runs only the passes that work from
+EVIDENCE, a known credential format and a `user:pass@` URL. Subprocess stdout and
+stderr still get the full pass set, in `formatRun`, which runs first.
 shell copy carries two entries the app side has no use for: a whole-block PEM
 match and an `aws_secret_access_key` assignment.
 `testBothRedactorsProduceTheSameMarkerForTheSameInput` then drives both over one

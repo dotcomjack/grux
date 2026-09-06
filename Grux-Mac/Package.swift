@@ -44,7 +44,7 @@ let package = Package(
         // clashing name. 0.7.0 renamed the module to `GruxGuardrails` for that reason.
         //
         // Zero transitive dependencies, so this adds exactly one node to the graph.
-        .package(url: "https://github.com/dotcomjack/grux-guardrails.git", from: "0.8.1"),
+        .package(url: "https://github.com/dotcomjack/grux-guardrails.git", from: "0.8.2"),
     ],
     targets: [
         // Platform-free shell-session core: PTY-backed bash process, shadow-git

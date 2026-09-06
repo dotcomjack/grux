@@ -195,12 +195,14 @@ If you run a local model through Ollama, it costs nothing at all.
   tools-version 6.0, so an older toolchain cannot resolve the dependency graph
 - An Anthropic API key, or Ollama running locally
 
-Dependencies are deliberately thin. Two direct ones.
+Dependencies are deliberately thin. Three direct ones.
 [WhisperKit](https://github.com/argmaxinc/WhisperKit) for on-device speech, which
 pulls in Apple's own packages plus HuggingFace's `swift-transformers`. And
 [grux-guardrails](https://github.com/dotcomjack/grux-guardrails), the secret redactor
 and URL policy, which is mine, MIT, and has no dependencies of its own, so it adds
-exactly one node to the graph. There is no analytics SDK, no crash reporter, and no
+exactly one node to the graph. And
+[swift-argument-parser](https://github.com/apple/swift-argument-parser), which the
+command line links directly rather than riding on WhisperKit's transitive pin. There is no analytics SDK, no crash reporter, and no
 telemetry package in the tree. You can check that yourself in
 `Grux-Mac/Package.resolved`.
 
@@ -516,6 +518,7 @@ new dependency cannot ship uncredited.
 
 | Package | Licence |
 |---|---|
+| [grux-guardrails](https://github.com/dotcomjack/grux-guardrails) | MIT |
 | [swift-argument-parser](https://github.com/apple/swift-argument-parser) | Apache 2.0 |
 | [swift-asn1](https://github.com/apple/swift-asn1) | Apache 2.0 |
 | [swift-collections](https://github.com/apple/swift-collections) | Apache 2.0 |

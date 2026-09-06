@@ -8,7 +8,7 @@ import GruxGuardrails
 /// A 129 line `SecretRedactor` that this app carried while the extracted, hardened
 /// version of the same code sat in its own repository being fixed. The two diverged for
 /// three weeks and nobody noticed, because nothing connected them: no dependency, no
-/// shared test, no guard. The package reached 1608 lines and 115 tests across six rounds
+/// shared test, no guard. The package reached 1608 lines and 119 tests across six rounds
 /// of adversarial review; the copy here stayed at its first draft.
 ///
 /// Probed 2026-09-06 against this app's own shipping code, six of the eight defects

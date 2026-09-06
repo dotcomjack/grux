@@ -1,4 +1,5 @@
 import Foundation
+import GruxGuardrails
 import GruxShellCore
 
 // MARK: - Safety boundary
@@ -159,22 +160,21 @@ enum FilesystemTool {
         ".pem", ".p12", ".key", ".keystore", ".pfx", ".keychain", ".keychain-db"
     ]
 
-    // Secret regex table - tagged for the audit log; content matching any of
-    // these is suppressed (file read returns a blocked-error, never raw bytes).
-    private static let secretPatterns: [(tag: String, regex: NSRegularExpression)] = {
-        let raw: [(String, String)] = [
-            ("ANTHROPIC_KEY", #"sk-ant-[A-Za-z0-9_\-]{10,}"#),
-            ("ELEVENLABS_KEY", #"sk_[a-f0-9]{48,}"#),
-            ("AWS_KEY", #"AKIA[0-9A-Z]{16}"#),
-            ("PEM", #"-----BEGIN [A-Z ]*PRIVATE KEY-----"#),
-            ("GITHUB_PAT", #"ghp_[A-Za-z0-9]{30,}"#),
-            ("GITHUB_FINE_GRAINED", #"github_pat_[A-Za-z0-9_]{20,}"#),
-            ("SLACK_TOKEN", #"xox[baprs]-[A-Za-z0-9\-]{20,}"#)
-        ]
-        return raw.compactMap { pair in
-            (try? NSRegularExpression(pattern: pair.1, options: [])).map { (pair.0, $0) }
-        }
-    }()
+    // THE SECRET TABLE THAT USED TO BE HERE IS GONE. It carried seven patterns while
+    // grux-guardrails carried twenty six, so `fs_read` refused fewer shapes than the
+    // shell path redacts. That is the same asymmetry ShellOutputGuard was written to
+    // close, reappearing on the other side of the door: a Google API key, a Stripe key,
+    // a HuggingFace token, a Linear key, a Supabase token, a Mongo URI with credentials
+    // or a Shopify token in a file was handed to the model, while the identical bytes
+    // out of `shell_run` were redacted.
+    //
+    // `.evidenceOnly` RATHER THAN THE FULL PASS SET, and the choice matters here more
+    // than anywhere else in the app. This is a detector, not a redactor: a match REFUSES
+    // the read outright. A false positive therefore costs the user a file they are
+    // entitled to, not a mangled substring, so the inferring passes stay off. What is
+    // left is the two that work from evidence, a known credential FORMAT and a
+    // `user:pass@` URL, which is a strict improvement on the seven hand-copied prefixes
+    // with no new way to be wrong.
 
     // MARK: - Read
 
@@ -403,14 +403,24 @@ enum FilesystemTool {
 
     // MARK: - Secret content scan
 
+    /// The tag of the first credential shape found, or nil.
+    ///
+    /// Delegates to the package and reads the tag back out of its marker, so the audit
+    /// log keeps naming WHICH kind of credential blocked the read rather than logging a
+    /// bare refusal. `.evidenceOnly` for the reason above: a match here refuses the file.
+    #if DEBUG
+    /// Test seam. The detector is private and its inputs are files on disk, so a test
+    /// cannot otherwise drive it without writing to the filesystem.
+    static func probeContainsSecret(_ s: String) -> String? { containsSecret(s) }
+    #endif
+
     private static func containsSecret(_ s: String) -> String? {
-        let range = NSRange(s.startIndex..<s.endIndex, in: s)
-        for (tag, regex) in secretPatterns {
-            if regex.firstMatch(in: s, options: [], range: range) != nil {
-                return tag
-            }
-        }
-        return nil
+        let redacted = SecretRedactor.redact(s, passes: .evidenceOnly)
+        guard redacted != s else { return nil }
+        guard let open = redacted.range(of: "[REDACTED:"),
+              let close = redacted.range(of: "]", range: open.upperBound..<redacted.endIndex)
+        else { return "SECRET" }
+        return String(redacted[open.upperBound..<close.lowerBound])
     }
 }
 
