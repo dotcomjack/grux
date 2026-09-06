@@ -1,5 +1,10 @@
 # Grux
 
+[![CI](https://github.com/dotcomjack/grux/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dotcomjack/grux/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/dotcomjack/grux?label=download&color=7C5CFF)](https://github.com/dotcomjack/grux/releases/latest)
+[![Licence](https://img.shields.io/badge/licence-MIT-7C5CFF)](LICENSE)
+[![Platform](https://img.shields.io/badge/macOS-14%2B%20Apple%20silicon-lightgrey)](#requirements)
+
 **The god agent for solopreneurs on Mac.**
 
 Thirty nine features and one hundred sixteen tools in one native window.
@@ -46,6 +51,7 @@ those are not yours to look at.
 - [What it actually does](#what-it-actually-does)
 - [The command line](#the-command-line)
 - [What it costs](#what-it-costs)
+- [Install](#install)
 - [Requirements](#requirements)
 - [Building](#building)
 - [First run](#first-run)
@@ -140,6 +146,44 @@ middleman with a copy of your prompts.
 
 If you run a local model through Ollama, it costs nothing at all.
 
+## Install
+
+**Download the notarized build.** This is the front door. It is signed with a
+Developer ID, notarized by Apple and stapled, so it opens on a Mac that has never
+seen it without a right click and without a trip through System Settings.
+
+[**Download Grux 1.2.1 for Apple silicon**](https://github.com/dotcomjack/grux/releases/latest) (23 MB, macOS 14+)
+
+Unzip it, drag `Grux.app` to Applications, open it. There is no installer and no
+updater phoning home. To check what you got before you run it:
+
+```sh
+shasum -a 256 Grux-macOS-arm64.zip     # compare against the checksum in the release notes
+
+spctl -a -vv /Applications/Grux.app
+# Grux.app: accepted
+# source=Notarized Developer ID
+```
+
+The checksum lives in the release notes rather than here, because it changes every
+release and a copy in this file is a copy that goes stale.
+
+**Or through Homebrew.**
+
+```sh
+brew install --cask dotcomjack/tap/grux
+```
+
+**Then wire up the command line**, if you want one. This finds the app you just
+installed, puts `grux` on your PATH and runs setup. It installs nothing itself:
+
+```sh
+npx @dotcomjack/grux
+```
+
+Building from source is in [Building](#building) below, and it is the path to take
+if you want to change something rather than run it.
+
 ## Requirements
 
 - macOS 14 (Sonoma) or later, Apple silicon
@@ -219,20 +263,26 @@ Grux asks for a lot, because it does a lot. Every one of these is optional, ever
 one is requested only when you first use the feature that needs it, and refusing
 one disables exactly that feature and nothing else.
 
-| Permission | What stops working without it |
-|---|---|
-| Microphone | Meetings (required). Voice input in Chat and Reactor |
-| System audio recording | Meetings (required). This is the other half of the call, not your mic |
-| Screen recording | Focus log and Terminal Focus (required). Screen context in Chat |
-| Calendar | The Calendar tab (required). Agenda on Home, Chat calendar tools |
-| Contacts | The Contacts tab (required). Contact lookup in Chat |
-| Automation (AppleEvents) | Commands and Terminal Focus. App control from Chat |
-| Accessibility | Focus log. Window and selection awareness in Chat |
-| Notifications | Schedules, Workflows and Focus log alerts |
-| Full disk access | Jax Command only. Never required |
+Nine permissions, and only five are required by anything at all. The other four
+are asked for by a feature that still works without them, just with less in it.
 
-The table above is derived from the same feature registry the app reads at
-runtime, so it cannot drift from the real behaviour.
+| Permission | Required by | What refusing costs you |
+|---|---|---|
+| Microphone | Meetings | Voice input in Chat and Reactor |
+| System audio capture | Meetings | Nothing else. This is the other half of the call, not your mic |
+| Screen Recording | Focus log, Terminal Focus | Screen context in Chat |
+| Calendar | Calendar | The agenda on Home, calendar tools in Chat and Reactor |
+| Contacts | Contacts | Contact lookup in Chat |
+| Automation | Nothing | Commands, Terminal Focus, and app control from Chat |
+| Accessibility | Nothing | Window and selection awareness in Chat, and detail in Focus log |
+| Notifications | Nothing | Alerts from Schedules, Workflows and Focus log |
+| Full Disk Access | Nothing | Jax Command, one BETA surface, and nothing else anywhere |
+
+That table is not typed by hand. `PermissionTableTests` parses it out of this
+file and asserts both columns against the same `FeatureRegistry` the app reads at
+runtime: the middle column must name exactly the features that list the
+permission as required, and the right column must name exactly the features that
+list it as optional. Move one without the other and the suite goes red.
 
 **Grux is not sandboxed.** ScreenCaptureKit, AppleEvents and cross app microphone
 access are not available inside the App Sandbox, so the OS level path allowlist is
@@ -353,6 +403,19 @@ breaks, open an issue and tell me what you were doing.
 The threat model, the layered controls with file and line anchors, the denylist,
 the audit log format, and an explicit section on what Grux does **not** defend
 against are all in [SECURITY.md](Grux-Mac/SECURITY.md).
+
+**The two controls most likely to hurt you live in their own package.** Keeping a
+credential out of a prompt, and stopping the agent following a hostile link, are
+[grux-guardrails](https://github.com/dotcomjack/grux-guardrails): 115 tests, zero
+dependencies, MIT, usable without any of the rest of this.
+
+The reason to point you at it is not the test count. It carries
+[six published advisories](https://github.com/dotcomjack/grux-guardrails/security/advisories?state=published)
+against its own earlier releases, two of them critical, because six of the first
+nine tags failed to redact something. Those tags are still resolvable rather than
+deleted, so anyone pinned to one gets told by Dependabot instead of finding out
+some other way. A security library with a clean disclosure record after nine tags
+is a library nobody has attacked yet.
 
 To report a vulnerability, see [SECURITY](.github/SECURITY.md). Please do not open
 a public issue for anything exploitable.

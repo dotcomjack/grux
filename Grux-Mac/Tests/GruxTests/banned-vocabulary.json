@@ -34,6 +34,7 @@
     "com.dcj.gruxphone",
     "github.com/dotcomjack/",
     "@dotcomjack/",
+    "dotcomjack/tap/",
     "Copyright (c) 2026 DotcomJack",
     "\"author\": \"DotcomJack\"",
     "com.dcj.",
@@ -49,7 +50,8 @@
     "Copyright (c) 2026 DotcomJack": "The licence attribution. DotcomJack is the sanctioned PUBLIC builder alias.",
     "\"author\": \"DotcomJack\"": "The npm package author field. Same public alias.",
     "com.dcj.": "The sanctioned bundle id prefix for shipped apps. Product identity.",
-    "bundleIdPrefix: com.dcj": "The same prefix as declared in the iOS project file, where it has no trailing dot."
+    "bundleIdPrefix: com.dcj": "The same prefix as declared in the iOS project file, where it has no trailing dot.",
+    "dotcomjack/tap/": "The Homebrew tap, `brew install --cask dotcomjack/tap/grux`. Same class as github.com/dotcomjack/ and @dotcomjack/: a published package-registry namespace, which is project identity a stranger has to type, not a personal detail. Homebrew derives the tap name from the GitHub org, so this string is not a choice that could have been made differently."
   },
   "banned_why": {
     "dcj": "Word boundary matched, so it catches `DCJ Command` without catching `com.gruxai.grux`.",
