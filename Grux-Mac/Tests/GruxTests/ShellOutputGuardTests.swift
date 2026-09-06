@@ -57,14 +57,27 @@ final class ShellOutputGuardTests: XCTestCase {
     // "GitHub will accept this push". Each carries the tag it must produce
     // so a failure names the pattern rather than printing two strings.
 
+    /// TAG NAMES ARE THE PACKAGE'S NOW. `GITHUB_PAT` became `GITHUB_TOKEN` and
+    /// `SECRET_ASSIGNMENT` became `ASSIGNED_SECRET` when redaction moved to
+    /// `grux-guardrails` on 2026-09-06. Same shapes, same coverage, different labels:
+    /// these are renames, not a change in what is caught.
     static let corpus: [(tag: String, sample: String)] = [
         ("ANTHROPIC_KEY", "sk-ant-api0" + "3-ABCDEF0123" + "456789abcdef"),
         ("OPENAI_KEY", "sk-proj-abc" + "defghijklmn" + "op0123456789"),
         ("OPENAI_KEY", "sk-abcdef" + "ghijklmno" + "pqrstuvwx"),
         ("AWS_KEY", "AKIAIO" + "SFODNN7" + "EXAMPLE"),
-        ("AWS_SECRET", "aws_secret_access_ke" + "y = wJalrXUtnFEMIK7MD" + "ENGbPxRfiCYEXAMPLEKEY"),
-        ("PEM", "-----BEGIN" + " RSA PRIVA" + "TE KEY-----"),
-        ("GITHUB_PAT", "ghp_abcdefgh" + "ijklmnopqrst" + "uvwxyz012345"),
+        ("ASSIGNED_SECRET", "aws_secret_access_ke" + "y = wJalrXUtnFEMIK7MD" + "ENGbPxRfiCYEXAMPLEKEY"),
+        // A COMPLETE armoured block, not a lone header. The package's PEM rule consumes
+        // header through END, which is the fix for the critical defect where the header
+        // was stamped [REDACTED:PEM] and the key body handed to the model underneath it.
+        // Given a lone header with no END, that rule reads the next base64-shaped line as
+        // body, and the word "after" is valid base64, so an orphan-header sample made this
+        // test look like the guard was eating context when it was doing its job. The
+        // orphan-header case has its own test below.
+        ("PEM", "-----BEGIN RSA PRIVATE KEY-----\n"
+              + "MIIEowIBAAKCAQEAvtpqRUAvIrHRuLRcXAWNjaXPTGvBrLLEDBsQpAoOWMPjLJGl\n"
+              + "-----END RSA PRIVATE KEY-----"),
+        ("GITHUB_TOKEN", "ghp_abcdefgh" + "ijklmnopqrst" + "uvwxyz012345"),
         ("GITHUB_FINE_GRAINED", "github_pat_" + "11ABCDEFG0ab" + "cdefghijklmn"),
         ("SLACK_TOKEN", "xoxb-123456" + "789012-abcd" + "efghijklmnop"),
         ("STRIPE_LIVE_SECRET", "sk_live_ab" + "cdefghijklm" + "nopqrstuvwx"),
@@ -72,55 +85,81 @@ final class ShellOutputGuardTests: XCTestCase {
         ("STRIPE_LIVE_RESTRICTED", "rk_live_ab" + "cdefghijklm" + "nopqrstuvwx"),
         ("ELEVENLABS_KEY", "sk_" + String(repeating: "a1", count: 30)),
         ("JWT", "eyJhbGciOiJIUzI" + "1NiJ9.eyJzdWIiO" + "iIxIn0.abcDEF123"),
-        ("SECRET_ASSIGNMENT", "GITHUB_TOKEN=g" + "hs_abcdefghijk" + "lmnopqrstuvwxyz"),
+        ("ASSIGNED_SECRET", "GITHUB_TOKEN=g" + "hs_abcdefghijk" + "lmnopqrstuvwxyz"),
         // Every quoting form, in the shared corpus rather than in one test of
         // their own, so they inherit the stdout, stderr and idempotence passes.
         // The first version of the assignment rule matched only the bare form,
         // and the bare form is the one shape `.env`, `.envrc` and a shell profile
         // almost never use.
-        ("SECRET_ASSIGNMENT", "export AWS_SECRET_ACCESS_KEY=\"wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY\""),
-        ("SECRET_ASSIGNMENT", "export DATABASE_" + "PASSWORD='hunter" + "2hunter2hunter2'"),
-        ("SECRET_ASSIGNMENT", "SUPABASE_SERVICE_ROLE_SECRET=\"9f2b1ac0d4e6f8a1b3c5d7e9f0a2b4c6\""),
-        ("SECRET_ASSIGNMENT", "API_KEY = \"abcdefgh12345678\""),
-        ("SECRET_ASSIGNMENT", "DB_PASSW" + "ORD=p=ssw" + "0rd123456"),
-        ("SECRET_ASSIGNMENT", "SESSION_TOKEN=\"abcdefgh12345678"),
+        ("ASSIGNED_SECRET", "export AWS_SECRET_ACCESS_KEY=\"wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY\""),
+        ("ASSIGNED_SECRET", "export DATABASE_" + "PASSWORD='hunter" + "2hunter2hunter2'"),
+        ("ASSIGNED_SECRET", "SUPABASE_SERVICE_ROLE_SECRET=\"9f2b1ac0d4e6f8a1b3c5d7e9f0a2b4c6\""),
+        ("ASSIGNED_SECRET", "API_KEY = \"abcdefgh12345678\""),
+        ("ASSIGNED_SECRET", "DB_PASSW" + "ORD=p=ssw" + "0rd123456"),
+        ("ASSIGNED_SECRET", "SESSION_TOKEN=\"abcdefgh12345678"),
     ]
 
-    /// The quoting matrix, stated separately from the corpus because the corpus
-    /// only proves the value went away. This proves the LINE came back in the
-    /// shape a person would want to read, which is the half a redactor gets
-    /// wrong quietly: a rule that ate the variable name, or left the closing
-    /// quote hanging on the end of the marker, would pass every corpus assertion.
+    /// The quoting matrix, stated separately from the corpus because the corpus only
+    /// proves the value went away. This proves the LINE came back in the shape a person
+    /// would want to read, which is the half a redactor gets wrong quietly: a rule that
+    /// ate the variable name would pass every corpus assertion.
     ///
-    /// Measured 2026-08-26 against the previous pattern: only the first row
-    /// redacted. Every other row came back byte identical, because the value
-    /// class excluded both quote characters, so no match could begin after the
-    /// `=`, and excluded `=`, so a value carrying one terminated a character in.
+    /// REWRITTEN 2026-09-06 when redaction moved to `grux-guardrails`. Two things moved
+    /// with it and neither is a coverage change:
+    ///
+    ///   - the tag is `ASSIGNED_SECRET` rather than `SECRET_ASSIGNMENT`
+    ///   - the package replaces the VALUE INSIDE the quotes and leaves the quotes
+    ///     standing, `KEY = "[REDACTED:...]"`, where the old rule swallowed them. The
+    ///     package's shape is the better one: the line still parses as shell.
     static let assignmentForms: [(input: String, expected: String)] = [
         ("AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY",
-         "AWS_SECRET_ACCESS_KEY=[REDACTED:SECRET_ASSIGNMENT]"),
+         "AWS_SECRET_ACCESS_KEY=[REDACTED:ASSIGNED_SECRET]"),
         ("export AWS_SECRET_ACCESS_KEY=\"wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY\"",
-         "export AWS_SECRET_ACCESS_KEY=[REDACTED:SECRET_ASSIGNMENT]"),
+         "export AWS_SECRET_ACCESS_KEY=\"[REDACTED:ASSIGNED_SECRET]\""),
         ("export DATABASE_PASSWORD='hunter2hunter2hunter2'",
-         "export DATABASE_PASSWORD=[REDACTED:SECRET_ASSIGNMENT]"),
+         "export DATABASE_PASSWORD='[REDACTED:ASSIGNED_SECRET]'"),
         ("SUPABASE_SERVICE_ROLE_SECRET=\"9f2b1ac0d4e6f8a1b3c5d7e9f0a2b4c6\"",
-         "SUPABASE_SERVICE_ROLE_SECRET=[REDACTED:SECRET_ASSIGNMENT]"),
+         "SUPABASE_SERVICE_ROLE_SECRET=\"[REDACTED:ASSIGNED_SECRET]\""),
         // Spaces on both sides of the equals, which bash accepts in a `let` or a
         // Makefile and which a config dump prints routinely.
-        ("API_KEY = \"abcdefgh12345678\"", "API_KEY = [REDACTED:SECRET_ASSIGNMENT]"),
+        ("API_KEY = \"abcdefgh12345678\"", "API_KEY = \"[REDACTED:ASSIGNED_SECRET]\""),
         ("PRIVATE_KEY_PASSPHRASE = 'correct horse battery'",
-         "PRIVATE_KEY_PASSPHRASE = [REDACTED:SECRET_ASSIGNMENT]"),
+         "PRIVATE_KEY_PASSPHRASE = '[REDACTED:ASSIGNED_SECRET]'"),
         // A value carrying an equals sign, which base64 padding and plenty of
         // passwords do.
-        ("DB_PASSWORD=p=ssw0rd123456", "DB_PASSWORD=[REDACTED:SECRET_ASSIGNMENT]"),
+        ("DB_PASSWORD=p=ssw0rd123456", "DB_PASSWORD=[REDACTED:ASSIGNED_SECRET]"),
         // An opening quote with no closing one, which is what a value cut short
         // looks like. The head of a live credential is still a live credential.
-        ("SESSION_TOKEN=\"abcdefgh12345678", "SESSION_TOKEN=[REDACTED:SECRET_ASSIGNMENT]"),
-        // A quoted value containing spaces stops at the closing quote rather than
-        // running to end of line, so the rest of the line survives.
-        ("ACCESS_KEY=\"two words here\" # from the vault",
-         "ACCESS_KEY=[REDACTED:SECRET_ASSIGNMENT] # from the vault"),
+        ("SESSION_TOKEN=\"abcdefgh12345678", "SESSION_TOKEN=\"[REDACTED:ASSIGNED_SECRET]"),
     ]
+
+    /// THE ONE SHAPE THAT NARROWED, kept as a test rather than deleted so the gap is
+    /// visible instead of lost.
+    ///
+    /// `ACCESS_KEY="two words here"` was redacted by the old shell rule and is NOT
+    /// redacted by the package. It is a value-length brake, measured 2026-09-06 by
+    /// bisecting the value:
+    ///
+    ///     ACCESS_KEY="two words here"          15 chars   unchanged
+    ///     ACCESS_KEY="aaa bbb ccc ddd"         15 chars   unchanged
+    ///     ACCESS_KEY="correct horse battery"   21 chars   redacted
+    ///
+    /// The old rule's floor was 8 characters for any value under a credential-shaped
+    /// name. The package is deliberately more conservative on prose-shaped values,
+    /// because blunt matching there "was the single largest source of destroyed text"
+    /// against its own 9,323 line corpus, and that corpus is what makes its number
+    /// defensible. Loosening the floor without re-running that corpus is exactly the
+    /// unmeasured change that produced six advisories, so it is not being done here.
+    ///
+    /// Assert the CURRENT behaviour, so this test fails the day the package changes it
+    /// and somebody has to come back and decide again.
+    func testTheOneAssignmentShapeThePackageDoesNotCatch() {
+        let line = "ACCESS_KEY=\"two words here\" # from the vault"
+        XCTAssertEqual(ShellOutputGuard.redact(line), line, """
+            The package now redacts a short quoted prose value under a credential name. \
+            That is a coverage IMPROVEMENT, not a failure. Delete this test and note it.
+            """)
+    }
 
     /// The whole private key, not just its header line. This is the shape the
     /// finding actually named, and it is the one a header-only pattern gets
@@ -259,111 +298,66 @@ final class ShellOutputGuardTests: XCTestCase {
                       "the command was redacted so hard the log no longer says what ran")
     }
 
-    // MARK: - Parity with SecretRedactor, parsed from both sources
+    // MARK: - Parity with the package
 
-    private struct ParseFailure: Error, CustomStringConvertible {
-        let description: String
-    }
+    // THE SOURCE PARSER THAT USED TO LIVE HERE IS GONE.
+    //
+    // It read the `("TAG", #"pattern"#)` table out of two Swift files and compared them
+    // as sets, because the shell guard kept a hand-copied superset of the app redactor's
+    // patterns. That was the correct mechanism for two tables and it did its job: on
+    // 2026-09-06 it is what proved the shell copy had fallen to 14 patterns while the
+    // package had 26.
+    //
+    // There is one table now, in `grux-guardrails`, and `ShellOutputGuard.redact` calls
+    // it. Parsing source to compare two lists that no longer exist would be theatre, so
+    // the two tests below assert the delegation itself instead: that shell and package
+    // agree on every corpus sample, and that shapes the old local table never had are
+    // covered. Both fail if somebody reintroduces a local table.
 
-    private static func macRoot() -> URL {
-        URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()   // GruxTests
-            .deletingLastPathComponent()   // Tests
-            .deletingLastPathComponent()   // Grux-Mac
-    }
-
-    /// Every `("TAG", #"pattern"#)` pair inside the array opened by `anchor`.
+    /// THE INVARIANT, and it is structural now rather than compared.
     ///
-    /// Scoped to the array rather than the whole file for the reason
-    /// `DenylistParityTests` scopes to one section: both files contain other
-    /// regular expressions (the entropy rule in one, the secret-assignment rule
-    /// in the other) that are deliberately NOT part of the shared list, and a
-    /// scanner that read the whole file would compare lists nobody wrote.
-    private static func pairs(inFile relative: String, anchor: String) throws -> [(tag: String, pattern: String)] {
-        let url = macRoot().appendingPathComponent(relative)
-        let text = try String(contentsOf: url, encoding: .utf8)
-        let lines = text.components(separatedBy: "\n")
-        guard let open = lines.firstIndex(where: { $0.contains(anchor) }) else {
-            throw ParseFailure(description:
-                "\(relative) has no line containing '\(anchor)'. Either the pattern table was "
-                + "renamed, in which case fix this parser in the same commit, or it was deleted, "
-                + "in which case do not.")
-        }
-        guard let close = ((open + 1)..<lines.count).first(where: {
-            lines[$0].trimmingCharacters(in: .whitespaces) == "]"
-        }) else {
-            throw ParseFailure(description: "\(relative) opens the pattern table at '\(anchor)' and never closes it.")
-        }
-        // Written with a `##"..."##` fence because the shape it matches contains
-        // both `#"` and `"#`, which a single-hash raw string would read as its
-        // own delimiters.
-        let entry = try NSRegularExpression(pattern: ##"^\("([A-Za-z0-9_]+)",\s*#"(.*)"#\),?$"##)
-        var out: [(tag: String, pattern: String)] = []
-        for i in (open + 1)..<close {
-            let line = lines[i].trimmingCharacters(in: .whitespaces)
-            let range = NSRange(line.startIndex..<line.endIndex, in: line)
-            guard let m = entry.firstMatch(in: line, options: [], range: range),
-                  let tagRange = Range(m.range(at: 1), in: line),
-                  let patternRange = Range(m.range(at: 2), in: line) else { continue }
-            out.append((String(line[tagRange]), String(line[patternRange])))
-        }
-        return out
-    }
+    /// It used to be a set comparison between two hand-maintained pattern tables, one
+    /// here and one in the app. That was the right mechanism for the shape the code had,
+    /// and it worked: it is what proved, on 2026-09-06, that the shell table had fallen
+    /// to 14 patterns against the package's 26.
+    ///
+    /// There is one table now. `ShellOutputGuard.redact` calls the package and then adds
+    /// its own secret-assignment rule, so "shell is a superset of the redactor" is true
+    /// by construction and cannot drift. What is left worth asserting is that the
+    /// delegation is actually wired, which a refactor could silently undo.
+    func testShellRedactionIsASupersetOfThePackageByConstruction() {
+        for (tag, sample) in Self.corpus where tag != "SECRET_ASSIGNMENT" {
+            let fromPackage = SecretRedactor.redact(sample)
+            let fromShell = ShellOutputGuard.redact(sample)
+            XCTAssertEqual(fromShell, fromPackage, """
+                ShellOutputGuard.redact disagreed with the package on a \(tag) sample.
 
-    private static func appPatterns() throws -> [(tag: String, pattern: String)] {
-        try pairs(inFile: "Sources/Grux/Redaction.swift", anchor: "let raw: [(String, String)] = [")
-    }
+                  package: \(fromPackage)
+                  shell:   \(fromShell)
 
-    private static func corePatterns() throws -> [(tag: String, pattern: String)] {
-        try pairs(inFile: "Sources/GruxShellCore/ShellOutputGuard.swift",
-                  anchor: "rawPatterns: [(tag: String, pattern: String)] = [")
-    }
-
-    /// Anti-vacuity, and it runs before anything trusts the parse. A parser that
-    /// quietly returns nothing makes every superset comparison below vacuously
-    /// true, and it fails in the direction that looks green.
-    func testTheParserActuallyReadBothPatternTables() throws {
-        let app = try Self.appPatterns()
-        let core = try Self.corePatterns()
-
-        XCTAssertGreaterThan(app.count, 10, "parsed only \(app.count) pairs out of Redaction.swift")
-        XCTAssertGreaterThan(core.count, 10, "parsed only \(core.count) pairs out of ShellOutputGuard.swift")
-
-        // The parse has to agree with what actually compiled. Comparing the two
-        // source files to each other while both are misread would still pass.
-        let parsedCore = core.map { "\($0.tag)\u{1}\($0.pattern)" }.sorted()
-        let shippedCore = ShellOutputGuard.rawPatterns.map { "\($0.tag)\u{1}\($0.pattern)" }.sorted()
-        XCTAssertEqual(parsedCore, shippedCore,
-                       "the parser read ShellOutputGuard.swift differently from the array Swift "
-                       + "compiled, so it is reading the wrong lines")
-
-        for (tag, pattern) in app + core {
-            XCTAssertFalse(pattern.isEmpty, "\(tag) parsed with an empty pattern")
-            XCTAssertFalse(pattern.contains("#\""), "\(tag) parsed with the raw-string fence still on it")
+                These must agree for every input the secret-assignment rule does not
+                touch, because the shell path is now the package plus that one rule. A
+                difference here means the delegation was undone and shell output is back
+                to being redacted by something other than the redactor.
+                """)
         }
     }
 
-    func testTheParserFailsOnAMissingTable() {
-        XCTAssertThrowsError(try Self.pairs(inFile: "Sources/Grux/Redaction.swift",
-                                            anchor: "let notARealTableName = ["))
-    }
-
-    /// THE INVARIANT. GruxShellCore is a superset of the app's list.
-    func testTheShellPatternSetIsASupersetOfSecretRedactor() throws {
-        let app = Set(try Self.appPatterns().map { "\($0.tag)\u{1}\($0.pattern)" })
-        let core = Set(try Self.corePatterns().map { "\($0.tag)\u{1}\($0.pattern)" })
-        let missing = app.subtracting(core)
-            .map { $0.replacingOccurrences(of: "\u{1}", with: "  ") }
-            .sorted()
-        XCTAssertTrue(missing.isEmpty, """
-            \(missing.count) pattern(s) in SecretRedactor (Sources/Grux/Redaction.swift) have no \
-            verbatim counterpart in ShellOutputGuard (Sources/GruxShellCore/ShellOutputGuard.swift):
-            \(missing.map { "  " + $0 }.joined(separator: "\n"))
-            Shell output reaches the model on a path that cannot call SecretRedactor, so a shape \
-            covered there and not here is covered for file reads and open for shell reads, which is \
-            the exact asymmetry this guard exists to close. Add it to ShellOutputGuard; do not \
-            delete it from Redaction.swift to make this pass.
-            """)
+    /// The delegation is not merely present, it carries the patterns the old hand-copied
+    /// table never had. Guards against someone reintroducing a local table that happens
+    /// to satisfy the equality above by reimplementing a subset.
+    func testShellRedactionCoversShapesTheOldLocalTableMissed() {
+        let cases: [(String, String)] = [
+            ("Google API key", "AIzaSyA1234567890123456789012345678901234"),
+            ("HuggingFace token", "hf_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789"),
+            ("Linear API key", "lin_api_aBcDeFgHiJkLmNoPqRsTuV12"),
+            ("Stripe webhook secret", "whsec_aBcDeFgHiJkLmNoPqRsTuV12"),
+        ]
+        for (label, sample) in cases {
+            let out = ShellOutputGuard.redact("token is \(sample) end")
+            XCTAssertFalse(out.contains(sample),
+                           "\(label) survived ShellOutputGuard.redact: \(out)")
+        }
     }
 
     /// Verbatim pairs are a strong contract and still a static one. This drives
@@ -441,7 +435,7 @@ final class ShellOutputGuardTests: XCTestCase {
 
         XCTAssertFalse(redacted.contains("wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY"),
                        "the credential reached the model verbatim: \(redacted)")
-        XCTAssertTrue(redacted.contains("export AWS_SECRET_ACCESS_KEY=[REDACTED:SECRET_ASSIGNMENT]"),
+        XCTAssertTrue(redacted.contains("export AWS_SECRET_ACCESS_KEY=\"[REDACTED:ASSIGNED_SECRET]\""),
                       "the variable name did not survive, so the model cannot tell WHICH "
                       + "credential the environment holds: \(redacted)")
 

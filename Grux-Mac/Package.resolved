@@ -1,6 +1,15 @@
 {
   "pins" : [
     {
+      "identity" : "grux-guardrails",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/dotcomjack/grux-guardrails.git",
+      "state" : {
+        "revision" : "197781b80a73eae68494a7d1df6ab0c9fa9845a4",
+        "version" : "0.8.1"
+      }
+    },
+    {
       "identity" : "swift-argument-parser",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-argument-parser.git",

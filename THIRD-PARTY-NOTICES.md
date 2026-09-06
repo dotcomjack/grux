@@ -16,6 +16,7 @@ is included verbatim below.
 
 | Package | Version | Licence |
 |---|---|---|
+| [grux-guardrails](https://github.com/dotcomjack/grux-guardrails) | 0.8.1 | MIT |
 | [swift-argument-parser](https://github.com/apple/swift-argument-parser) | 1.7.1 | Apache 2.0 |
 | [swift-asn1](https://github.com/apple/swift-asn1) | 1.7.0 | Apache 2.0 |
 | [swift-collections](https://github.com/apple/swift-collections) | 1.4.1 | Apache 2.0 |
@@ -24,6 +25,38 @@ is included verbatim below.
 | [swift-transformers](https://github.com/huggingface/swift-transformers) | 1.1.9 | Apache 2.0 |
 | [whisperkit](https://github.com/argmaxinc/WhisperKit) | 0.18.0 | MIT |
 | [yyjson](https://github.com/ibireme/yyjson) | 0.12.0 | MIT |
+
+---
+
+## grux-guardrails
+
+https://github.com/dotcomjack/grux-guardrails, version 0.8.1, MIT
+
+### Licence
+
+```
+MIT License
+
+Copyright (c) 2026 DotcomJack
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
 
 ---
 

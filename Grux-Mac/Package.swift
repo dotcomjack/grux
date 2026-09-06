@@ -32,6 +32,19 @@ let package = Package(
         // because the CLI links it DIRECTLY, and a direct use riding on somebody else's
         // transitive pin breaks silently the day that dependency drops it.
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
+        // The security layer, extracted from this app and hardened well past it.
+        //
+        // 0.8.1 or newer is REQUIRED, for two reasons. The module rename, and the selective
+        // pass API the control-plane redaction below depends on.
+        //
+        // On the rename:  Every tag before it
+        // shipped its module as `Grux`, which is this app's own target name, and two
+        // modules of one name cannot coexist in a build graph. `moduleAliases` does not
+        // rescue it either: aliasing is unavailable when the root package owns the
+        // clashing name. 0.7.0 renamed the module to `GruxGuardrails` for that reason.
+        //
+        // Zero transitive dependencies, so this adds exactly one node to the graph.
+        .package(url: "https://github.com/dotcomjack/grux-guardrails.git", from: "0.8.1"),
     ],
     targets: [
         // Platform-free shell-session core: PTY-backed bash process, shadow-git
@@ -72,6 +85,7 @@ let package = Package(
         ),
         .target(
             name: "GruxShellCore",
+            dependencies: [.product(name: "GruxGuardrails", package: "grux-guardrails")],
             path: "Sources/GruxShellCore"
         ),
         // Platform-free swarm-of-workers core: AgentJob, SwarmPlan,
@@ -90,6 +104,7 @@ let package = Package(
                 "GruxShellCore",
                 "GruxAgentCore",
                 "GruxMCPCore",
+                .product(name: "GruxGuardrails", package: "grux-guardrails"),
                 .product(name: "WhisperKit", package: "WhisperKit")
             ],
             path: "Sources/Grux"

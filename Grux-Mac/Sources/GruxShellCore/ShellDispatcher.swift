@@ -38,7 +38,7 @@ public enum ShellDispatcher {
     /// dropped. Redacting before the cut removes the whole key first.
     public static func dispatch(name: String, input: [String: Any]) async -> String {
         let raw = await dispatchRaw(name: name, input: input)
-        return ShellOutputGuard.redact(raw)
+        return ShellOutputGuard.redactControlPlane(raw)
     }
 
     private static func dispatchRaw(name: String, input: [String: Any]) async -> String {

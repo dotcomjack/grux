@@ -1,4 +1,5 @@
 import Foundation
+import GruxGuardrails
 import Darwin
 
 // MARK: - ShellOutputGuard
@@ -89,122 +90,72 @@ public enum ShellOutputGuard {
     /// plain set comparison, and it still catches an orphan header with no
     /// matching END line. Both produce the same marker, so the two redactors
     /// read identically to the model for the input they both handle.
-    public static let rawPatterns: [(tag: String, pattern: String)] = [
-        ("PEM", #"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"#),
-        ("ANTHROPIC_KEY", #"sk-ant-[A-Za-z0-9_\-]{10,}"#),
-        ("OPENAI_KEY", #"sk-(?:proj-)?[A-Za-z0-9_\-]{16,}"#),
-        ("AWS_KEY", #"AKIA[0-9A-Z]{16}"#),
-        ("AWS_SECRET", #"aws_secret_access_key[ \t]*=[ \t]*[A-Za-z0-9/+=]{20,}"#),
-        ("PEM", #"-----BEGIN [A-Z ]*PRIVATE KEY-----"#),
-        ("GITHUB_PAT", #"ghp_[A-Za-z0-9]{30,}"#),
-        ("GITHUB_FINE_GRAINED", #"github_pat_[A-Za-z0-9_]{20,}"#),
-        ("SLACK_TOKEN", #"xox[baprs]-[A-Za-z0-9\-]{20,}"#),
-        ("STRIPE_LIVE_SECRET", #"sk_live_[A-Za-z0-9]{20,}"#),
-        ("STRIPE_LIVE_PUBLIC", #"pk_live_[A-Za-z0-9]{20,}"#),
-        ("STRIPE_LIVE_RESTRICTED", #"rk_live_[A-Za-z0-9]{20,}"#),
-        ("ELEVENLABS_KEY", #"sk_[a-f0-9]{48,}"#),
-        ("JWT", #"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"#)
-    ]
+    /// THE PATTERN TABLE THAT USED TO BE HERE IS GONE, and its absence is the fix.
+    ///
+    /// This file carried a hand-copied superset of `SecretRedactor`'s patterns because
+    /// `GruxShellCore` is free of AppKit and SwiftUI and had no dependency on the `Grux`
+    /// app target, where `SecretRedactor` lived. A test compared the two tables and
+    /// failed if this one stopped being a superset, which is a real mechanism and it
+    /// worked.
+    ///
+    /// That reason is void as of 2026-09-06. `SecretRedactor` moved to the
+    /// `grux-guardrails` package, which has zero dependencies and no UI, so this target
+    /// can depend on it directly. There is no cycle and nothing to invert.
+    ///
+    /// Deleting the copy rather than repointing the test matters, because the copy had
+    /// already fallen behind: 14 patterns here against 26 in the package. The superset
+    /// invariant was broken in substance the moment the app moved, and it read GREEN,
+    /// because the parser could no longer find the other table and a comparison against
+    /// nothing is vacuously true. The anti-vacuity test is what caught it.
+    ///
+    /// So shell output now gets exactly what every other untrusted surface gets: all 26
+    /// branded patterns, the generic entropy rule, and the labelled-secret rule, none of
+    /// which this file has to know about.
 
-    /// Compiled once. A pattern that fails to compile is dropped rather than
-    /// crashing the app, which is the same trade `SecretRedactor` makes, and it
-    /// is the reason the parity test asserts on `rawPatterns` (the source of
-    /// truth) rather than on whatever survived compilation.
-    private static let compiled: [(tag: String, regex: NSRegularExpression)] = {
-        rawPatterns.compactMap { pair in
-            (try? NSRegularExpression(pattern: pair.pattern, options: [])).map { (pair.tag, $0) }
-        }
-    }()
-
-    /// The one rule that is NOT in `SecretRedactor`, kept out of `rawPatterns`
-    /// for the same structural reason the entropy rule is kept out of the
-    /// pattern table there: it needs its own replacement template rather than
-    /// the uniform one.
-    ///
-    /// It exists because `shell_run "env"` is one of the three commands named in
-    /// the finding, and the branded prefixes above only catch the vendors
-    /// somebody thought of. An environment variable whose NAME says it holds a
-    /// secret is the strongest signal available without reading the value, and
-    /// it is precise: `PATH=/usr/local/bin:/usr/bin` does not match, because
-    /// `PATH` contains none of the words below.
-    ///
-    /// The variable NAME is preserved and only the value is replaced, via the
-    /// capture group. Replacing the whole assignment would tell the model
-    /// nothing about which credentials the environment holds, and "is
-    /// GITHUB_TOKEN set at all" is a question a build agent legitimately needs
-    /// to answer without ever seeing the value.
-    ///
-    /// The negative lookahead keeps this idempotent. Without it, a value another
-    /// pattern had already turned into `[REDACTED:ANTHROPIC_KEY]` would be
-    /// matched again on the next pass and lose its specific tag. It tolerates one
-    /// optional quote in front of the marker, because the quoted branches below
-    /// mean a branded key can now arrive as `KEY="[REDACTED:ANTHROPIC_KEY]"`, and
-    /// a lookahead anchored on the bracket alone would step over the quote,
-    /// re-match, and downgrade a specific tag to the generic one.
-    ///
-    /// ## Why the value has four branches instead of one character class
-    ///
-    /// The first version of this rule spelled the value `[^\s'"=]{8,}`, which
-    /// excluded both quote characters from the run. Measured against a realistic
-    /// `.envrc` on 2026-08-26, that meant no match could even BEGIN after the
-    /// `=`, so `export AWS_SECRET_ACCESS_KEY="wJalr..."`,
-    /// `export DATABASE_PASSWORD='hunter2...'` and
-    /// `SUPABASE_SERVICE_ROLE_SECRET="9f2b..."` all came back byte identical
-    /// while the unquoted spelling of the same variable redacted correctly. That
-    /// is the wrong half to cover: `export NAME="value"` is what `.env`, `.envrc`
-    /// and shell profiles actually contain, `env` and `cat .envrc` are ordinary
-    /// things for the model to run, and this rule is the ONLY one that covers a
-    /// credential carrying no branded prefix, which is exactly the class an AWS
-    /// secret access key, a database password and a service role secret fall
-    /// into. `fs_read` refuses those dotfiles by basename, so the shell was the
-    /// only door to them and it was the door that leaked.
-    ///
-    /// Excluding `=` was the second half of the same mistake:
-    /// `DB_PASSWORD=p=ssw0rd123456` terminated the run one character in, below
-    /// the eight character floor, so it did not match either. The run now stops
-    /// only on whitespace or a quote.
-    ///
-    /// The branches are ordered closed-quote first so a terminated value is
-    /// consumed WITH its quotes and the marker reads the same as the bare form.
-    /// `[^"\n]` rather than `[^"]` is the false-positive guard that matters: the
-    /// newline exclusion means a stray quote cannot reach forward into later
-    /// lines of a build log, and stopping at the closing quote rather than at end
-    /// of line means an ordinary sentence like
-    /// `error: TOKEN = "expected value" but got something` loses the quoted run
-    /// and keeps the rest. That residual false positive is real, named, and the
-    /// price of covering the dominant real-world shape; it fails safe, because
-    /// the variable name survives and the marker says who did it.
-    ///
-    /// The third branch catches an opening quote with no closing one on the same
-    /// line, which is what a value cut short looks like. Without it a truncated
-    /// line would fall back to no match at all and emit the head of a live
-    /// credential.
-    private static let secretAssignmentRegex: NSRegularExpression? = {
-        try? NSRegularExpression(
-            pattern: #"(?i)([A-Z0-9_]*(?:SECRET|PASSWORD|PASSWD|TOKEN|API[_-]?KEY|ACCESS[_-]?KEY|PRIVATE[_-]?KEY)[A-Z0-9_]*[ \t]*=[ \t]*)(?!['"]?\[REDACTED:)(?:"[^"\n]{8,}"|'[^'\n]{8,}'|['"][^\s'"]{8,}|[^\s'"]{8,})"#,
-            options: []
-        )
-    }()
-
-    /// Replace every secret-shaped token with `[REDACTED:TAG]`.
-    ///
     /// Deliberately the same marker shape `SecretRedactor` emits so the two read
     /// identically to the model. A model that sees one marker for file contents
     /// and a different one for shell output learns two rules where there is one.
     public static func redact(_ input: String) -> String {
         guard !input.isEmpty else { return input }
-        var out = input
-        for (tag, regex) in compiled {
-            out = replaceAll(in: out, regex: regex, with: "[REDACTED:\(tag)]")
-        }
-        if let regex = secretAssignmentRegex {
-            let range = NSRange(out.startIndex..<out.endIndex, in: out)
-            out = regex.stringByReplacingMatches(
-                in: out, options: [], range: range,
-                withTemplate: "$1[REDACTED:SECRET_ASSIGNMENT]"
-            )
-        }
-        return out
+        // A PURE DELEGATION, and the local secret-assignment rule is gone with it.
+        //
+        // That rule preserved the variable NAME and replaced only the value, so an env
+        // dump still told the model WHICH credential it held. It was kept here because
+        // the app's old redactor had nothing like it. The package does, tagged
+        // ASSIGNED_SECRET, and it is strictly better on the case that matters:
+        //
+        //   DB_PASS=hunter2secret        -> DB_PASS=[REDACTED:ASSIGNED_SECRET]
+        //   ANTHROPIC_API_KEY=sk-ant-... -> ANTHROPIC_API_KEY=[REDACTED:ANTHROPIC_KEY]
+        //   PATH=/usr/local/bin:/usr/bin -> untouched
+        //
+        // The local rule flattened the second line to SECRET_ASSIGNMENT and threw the
+        // specific tag away. Keeping both was tried and is worse either way round:
+        // package first destroyed nothing but made the local rule dead code, local rule
+        // first stole branded keys from their own tags.
+        return SecretRedactor.redact(input)
+    }
+
+    /// For a string GRUX WROTE, being re-checked as defence in depth.
+    ///
+    /// `ShellDispatcher.dispatch` runs every tool result through the redactor a second
+    /// time, and that string is mostly Grux's own: session ids, snapshot ids, and error
+    /// messages it composed. Running the inferring passes over it destroys those.
+    /// Measured 2026-09-06, the `shell_start` reply came back as
+    ///
+    ///     session_id: [REDACTED:ASSIGNED_SECRET]
+    ///
+    /// because `session` is in the package's credential vocabulary, correctly: an HTTP
+    /// session identifier IS a credential. A Grux shell handle is not, and every call
+    /// after that one failed with `session '[REDACTED:ASSIGNED_SECRET]' not found`.
+    ///
+    /// So this runs the passes that need EVIDENCE, a known credential format or a
+    /// `user:pass@` URL, and skips the two that INFER, from a neighbouring name or from
+    /// shape alone. Untrusted subprocess output still gets everything: `redact` above is
+    /// what `formatRun` calls on stdout and stderr, and it runs first, so a real key in
+    /// the output is already gone before this ever sees the string.
+    public static func redactControlPlane(_ input: String) -> String {
+        guard !input.isEmpty else { return input }
+        return SecretRedactor.redact(input, passes: .evidenceOnly)
     }
 
     // MARK: - Internals

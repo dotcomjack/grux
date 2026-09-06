@@ -1,129 +1,40 @@
 import Foundation
+import GruxGuardrails
 
-// Canonical redactor for anything untrusted entering a Claude prompt - OCR text, ambient
-// transcripts, file contents we're surfacing to the model, etc. Replaces secret-shaped
-// tokens in-place with `[REDACTED:KIND]`. Patterns run most-specific-first so a Stripe
-// live key becomes `[REDACTED:STRIPE_LIVE_SECRET]`, not the generic high-entropy tag.
-enum SecretRedactor {
-
-    // Ordered: most-specific prefixes first, JWT before generic entropy, generic last.
-    private static let patterns: [(tag: String, regex: NSRegularExpression)] = {
-        let raw: [(String, String)] = [
-            ("ANTHROPIC_KEY", #"sk-ant-[A-Za-z0-9_\-]{10,}"#),
-            // Generic OpenAI-style secret key (sk-... and sk-proj-...). Runs after
-            // the more specific sk-ant- so Anthropic keys keep their own tag. The
-            // 16-char floor catches real keys (which are far longer) while leaving
-            // short "sk-" prose alone.
-            ("OPENAI_KEY", #"sk-(?:proj-)?[A-Za-z0-9_\-]{16,}"#),
-            ("AWS_KEY", #"AKIA[0-9A-Z]{16}"#),
-            ("PEM", #"-----BEGIN [A-Z ]*PRIVATE KEY-----"#),
-            ("GITHUB_PAT", #"ghp_[A-Za-z0-9]{30,}"#),
-            ("GITHUB_FINE_GRAINED", #"github_pat_[A-Za-z0-9_]{20,}"#),
-            ("SLACK_TOKEN", #"xox[baprs]-[A-Za-z0-9\-]{20,}"#),
-            ("STRIPE_LIVE_SECRET", #"sk_live_[A-Za-z0-9]{20,}"#),
-            ("STRIPE_LIVE_PUBLIC", #"pk_live_[A-Za-z0-9]{20,}"#),
-            ("STRIPE_LIVE_RESTRICTED", #"rk_live_[A-Za-z0-9]{20,}"#),
-            ("ELEVENLABS_KEY", #"sk_[a-f0-9]{48,}"#),
-            ("JWT", #"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"#)
-        ]
-        return raw.compactMap { pair in
-            (try? NSRegularExpression(pattern: pair.1, options: [])).map { (pair.0, $0) }
-        }
-    }()
-
-    // Generic high-entropy run - run LAST so specific patterns get first crack.
-    // Uses word-ish lookarounds and a 40-char minimum; we only redact if the token
-    // spans ≥4 character classes (upper, lower, digit, symbol), which filters
-    // out long base-ten numbers, repeated letters, ordinary words, etc.
-    private static let entropyRegex: NSRegularExpression? = {
-        try? NSRegularExpression(
-            pattern: #"(?<![A-Za-z0-9])[A-Za-z0-9+/=_\-]{40,}(?![A-Za-z0-9])"#,
-            options: []
-        )
-    }()
-
-    static func redact(_ input: String) -> String {
-        var out = input
-        for (tag, regex) in patterns {
-            out = replaceAll(in: out, regex: regex, with: "[REDACTED:\(tag)]")
-        }
-        out = replaceHighEntropy(in: out)
-        return out
-    }
-
-    // Idempotent-friendly wrapper - marks untrusted DATA clearly so Claude can tell
-    // it apart from the user's own instructions. Callers should pipe ANY screen/ambient/file
-    // text through this before injecting into a prompt.
-    static func wrapAsUntrusted(_ kind: String, _ body: String) -> String {
-        return "<untrusted_data kind=\"\(kind)\">\n\(redact(body))\n</untrusted_data>"
-    }
-
-    // MARK: - Internals
-
-    private static func replaceAll(in input: String, regex: NSRegularExpression, with replacement: String) -> String {
-        let range = NSRange(input.startIndex..<input.endIndex, in: input)
-        return regex.stringByReplacingMatches(in: input, options: [], range: range, withTemplate: NSRegularExpression.escapedTemplate(for: replacement))
-    }
-
-    private static func replaceHighEntropy(in input: String) -> String {
-        guard let regex = entropyRegex else { return input }
-        let nsInput = input as NSString
-        let range = NSRange(location: 0, length: nsInput.length)
-        let matches = regex.matches(in: input, options: [], range: range)
-        guard !matches.isEmpty else { return input }
-
-        // Walk matches in reverse so earlier ranges stay valid.
-        var result = input
-        for match in matches.reversed() {
-            guard let swiftRange = Range(match.range, in: result) else { continue }
-            let token = String(result[swiftRange])
-            // Skip anything that's already a redaction marker - keeps redact() idempotent.
-            if token.hasPrefix("[REDACTED:") { continue }
-            if charClassCount(token) >= 4 {
-                result.replaceSubrange(swiftRange, with: "[REDACTED:HIGH_ENTROPY]")
-            }
-        }
-        return result
-    }
-
-    private static func charClassCount(_ s: String) -> Int {
-        var upper = false, lower = false, digit = false, symbol = false
-        for scalar in s.unicodeScalars {
-            if scalar.value >= 0x41 && scalar.value <= 0x5A { upper = true }
-            else if scalar.value >= 0x61 && scalar.value <= 0x7A { lower = true }
-            else if scalar.value >= 0x30 && scalar.value <= 0x39 { digit = true }
-            else { symbol = true }
-        }
-        var n = 0
-        if upper { n += 1 }
-        if lower { n += 1 }
-        if digit { n += 1 }
-        if symbol { n += 1 }
-        return n
-    }
-
-    #if DEBUG
-    static func runSelfTest() {
-        func assertContains(_ haystack: String, _ needle: String, _ label: String) {
-            if !haystack.contains(needle) {
-                NSLog("SecretRedactor selftest FAIL [\(label)]: expected to contain '\(needle)', got '\(haystack)'")
-            }
-        }
-        // Anthropic key
-        let r1 = redact("key is sk-ant-api03-ABCDEF0123456789abcdef more text")
-        assertContains(r1, "[REDACTED:ANTHROPIC_KEY]", "anthropic")
-        // AWS key
-        let r2 = redact("aws: AKIAIOSFODNN7EXAMPLE end")
-        assertContains(r2, "[REDACTED:AWS_KEY]", "aws")
-        // PEM header
-        let r3 = redact("-----BEGIN RSA PRIVATE KEY-----\nMIIEvQ...")
-        assertContains(r3, "[REDACTED:PEM]", "pem")
-        // Idempotency
-        let r4 = redact(redact("key is sk-ant-api03-ABCDEF0123456789abcdef"))
-        let r5 = redact("key is sk-ant-api03-ABCDEF0123456789abcdef")
-        if r4 != redact(r5) {
-            NSLog("SecretRedactor selftest FAIL [idempotency]: \(r4) != \(redact(r5))")
-        }
-    }
-    #endif
-}
+/// The redactor is `grux-guardrails`, not this file.
+///
+/// ## What used to be here, and why it is gone
+///
+/// A 129 line `SecretRedactor` that this app carried while the extracted, hardened
+/// version of the same code sat in its own repository being fixed. The two diverged for
+/// three weeks and nobody noticed, because nothing connected them: no dependency, no
+/// shared test, no guard. The package reached 1608 lines and 115 tests across six rounds
+/// of adversarial review; the copy here stayed at its first draft.
+///
+/// Probed 2026-09-06 against this app's own shipping code, six of the eight defects
+/// disclosed in the advisories for 0.1.0 through 0.4.0 were live in it, including both
+/// criticals:
+///
+///   - The PEM pattern matched only the `-----BEGIN ...-----` line, so the key BODY was
+///     stamped `[REDACTED:PEM]` and then passed to the model underneath the marker. The
+///     transcript looked redacted, which is what made it dangerous.
+///   - `wrapAsUntrusted` closed its fence with a fixed literal, so any untrusted text
+///     containing `</untrusted_data>` escaped the block and everything after it read as
+///     operator instructions. One line, written by an attacker, in an email. This app
+///     reads your screen and your mail, so that is the input class it exists for.
+///   - A 40 character AWS secret with only three character classes, a labelled secret
+///     under the 40 character entropy floor (`DB_PASS=`, `HF_TOKEN=`), and the PEM tail
+///     all survived redaction.
+///
+/// ## Why an alias rather than a copy
+///
+/// Copying is what produced the divergence. An alias cannot drift: there is one
+/// implementation, it has a version, and Dependabot tells you when an advisory lands
+/// against it. That last part matters more than it sounds, because the six advisories
+/// this package carries are the mechanism by which a consumer finds out their redactor
+/// is broken.
+///
+/// The call sites did not change. `SecretRedactor.redact` and
+/// `SecretRedactor.wrapAsUntrusted` have identical signatures in the package, which is
+/// unsurprising: the package was extracted from this file.
+typealias SecretRedactor = GruxGuardrails.SecretRedactor

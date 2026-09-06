@@ -109,8 +109,6 @@ if you want to change something rather than run it.
 
 ---
 
----
-
 ## What it actually does
 
 The short version: one window, a sidebar of surfaces, and an assistant that can
@@ -197,11 +195,14 @@ If you run a local model through Ollama, it costs nothing at all.
   tools-version 6.0, so an older toolchain cannot resolve the dependency graph
 - An Anthropic API key, or Ollama running locally
 
-Dependencies are deliberately thin. The only direct one is
+Dependencies are deliberately thin. Two direct ones.
 [WhisperKit](https://github.com/argmaxinc/WhisperKit) for on-device speech, which
-pulls in Apple's own packages plus HuggingFace's `swift-transformers`. There is no
-analytics SDK, no crash reporter, and no telemetry package in the tree. You can
-check that yourself in `Grux-Mac/Package.resolved`.
+pulls in Apple's own packages plus HuggingFace's `swift-transformers`. And
+[grux-guardrails](https://github.com/dotcomjack/grux-guardrails), the secret redactor
+and URL policy, which is mine, MIT, and has no dependencies of its own, so it adds
+exactly one node to the graph. There is no analytics SDK, no crash reporter, and no
+telemetry package in the tree. You can check that yourself in
+`Grux-Mac/Package.resolved`.
 
 ## Building
 
@@ -468,10 +469,16 @@ The threat model, the layered controls with file and line anchors, the denylist,
 the audit log format, and an explicit section on what Grux does **not** defend
 against are all in [SECURITY.md](Grux-Mac/SECURITY.md).
 
-**The two controls most likely to hurt you live in their own package.** Keeping a
-credential out of a prompt, and stopping the agent following a hostile link, are
-[grux-guardrails](https://github.com/dotcomjack/grux-guardrails): 115 tests, zero
-dependencies, MIT, usable without any of the rest of this.
+**The two controls most likely to hurt you live in their own package, and Grux depends
+on it.** Keeping a credential out of a prompt, and stopping the agent following a
+hostile link, are [grux-guardrails](https://github.com/dotcomjack/grux-guardrails): 115
+tests, zero dependencies, MIT, usable without any of the rest of this.
+
+Until 2026-09-06 that sentence would have been a lie by implication. Grux carried its
+own older copy of both controls and did not depend on the package at all, so six of the
+eight defects the advisories below describe were live in the shipped app, including both
+criticals. The copy is deleted and the app is on the package. `Package.resolved` is where
+you check that rather than taking it from me.
 
 The reason to point you at it is not the test count. It carries
 [six published advisories](https://github.com/dotcomjack/grux-guardrails/security/advisories?state=published)

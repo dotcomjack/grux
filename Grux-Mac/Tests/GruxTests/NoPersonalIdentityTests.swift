@@ -551,7 +551,18 @@ final class NoPersonalIdentityTests: XCTestCase {
                 var reported = false
                 for span in spans where !reported {
                     let hay = span.lowercased()
-                    if Self.allowedContexts.contains(where: { hay.contains($0) }) { continue }
+                    // LOWERCASE BOTH SIDES. `hay` is lowercased above, so a mixed-case
+                    // entry in allowed_contexts could never match it, and two of them
+                    // were mixed case: "Copyright (c) 2026 DotcomJack" and
+                    // "\"author\": \"DotcomJack\"". Both were dead the day they were
+                    // written and nobody could tell, because a context that never fires
+                    // looks exactly like a context nothing needed.
+                    //
+                    // Surfaced 2026-09-06 when grux-guardrails became a real dependency
+                    // and its MIT licence, carrying that exact copyright line, was
+                    // generated into THIRD-PARTY-NOTICES.md. The allowlist said the line
+                    // was fine, the guard failed the build anyway.
+                    if Self.allowedContexts.contains(where: { hay.contains($0.lowercased()) }) { continue }
                     if Self.allowedExactTokens.contains(
                         hay.trimmingCharacters(in: .whitespaces)) { continue }
                     if let word = Self.bannedWords.first(where: { Self.containsWord(hay, $0) }) {

@@ -95,11 +95,11 @@ final class URLGuardTests: XCTestCase {
     func testDenylistCanBlockBuiltinLANHost() {
         // Positive control first: a host in the builtin LAN list IS exempt from
         // the private-network denial. Without this the assertion below would
-        // pass even if builtinLANHosts were ignored entirely.
-        let exempt = URLGuardConfig(builtinLANHosts: ["media-box"])
+        // pass even if trustedLANHosts were ignored entirely.
+        let exempt = URLGuardConfig(trustedLANHosts: ["media-box"])
         XCTAssertTrue(isAllowed("http://media-box:3847/api/images/render", config: exempt))
         // The user denylist still beats it: denylist matching runs first.
-        let config = URLGuardConfig(denylist: ["media-box"], builtinLANHosts: ["media-box"])
+        let config = URLGuardConfig(denylist: ["media-box"], trustedLANHosts: ["media-box"])
         XCTAssertFalse(isAllowed("http://media-box:3847/api/images/render", config: config))
     }
 
