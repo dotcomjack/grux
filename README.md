@@ -8,7 +8,7 @@ and a shell it can undo. Your own API key, or a local model and no key at all.
 [![Licence](https://img.shields.io/badge/licence-MIT-7C5CFF)](LICENSE)
 [![Platform](https://img.shields.io/badge/macOS-14%2B%20Apple%20silicon-lightgrey)](#requirements)
 
-**The god agent for solopreneurs on Mac.**
+**One agent for everything you run on your Mac.**
 
 Thirty nine features and one hundred sixteen tools in one native window.
 
