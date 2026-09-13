@@ -25,3 +25,11 @@ paths = [
 [[allowlists]]
 description = "Prose. README and CHANGELOG describe key exchange; they carry no keys."
 paths = ['''(^|/)(README|CHANGELOG)\.md$''']
+
+[[allowlists]]
+description = """
+The scanner's own config and ignore list. .gitleaksignore annotates each suppressed
+finding with what it actually is, so it necessarily QUOTES the flagged text. Without
+this, the file that silences false positives generates four findings of its own.
+"""
+paths = ['''(^|/)\.gitleaks(ignore|\.toml)$''']
