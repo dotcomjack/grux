@@ -1,0 +1,24 @@
+# Findings reviewed by a human on 2026-09-13 and accepted as false positives.
+#
+# These are per-finding fingerprints: commit + path + rule + line. Each suppresses exactly
+# ONE finding at ONE commit. It is not a pattern rule and not a path rule, so the identical
+# text committed again anywhere still fires. Verified 2026-09-13 by re-committing one of the
+# strings below into shipping source: it was detected.
+#
+# This file records that a specific line at a specific commit was read and judged.
+#
+# All four are the generic-api-key rule matching the WORD "key" or "password" next to a
+# type or an example, with no value attached.
+
+# let key: P256.Signing.PrivateKey   (a Swift type declaration)
+18c7ddb3b8cf28662a0f13b4eeaa0fe885ff669e:Grux-Mac/Sources/Grux/Empire/ASCStateMonitor.swift:generic-api-key:298
+
+# let privateKey: Curve25519.KeyAgreement.PrivateKey   (a struct property declaration)
+18c7ddb3b8cf28662a0f13b4eeaa0fe885ff669e:Grux-Mac/Sources/Grux/iPhone/PhoneCrypto.swift:generic-api-key:193
+
+# A doc comment using DB_PASSWORD=p=ssw0rd123456 to explain why the redactor must not
+# stop at an equals sign. The value is invented for the comment.
+18c7ddb3b8cf28662a0f13b4eeaa0fe885ff669e:Grux-Mac/Sources/GruxShellCore/ShellOutputGuard.swift:generic-api-key:163
+
+# let privateKey: Curve25519.KeyAgreement.PrivateKey   (a struct property declaration)
+18c7ddb3b8cf28662a0f13b4eeaa0fe885ff669e:GruxPhone/GruxPhone/PhoneCrypto.swift:generic-api-key:128
