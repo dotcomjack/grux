@@ -87,6 +87,25 @@ npx @dotcomjack/grux
 Building from source is in [Building](#building) below, and it is the path to take
 if you want to change something rather than run it.
 
+## Questions, answered
+
+Short answers to what people ask before they hand an agent their Mac. They live on
+[gruxai.com](https://gruxai.com/answers/), and every count in them is read from this
+repository when the site is built, and a weekly job flags any that have since moved.
+
+- [What is Grux OS?](https://gruxai.com/answers/what-is-grux/)
+- [A local AI assistant for macOS that runs on your own machine](https://gruxai.com/answers/local-ai-assistant-for-mac/)
+- [Which LLM can my Mac actually run?](https://gruxai.com/answers/which-llm-can-my-mac-run/)
+- [A free AI assistant with no account and no subscription](https://gruxai.com/answers/free-ai-assistant-with-no-account/)
+- [AI meeting notes without uploading the audio](https://gruxai.com/answers/ai-meeting-notes-without-uploading-audio/)
+- [Giving an AI agent your mail and calendar, on your own machine](https://gruxai.com/answers/give-an-ai-agent-your-mail-and-calendar/)
+- [Letting an AI agent run shell commands, safely](https://gruxai.com/answers/let-an-ai-agent-run-shell-commands-safely/)
+- [Stopping an AI agent leaking secrets from your screen and files](https://gruxai.com/answers/stop-an-ai-agent-leaking-secrets/)
+- [The macOS permissions an AI assistant asks for, and what each one buys](https://gruxai.com/answers/macos-permissions-an-ai-assistant-asks-for/)
+- [Driving a Mac app from the terminal with a coding agent](https://gruxai.com/answers/drive-a-mac-app-from-the-terminal-with-an-agent/)
+
+Every surface, one line each: [gruxai.com/features](https://gruxai.com/features/).
+
 ## Table of contents
 
 - [What it actually does](#what-it-actually-does)
