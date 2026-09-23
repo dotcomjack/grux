@@ -339,6 +339,14 @@ sees what you send it. Grux redacts secrets it recognises before anything goes
 out, but a hosted model is a third party by definition. Run Ollama if that matters
 to you.
 
+What each hosted provider says it does with that traffic is written down here as
+it is added, quoted from the provider's own policy, so you can hold them to it.
+
+- **TypeSafe (Jev)**, the decision model behind intent routing and shell safety
+  from the next release: "We will not train or fine tune any artificial
+  intelligence or machine learning models on your prompts or other Input."
+  ([privacy policy](https://typesafe.ai/legal/privacy-policy), read 2026-09-20.)
+
 ## Feature tiers
 
 **Core (25).** Home, Chat, Approvals, Cognition Map, Projects, Task Stack,
