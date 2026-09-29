@@ -2,7 +2,6 @@ import SwiftUI
 
 struct EmpireDashboardWindow: View {
     @ObservedObject private var asc = ASCStateMonitor.shared
-    @ObservedObject private var domains = DomainMonitor.shared
 
     var body: some View {
         VStack(spacing: 0) {
@@ -49,8 +48,6 @@ struct EmpireDashboardWindow: View {
                 EmpireOpsSection()
                 Divider().opacity(0.4)
                 ascSection
-                Divider().opacity(0.4)
-                domainSection
                 Divider().opacity(0.4)
                 BrandTimeSection()
                 Divider().opacity(0.4)
@@ -188,123 +185,6 @@ struct EmpireDashboardWindow: View {
         case .rejected: return "REJECTED"
         case .draft:    return "DRAFT"
         case .unknown:  return r.appStoreState
-        }
-    }
-
-    // MARK: - Domain renewals
-
-    private var domainSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: "globe").foregroundStyle(.teal)
-                Text("Domain Renewals").font(.headline)
-                Spacer()
-                Text(domainSubtitle)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                if domains.isSweeping {
-                    ProgressView().controlSize(.mini)
-                }
-                Button { Task { await domains.sweep(askedForByAPerson: true) } } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .buttonStyle(.borderless)
-                .disabled(domains.isSweeping)
-                .help("Sweep GoDaddy now")
-            }
-            // One exclusive chain, because the previous shape could show two
-            // states at once and a third that was unreachable. With no
-            // credentials it printed the error AND fell into the else branch
-            // below, rendering "No domains within 30 days. Next: none in 0d."
-            // underneath it.
-            if domains.needsSetup {
-                // Unconfigured is needs-setup, not a failure. The dashboard is a
-                // composite of independent tiles, so the gate is per SECTION
-                // here rather than per tab: gating the whole window on registrar
-                // credentials would hide a dozen working tiles.
-                CapabilitySetupCard(featureKey: "domains")
-            } else if let err = domains.lastError {
-                Text(err)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-            } else if domains.records.isEmpty && !domains.isSweeping {
-                Text("Sweeping…")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                // Lead with anything inside the 30-day window, then a few of
-                // the next-soonest so the panel is a horizon, not just alarms.
-                let expiring = domains.records.filter { $0.isExpiring }
-                let upcoming = domains.records.filter { !$0.isExpiring }.prefix(5)
-                if expiring.isEmpty {
-                    Text("No domains within 30 days. Next: \(upcoming.first?.domain ?? "none") in \(upcoming.first?.daysUntilExpiry ?? 0)d.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                VStack(spacing: 6) {
-                    ForEach(expiring) { domainRow($0) }
-                    ForEach(Array(upcoming)) { domainRow($0) }
-                }
-            }
-        }
-    }
-
-    private var domainSubtitle: String {
-        let cadence = "daily"
-        guard let t = domains.lastSweep else { return "sweeps \(cadence)" }
-        let f = DateFormatter()
-        f.timeStyle = .short
-        return "checked \(f.string(from: t)) · \(cadence)"
-    }
-
-    private func domainRow(_ r: DomainRecord) -> some View {
-        HStack(spacing: 12) {
-            Text(domainPillLabel(r))
-                .font(.caption2.weight(.bold))
-                .padding(.horizontal, 8).padding(.vertical, 3)
-                .background(domainColor(r))
-                .foregroundStyle(.white)
-                .clipShape(Capsule())
-            VStack(alignment: .leading, spacing: 2) {
-                Text(r.domain).font(.body.weight(.semibold))
-                Text(r.renewAuto ? "auto-renew on" : "auto-renew OFF")
-                    .font(.caption2)
-                    .foregroundStyle(r.renewAuto ? Color.secondary : Color.orange)
-            }
-            Spacer()
-            Text("\(r.daysUntilExpiry)d")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
-            Button {
-                if let url = URL(string: "https://dcc.godaddy.com/control/portfolio") {
-                    NSWorkspace.shared.open(url)
-                }
-            } label: {
-                Image(systemName: "arrow.up.forward.app").foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .help("Open GoDaddy domain portfolio")
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(RoundedRectangle(cornerRadius: 8).fill(domainColor(r).opacity(0.10)))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(domainColor(r).opacity(0.35), lineWidth: 1))
-    }
-
-    private func domainColor(_ r: DomainRecord) -> Color {
-        switch r.health {
-        case .ok:     return .green
-        case .soon:   return .orange
-        case .urgent: return .red
-        }
-    }
-
-    private func domainPillLabel(_ r: DomainRecord) -> String {
-        switch r.health {
-        case .ok:     return "OK"
-        case .soon:   return "SOON"
-        case .urgent: return "RENEW"
         }
     }
 

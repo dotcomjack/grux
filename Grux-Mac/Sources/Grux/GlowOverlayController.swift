@@ -35,7 +35,7 @@ final class GlowOverlayController {
             hosting.autoresizingMask = [.width, .height]
             edgeWindow.contentView?.addSubview(hosting)
             edgeWindow.updateFrame(for: frame)
-            edgeWindow.orderFrontRegardless()
+            WindowFacade.orderFrontRegardless(edgeWindow)
             edgeWindows[edge] = edgeWindow
         }
 
@@ -77,6 +77,7 @@ final class GlowOverlayController {
     }
 
     private func frameViaAccessibility(pid: pid_t) -> NSRect? {
+        guard AccessibilityTrust.isGranted() else { return nil }
         let appElement = AXUIElementCreateApplication(pid)
         var focused: CFTypeRef?
         guard AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &focused) == .success,

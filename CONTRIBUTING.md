@@ -20,6 +20,20 @@ installs the actual app; see the README for signing.
 nothing about the suite. Run `swift test` and read the `Executed N tests` line. No
 such line means zero tests ran, which is a failure, not a pass.
 
+**The live Accessibility tests skip unless you opt in.** They read Finder's real
+accessibility tree and post real events, so the test host itself must be trusted.
+Asking an untrusted host, even the non-prompting way, raises the macOS "would like
+to control this computer" dialog. No automated run turns them on, by design. To run
+them, add the test host (`xctest`, or Xcode's test runner) in System Settings,
+Privacy and Security, Accessibility, then run the suite with `GRUX_LIVE_AX_TESTS=1`
+in its environment:
+
+```sh
+GRUX_LIVE_AX_TESTS=1 swift test
+```
+
+Without it they report as skipped, with the reason.
+
 ## The four rules that are enforced mechanically
 
 These fail CI, so it is cheaper to know them now.

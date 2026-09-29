@@ -17,7 +17,6 @@ final class LaunchFlagGateTests: XCTestCase {
     /// Deliberately a table rather than six near-identical tests: the failure mode is
     /// somebody adding a seventh ambient starter, and a table is the thing they will notice.
     static let gatedAtLaunch: [(call: String, flag: String)] = [
-        ("DomainMonitor.shared.start()",      "domainMonitorEnabled"),
         ("AudioDucker.shared.install()",      "musicDuckingEnabled"),
         ("MeetingAppDetector.shared.start()", "meetingAutoDetectEnabled"),
         ("GruxControlSocket.shared.start()",  "controlSocketEnabled"),
@@ -82,7 +81,6 @@ final class LaunchFlagGateTests: XCTestCase {
         }
         """
         let empty = try JSONDecoder().decode(GruxConfig.self, from: Data(older.utf8))
-        XCTAssertFalse(empty.domainMonitorEnabled)
         XCTAssertFalse(empty.musicDuckingEnabled)
         XCTAssertFalse(empty.meetingAutoDetectEnabled)
         XCTAssertFalse(empty.personMemoryEnabled)
@@ -143,31 +141,23 @@ final class LaunchFlagGateTests: XCTestCase {
                       "and it still has to respect the off switch")
     }
 
-    /// A credential nobody handed to Grux is not a credential Grux may spend.
-    ///
-    /// The file and environment branches WRITE both halves into the login Keychain and then
-    /// call the registrar, so this is not a read. Default false means the launch pass and the
-    /// 24 hour pass cannot reach them.
-    func testAmbientCredentialSourcesAreOffByDefault() throws {
-        let url = LaunchConsentGateTests.repoRoot()
-            .appendingPathComponent("Sources/Grux/Empire/DomainMonitor.swift")
-        let src = try String(contentsOf: url, encoding: .utf8).components(separatedBy: "\n")
-        let decl = try XCTUnwrap(
-            LaunchConsentGateTests.lines(containing: "func resolveCredentials(", in: src).first)
-        XCTAssertTrue(src[decl].contains("allowAmbientSources: Bool = false"),
-                      "resolveCredentials no longer defaults to Keychain only, so a background "
-                      + "sweep can adopt ~/.grux/godaddy-creds.json again")
-
-        let body = try XCTUnwrap(
-            LaunchConsentGateTests.bodyLines(of: "func resolveCredentials(", in: src))
-        let guarded = try XCTUnwrap(
-            LaunchConsentGateTests.lines(containing: "guard allowAmbientSources", in: src)
-                .first { body.contains($0) },
-            "nothing holds the file and environment branches back")
-        let fileBranch = try XCTUnwrap(
-            LaunchConsentGateTests.lines(containing: "godaddy-creds.json", in: src)
-                .first { body.contains($0) })
-        XCTAssertLessThan(guarded, fileBranch, "the guard sits after the branch it guards")
+    /// A credential nobody handed to Grux is not a credential Grux may spend. The
+    /// Domain monitor adopted a registrar key left in `~/.grux/godaddy-creds.json` or the
+    /// environment; it was ripped in Phase C (C13), and nothing may pick those sources up.
+    func testNothingReadsTheRippedRegistryCredentialSources() throws {
+        let sources = LaunchConsentGateTests.repoRoot().appendingPathComponent("Sources/Grux")
+        let files = FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil)!
+            .compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
+        XCTAssertGreaterThan(files.count, 500)
+        for f in files {
+            let code = try String(contentsOf: f, encoding: .utf8)
+                .components(separatedBy: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+                .joined(separator: "\n")
+            for needle in ["godaddy-creds.json", "GODADDY_API_KEY", "KeychainStore.get(.goDaddyApiKey)",
+                           "KeychainStore.get(.goDaddyApiSecret)"] {
+                XCTAssertFalse(code.contains(needle), "\(f.lastPathComponent) reads \(needle) again")
+            }
+        }
     }
 }
 
@@ -541,20 +531,6 @@ final class MissedLaunchServiceTests: XCTestCase {
         return try String(contentsOf: url, encoding: .utf8).components(separatedBy: "\n")
     }
 
-    /// The orb is a floating always-on-top window that defaults ON, and it went up over the
-    /// setup flow. The focus overlay eleven lines above it already carries the gate and the
-    /// comment explaining exactly this, which is what makes the omission legible: the smaller
-    /// card was held back and the larger window that sits on every Space was not.
-    func testTheOrbWaitsForOnboardingLikeTheOverlayBesideIt() throws {
-        let src = try gruxApp()
-        let site = try XCTUnwrap(
-            LaunchConsentGateTests.lines(containing: "OrbAnywhereController.shared.show()", in: src)
-                .last)
-        let window = src[max(0, site - 4)...site].joined(separator: "\n")
-        XCTAssertTrue(window.contains("OnboardingModel.shared.stage == .done"),
-                      "the floating orb goes up during the first-run flow")
-    }
-
     /// A file any local process can write, whose contents reach ChatService.send() and
     /// therefore a model with tools. It is a debug seam that shipped, and it had no flag, no
     /// consent step and no stop(). Now behind the same switch as the control socket, because
@@ -601,39 +577,5 @@ final class MissedLaunchServiceTests: XCTestCase {
         let row = try XCTUnwrap(
             contract.components(separatedBy: "\n").first { $0.hasPrefix("| `grux.foundry.enabled`") })
         XCTAssertFalse(row.contains("not implemented"), row)
-    }
-}
-
-// MARK: - The hotkey that walked round the consent step
-
-final class TerminalOverlayHotkeyTests: XCTestCase {
-
-    /// Holding the LAUNCH path was not enough. `GlobalHotkey.register` claims Option-Cmd-T
-    /// unconditionally, and pressing it reaches `showOverlay()`, which force-set
-    /// `isEnabled = true` and called `refresh()` straight past `startIfAllowed()`. `refresh()`
-    /// shells osascript at Terminal, so that is the same Automation consent dialog the launch
-    /// fix removed, reached by a key combination nobody has been told about.
-    ///
-    /// Force-enabling the kill-switch is kept on purpose: pressing the hotkey IS a request
-    /// for the feature. What does not follow is permission to speak to another app before
-    /// the step that explains what this does.
-    func testSummoningTheOverlayCannotOutrunTheConsentStep() throws {
-        let url = LaunchConsentGateTests.repoRoot()
-            .appendingPathComponent("Sources/Grux/TerminalFocusState.swift")
-        let src = try String(contentsOf: url, encoding: .utf8).components(separatedBy: "\n")
-        let body = try XCTUnwrap(LaunchConsentGateTests.bodyLines(of: "func showOverlay", in: src))
-
-        let gate = try XCTUnwrap(
-            LaunchConsentGateTests.lines(containing: "startIfAllowed()", in: src)
-                .first { body.contains($0) },
-            "showOverlay() does not go through the gate, so the hotkey reaches the system directly")
-        let refresh = try XCTUnwrap(
-            LaunchConsentGateTests.lines(containing: "refresh()", in: src)
-                .first { body.contains($0) })
-        XCTAssertLessThan(gate, refresh, "refresh() runs before the gate is consulted")
-        XCTAssertFalse(
-            LaunchConsentGateTests.lines(containing: "hasStartedWatching", in: src)
-                .filter { body.contains($0) }.isEmpty,
-            "nothing stops refresh() when the gate declined")
     }
 }

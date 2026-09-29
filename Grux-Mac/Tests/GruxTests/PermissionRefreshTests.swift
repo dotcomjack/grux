@@ -81,8 +81,12 @@ final class PermissionRefreshTests: XCTestCase {
             else { UserDefaults.standard.removeObject(forKey: key) }
         }
 
+        // A stubbed probe: the real one blocks while the screen is locked.
+        var asked: [String] = []
         UserDefaults.standard.removeObject(forKey: key)
-        CapabilityResolver.refreshAutomationObservation()
+        CapabilityResolver.refreshAutomationObservation(probe: { asked.append($0); return OSStatus(noErr) })
+        XCTAssertEqual(asked, CapabilityResolver.automationTargets, "the refresh did not ask about every target")
+        XCTAssertEqual(UserDefaults.standard.object(forKey: key) as? Bool, true, "a grant was not recorded")
         XCTAssertNotNil(UserDefaults.standard.object(forKey: key),
                         "Nothing wrote the automation observation, so the Automation card "
                             + "can never be satisfied no matter what the user grants.")
@@ -129,4 +133,46 @@ final class PermissionRefreshTests: XCTestCase {
                       "recheck no longer refreshes the automation observation, so the "
                         + "Automation card is back to reading a value nothing updates.")
     }
+
+    // MARK: - Skipping while the probe is out
+
+    /// THE CARD AFTER MUST NOT BE PASSED. The re-check awaits its probe, and the person can
+    /// press Skip meanwhile. Deciding from the card that was up when the probe started
+    /// called `next()` a second time on the grant, passing the following card unseen.
+    /// Stubbed: the refresh moves the person on, and the permission reads granted.
+    func testSkippingWhileTheProbeIsOutDoesNotPassTheNextCard() async {
+        var current: SetupRequirement? = .permAutomation
+        let advance = await PermissionsRecheck.shouldAdvance(
+            .permAutomation,
+            refresh: { _ in current = .permFullDiskAccess },
+            isSatisfied: { _ in true },
+            current: { current })
+        XCTAssertFalse(advance, "a grant for a card the person had already skipped moved past the next one")
+    }
+
+    func testAGrantOnTheCardStillShowingAdvances() async {
+        let advance = await PermissionsRecheck.shouldAdvance(
+            .permAutomation, refresh: { _ in }, isSatisfied: { _ in true }, current: { .permAutomation })
+        XCTAssertTrue(advance)
+    }
+
+    func testNoGrantDoesNotAdvance() async {
+        let advance = await PermissionsRecheck.shouldAdvance(
+            .permAutomation, refresh: { _ in }, isSatisfied: { _ in false }, current: { .permAutomation })
+        XCTAssertFalse(advance)
+    }
+
+    /// And the card's re-check decides through it, so the guard is the one that runs.
+    func testThePermissionsRecheckDecidesAfterTheProbe() throws {
+        let src = try source("Sources/Grux/Onboarding/OnboardingSteps.swift")
+        let lines = src.components(separatedBy: "\n")
+        guard let i = lines.firstIndex(where: { $0.contains("private func recheck() async") })
+        else { return XCTFail("recheck() was renamed or removed.") }
+        let body = lines[i ..< min(i + 20, lines.count)].joined().filter { !$0.isWhitespace }
+        XCTAssertTrue(body.contains("PermissionsRecheck.shouldAdvance(req,"),
+                      "the permissions card decides without the after-the-probe guard")
+        XCTAssertTrue(body.contains("current:{current})guardmoveelse{return}"),
+                      "the permissions card does not pass where the person is now")
+    }
+
 }

@@ -64,8 +64,34 @@ enum WorkdayLogStore {
         return jsonURL
     }
 
+    /// The file a day's log lives in, or nil when `dayKey` is not a real
+    /// calendar date written yyyy-MM-dd. Day keys reach here from chat tools
+    /// (`read_workday_log`, the Slack and Notion pushes), and `../x`, an absolute
+    /// path or an encoded one used to name a file outside this folder. The
+    /// resolved file must also sit directly in the log folder.
+    static func jsonURL(forDayKey dayKey: String) -> URL? {
+        guard isDayKey(dayKey) else { return nil }
+        let dir = Persistence.workdayLogsDir.standardizedFileURL.resolvingSymlinksInPath()
+        let url = dir.appendingPathComponent("\(dayKey).json").standardizedFileURL.resolvingSymlinksInPath()
+        guard url.deletingLastPathComponent().path == dir.path else { return nil }
+        return url
+    }
+
+    /// True for a real calendar date written yyyy-MM-dd (ASCII digits only).
+    static func isDayKey(_ s: String) -> Bool {
+        guard s.range(of: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", options: .regularExpression) != nil else { return false }
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "UTC")
+        f.dateFormat = "yyyy-MM-dd"
+        f.isLenient = false
+        guard let date = f.date(from: s) else { return false }
+        return f.string(from: date) == s
+    }
+
     static func load(dayKey: String) -> WorkdayLog? {
-        let url = Persistence.workdayLogsDir.appendingPathComponent("\(dayKey).json")
+        guard let url = jsonURL(forDayKey: dayKey) else { return nil }
         guard let data = try? Data(contentsOf: url) else { return nil }
         let dec = JSONDecoder(); dec.dateDecodingStrategy = .iso8601
         return try? dec.decode(WorkdayLog.self, from: data)

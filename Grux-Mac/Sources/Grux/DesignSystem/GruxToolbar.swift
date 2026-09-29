@@ -24,30 +24,45 @@ struct GruxToolbar<Trailing: View>: View {
     }
 
     var body: some View {
-        HStack(spacing: GruxSpacing.s) {
-            VStack(alignment: .leading, spacing: 2) {
-                // A page title truncates with an ellipsis; it never wraps. The
-                // trailing() cluster competes for the same row, so without a
-                // line limit a long title pushes the actions off the edge or
-                // stacks itself into two lines and shoves the whole header
-                // taller.
-                Text(title)
-                    .font(style == .display ? GruxType.display : GruxType.title)
-                    .foregroundStyle(GruxTheme.textPrimary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                if let subtitle {
-                    Text(subtitle)
-                        .font(GruxType.caption)
-                        .foregroundStyle(GruxTheme.textTertiary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
+        // One row when the title and every control fit at their own widths,
+        // and otherwise the title over the controls, which wrap onto as many
+        // rows as the pane needs. A narrow pane (the Command Panel's starts
+        // at 360pt) truncated the title to nothing and the buttons to "Im..."
+        // when everything had to share one row.
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: GruxSpacing.s) {
+                titleBlock
+                trailing()
             }
-            trailing()
+            VStack(alignment: .leading, spacing: GruxSpacing.s) {
+                titleBlock
+                GruxFlow(spacing: GruxSpacing.s, rowSpacing: GruxSpacing.s) { trailing() }
+            }
         }
         .padding(.horizontal, GruxSpacing.m)
         .padding(.vertical, GruxSpacing.s)
+    }
+
+    private var titleBlock: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            // A page title truncates with an ellipsis; it never wraps. The
+            // trailing() cluster competes for the same row, so without a
+            // line limit a long title pushes the actions off the edge or
+            // stacks itself into two lines and shoves the whole header
+            // taller.
+            Text(title)
+                .font(style == .display ? GruxType.display : GruxType.title)
+                .foregroundStyle(GruxTheme.textPrimary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            if let subtitle {
+                Text(subtitle)
+                    .font(GruxType.caption)
+                    .foregroundStyle(GruxTheme.textTertiary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+        }
     }
 }
 

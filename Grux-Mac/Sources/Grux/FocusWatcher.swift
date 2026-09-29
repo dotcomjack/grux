@@ -88,7 +88,7 @@ final class FocusWatcher {
         AppState.shared.saveAll()
     }
 
-    // Restart the watcher loop - call after the user changes tier in Settings
+    // Restart the watcher loop - call after the user changes tier in Tuning
     // so the new cadence takes effect immediately without quitting Grux.
     func restartForTierChange() {
         timer?.invalidate(); timer = nil

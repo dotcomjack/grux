@@ -20,7 +20,7 @@ final class ColdEmailConfirmController {
         let hosting = NSHostingController(rootView: view)
         if let window {
             window.contentViewController = hosting
-            window.makeKeyAndOrderFront(nil)
+            WindowFacade.makeKeyAndOrderFront(window)
         } else {
             let w = NSWindow(contentViewController: hosting)
             w.title = "Confirm Outreach"
@@ -29,9 +29,9 @@ final class ColdEmailConfirmController {
             w.setContentSize(NSSize(width: 560, height: 540))
             w.center()
             window = w
-            w.makeKeyAndOrderFront(nil)
+            WindowFacade.makeKeyAndOrderFront(w)
         }
-        NSApp.activate(ignoringOtherApps: true)
+        WindowFacade.activateGrux()
     }
 
     func close() {

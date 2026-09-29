@@ -24,8 +24,6 @@ enum MacroAction: Codable, Equatable, Hashable {
     case launchApp(name: String)
     case openURL(url: String)
     case spawnTerminalsToGrid(rows: Int, cols: Int)     // spawns fresh new windows + tiles
-    case enableTerminalFocusOverlay
-    case disableTerminalFocusOverlay                     // tear down the overlay; Terminal stays
     case playMusic(song: String, artist: String)
     case prepareCleanWorkspace                           // minimize existing terminals + hide other apps
     case runShell(command: String)                       // /bin/zsh -lc, captures stdout+stderr
@@ -40,10 +38,16 @@ enum MacroAction: Codable, Equatable, Hashable {
     // Codable single-case enum support
     enum CodingKeys: String, CodingKey { case kind, name, url, rows, cols, row, col, song, artist, command, setup, template, source, text, seconds, milliseconds }
     enum Kind: String, Codable {
-        case launchApp, openURL, spawnTerminalsToGrid, enableTerminalFocusOverlay, disableTerminalFocusOverlay,
+        case launchApp, openURL, spawnTerminalsToGrid,
              playMusic, prepareCleanWorkspace, runShell, runInTerminalCell, speakShellOutput, runAppleScript, speak, delay, awaitSilence,
              openEmpireDashboard
     }
+
+    /// Kinds that shipped and were later removed. A stored macro that still
+    /// carries one loses that step and nothing else, rather than failing to
+    /// decode as a whole and taking the person's macro with it.
+    static let retiredKinds: Set<String> = ["enableTerminalFocusOverlay", "disableTerminalFocusOverlay"]
+    struct RetiredKind: Error { let kind: String }
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
@@ -58,10 +62,6 @@ enum MacroAction: Codable, Equatable, Hashable {
             try c.encode(Kind.spawnTerminalsToGrid, forKey: .kind)
             try c.encode(r, forKey: .rows)
             try c.encode(cc, forKey: .cols)
-        case .enableTerminalFocusOverlay:
-            try c.encode(Kind.enableTerminalFocusOverlay, forKey: .kind)
-        case .disableTerminalFocusOverlay:
-            try c.encode(Kind.disableTerminalFocusOverlay, forKey: .kind)
         case .playMusic(let s, let a):
             try c.encode(Kind.playMusic, forKey: .kind)
             try c.encode(s, forKey: .song)
@@ -99,7 +99,12 @@ enum MacroAction: Codable, Equatable, Hashable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        let kind = try c.decode(Kind.self, forKey: .kind)
+        let rawKind = try c.decode(String.self, forKey: .kind)
+        if Self.retiredKinds.contains(rawKind) { throw RetiredKind(kind: rawKind) }
+        guard let kind = Kind(rawValue: rawKind) else {
+            throw DecodingError.dataCorruptedError(forKey: .kind, in: c,
+                                                   debugDescription: "unknown macro action kind \(rawKind)")
+        }
         switch kind {
         case .launchApp: self = .launchApp(name: try c.decode(String.self, forKey: .name))
         case .openURL: self = .openURL(url: try c.decode(String.self, forKey: .url))
@@ -108,8 +113,6 @@ enum MacroAction: Codable, Equatable, Hashable {
                 rows: try c.decode(Int.self, forKey: .rows),
                 cols: try c.decode(Int.self, forKey: .cols)
             )
-        case .enableTerminalFocusOverlay: self = .enableTerminalFocusOverlay
-        case .disableTerminalFocusOverlay: self = .disableTerminalFocusOverlay
         case .playMusic:
             self = .playMusic(
                 song: try c.decode(String.self, forKey: .song),
@@ -156,8 +159,6 @@ enum MacroAction: Codable, Equatable, Hashable {
         case .launchApp: return .launchApp
         case .openURL: return .openURL
         case .spawnTerminalsToGrid: return .spawnTerminalsToGrid
-        case .enableTerminalFocusOverlay: return .enableTerminalFocusOverlay
-        case .disableTerminalFocusOverlay: return .disableTerminalFocusOverlay
         case .playMusic: return .playMusic
         case .prepareCleanWorkspace: return .prepareCleanWorkspace
         case .runShell: return .runShell
@@ -177,8 +178,6 @@ enum MacroAction: Codable, Equatable, Hashable {
         case .launchApp(let n): return "Launch app → \(n)"
         case .openURL(let u): return "Open URL → \(u)"
         case .spawnTerminalsToGrid(let r, let c): return "Spawn Terminal grid \(r)×\(c)"
-        case .enableTerminalFocusOverlay: return "Enable Terminal Focus overlay"
-        case .disableTerminalFocusOverlay: return "Disable Terminal Focus overlay"
         case .playMusic(let s, let a): return "Play music → \(s) - \(a)"
         case .prepareCleanWorkspace: return "Prepare clean workspace"
         case .runShell(let c):
@@ -207,8 +206,6 @@ enum MacroAction: Codable, Equatable, Hashable {
         case .launchApp: return .launchApp(name: "")
         case .openURL: return .openURL(url: "https://")
         case .spawnTerminalsToGrid: return .spawnTerminalsToGrid(rows: 2, cols: 2)
-        case .enableTerminalFocusOverlay: return .enableTerminalFocusOverlay
-        case .disableTerminalFocusOverlay: return .disableTerminalFocusOverlay
         case .playMusic: return .playMusic(song: "", artist: "")
         case .prepareCleanWorkspace: return .prepareCleanWorkspace
         case .runShell: return .runShell(command: "")
@@ -229,8 +226,6 @@ extension MacroAction.Kind {
         case .launchApp: return "Launch app"
         case .openURL: return "Open URL"
         case .spawnTerminalsToGrid: return "Spawn Terminal grid"
-        case .enableTerminalFocusOverlay: return "Enable Terminal Focus overlay"
-        case .disableTerminalFocusOverlay: return "Disable Terminal Focus overlay"
         case .playMusic: return "Play music"
         case .prepareCleanWorkspace: return "Prepare clean workspace"
         case .runShell: return "Run shell command"
@@ -246,7 +241,7 @@ extension MacroAction.Kind {
     static var allCases: [MacroAction.Kind] {
         [.launchApp, .openURL, .runShell, .runInTerminalCell, .speakShellOutput, .runAppleScript,
          .playMusic, .spawnTerminalsToGrid,
-         .enableTerminalFocusOverlay, .disableTerminalFocusOverlay, .prepareCleanWorkspace, .speak, .delay, .awaitSilence,
+         .prepareCleanWorkspace, .speak, .delay, .awaitSilence,
          .openEmpireDashboard]
     }
 }
@@ -330,7 +325,17 @@ struct Macro: Codable, Identifiable, Equatable, Hashable {
         self.name = try c.decode(String.self, forKey: .name)
         self.triggers = try c.decode([String].self, forKey: .triggers)
         self.description = try c.decode(String.self, forKey: .description)
-        self.actions = try c.decode([MacroStep].self, forKey: .actions)
+        // Step by step, so a step whose action kind has since been retired is
+        // dropped on its own. `superDecoder()` advances the container whether
+        // or not the step decodes, which is what makes skipping one safe.
+        var steps = try c.nestedUnkeyedContainer(forKey: .actions)
+        var actions: [MacroStep] = []
+        while !steps.isAtEnd {
+            let sub = try steps.superDecoder()
+            do { actions.append(try MacroStep(from: sub)) }
+            catch is MacroAction.RetiredKind { continue }
+        }
+        self.actions = actions
         self.enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
     }
 
@@ -353,9 +358,22 @@ final class VoiceMacroRegistry: ObservableObject {
     static let shared = VoiceMacroRegistry()
 
     @Published private(set) var macros: [Macro] = []
+    /// Macros whose EVERY step was a retired action kind, by name. They are kept out of
+    /// `macros`, so their phrases stop matching, and written back to disk unchanged on
+    /// every save, so nothing is lost. A macro with no steps at all is somebody's
+    /// unfinished command and is never set aside. A name a live macro now uses is left
+    /// out, so the notice never claims a phrase is silent while a live macro answers it.
+    var setAside: [String] {
+        setAsideNames.filter { name in !macros.contains { $0.name == name } }
+    }
+    private var setAsideNames: [String] = []
+    private var setAsideRaw: [[String: Any]] = []
     private var loaded = false
 
-    private var url: URL { Persistence.supportDir.appendingPathComponent("macros.json") }
+    private let fileURL: URL?
+    init(fileURL: URL? = nil) { self.fileURL = fileURL }
+
+    private var url: URL { fileURL ?? Persistence.supportDir.appendingPathComponent("macros.json") }
 
     func load() {
         guard !loaded else { return }
@@ -365,7 +383,13 @@ final class VoiceMacroRegistry: ObservableObject {
         let fileExisted = fm.fileExists(atPath: url.path)
         var decodeFailed = false
 
-        if let data = try? Data(contentsOf: url), !data.isEmpty {
+        if let original = try? Data(contentsOf: url), !original.isEmpty {
+            var data = original
+            if let split = Self.settingAsideRetired(original) {
+                data = split.kept
+                setAsideRaw = split.setAside
+                setAsideNames = split.setAside.compactMap { $0["name"] as? String }
+            }
             if let arr = try? JSONDecoder().decode([Macro].self, from: data) {
                 macros = arr
             } else {
@@ -389,7 +413,7 @@ final class VoiceMacroRegistry: ObservableObject {
                         // Quarantine the original so we can always roll back
                         // manually. A later save() replaces the file with the
                         // good subset; keep the raw for forensics either way.
-                        quarantineCorruptFile(data: data, label: "partial")
+                        quarantineCorruptFile(data: original, label: "partial")
                     }
                 }
             }
@@ -426,8 +450,35 @@ final class VoiceMacroRegistry: ObservableObject {
     func save() {
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? enc.encode(macros) else { return }
+        guard var data = try? enc.encode(macros) else { return }
+        if !setAsideRaw.isEmpty {
+            guard let live = try? JSONSerialization.jsonObject(with: data) as? [Any],
+                  let merged = try? JSONSerialization.data(withJSONObject: live + setAsideRaw,
+                                                           options: [.prettyPrinted, .sortedKeys])
+            else { return }  // never write a file that has lost the set-aside macros
+            data = merged
+        }
         try? data.write(to: url, options: .atomic)
+    }
+
+    /// Splits a raw macros file into the macros to decode and those whose every step is a
+    /// retired kind. Nil when nothing is set aside or the file is not an array.
+    nonisolated static func settingAsideRetired(_ data: Data) -> (kept: Data, setAside: [[String: Any]])? {
+        guard let all = (try? JSONSerialization.jsonObject(with: data)) as? [Any] else { return nil }
+        func retiredOnly(_ item: Any) -> Bool {
+            guard let obj = item as? [String: Any],
+                  let steps = obj["actions"] as? [Any], !steps.isEmpty else { return false }
+            return steps.allSatisfy { step in
+                guard let s = step as? [String: Any] else { return false }
+                let action = (s["action"] as? [String: Any]) ?? s
+                return (action["kind"] as? String).map(MacroAction.retiredKinds.contains) ?? false
+            }
+        }
+        let setAside = all.filter(retiredOnly).compactMap { $0 as? [String: Any] }
+        guard !setAside.isEmpty,
+              let kept = try? JSONSerialization.data(withJSONObject: all.filter { !retiredOnly($0) })
+        else { return nil }
+        return (kept, setAside)
     }
 
     func find(name: String) -> Macro? {
@@ -586,21 +637,10 @@ final class VoiceMacroRegistry: ObservableObject {
             return r
         case .spawnTerminalsToGrid(let rows, let cols):
             return await TerminalGridTiler.spawnAndTile(rows: rows, cols: cols)
-        case .enableTerminalFocusOverlay:
-            // Route through showOverlay so the user-dismiss flag gets cleared -
-            // otherwise "overlay on" after an explicit × click would be a no-op.
-            TerminalFocusState.shared.showOverlay()
-            return "ok: Terminal Focus overlay enabled"
-        case .disableTerminalFocusOverlay:
-            // hideOverlay() sets userHidden, which persists across launches.
-            // Feature kill-switch (isEnabled) stays on so a future "overlay on"
-            // is a single-gesture bring-back, not a full re-enable.
-            TerminalFocusState.shared.hideOverlay()
-            return "ok: Terminal Focus overlay dismissed"
         case .playMusic(let song, let artist):
             let r = await MusicTool.play(song: song, artist: artist)
             if r.hasPrefix("ok:") {
-                await waitForMusicPlaying(song: song, timeoutSec: 8.0)
+                await MusicTool.waitUntilPlaying(song: song, timeoutSec: 8.0)
             }
             return r
         case .prepareCleanWorkspace:
@@ -660,35 +700,6 @@ final class VoiceMacroRegistry: ObservableObject {
         }
     }
 
-    // Polls Apple Music until current track name fuzzy-matches the requested
-    // song. Used after .playMusic so subsequent steps don't fire mid-spawn.
-    private func waitForMusicPlaying(song: String, timeoutSec: Double = 8.0) async {
-        let deadline = Date().addingTimeInterval(timeoutSec)
-        let want = song.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        while Date() < deadline {
-            let s = """
-            tell application "Music"
-                if it is not running then return "notrunning"
-                if player state is not playing then return "notplaying"
-                try
-                    return name of current track
-                on error
-                    return "notrack"
-                end try
-            end tell
-            """
-            var err: NSDictionary?
-            let raw = (NSAppleScript(source: s)?.executeAndReturnError(&err).stringValue ?? "")
-                .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            if raw == "notrunning" || raw == "notplaying" || raw == "notrack" {
-                try? await Task.sleep(nanoseconds: 100_000_000)
-                continue
-            }
-            if !raw.isEmpty && (raw.contains(want) || want.contains(raw)) { return }
-            try? await Task.sleep(nanoseconds: 100_000_000)
-        }
-    }
-
     // Routes text to SpeechEngine and blocks until the engine finishes the
     // line. Uses .gruxSpeechDidStop notification rather than polling so we
     // don't race a fast didStop. 300ms tail buffer accounts for AVAudio
@@ -733,17 +744,11 @@ final class VoiceMacroRegistry: ObservableObject {
     // MARK: - Defaults
     //
     // Intentionally none. Every macro in this registry came from the user.
-    // The overlay macros that used to live here (overlay_on / overlay_off)
-    // were generic enough to keep, but keeping them meant one of two things,
-    // both wrong. Merged into `macros` they get persisted by the very next
-    // save() from any edit, rename or reorder, so a compiled-in default turns
-    // into user data the first time you touch the tab. Held in a parallel
-    // built-in list they would need shadowing, dedupe and a non-deletable row
-    // in CommandsView, which is a feature, not a de-personalization. No
-    // capability was lost: `enableTerminalFocusOverlay` and
-    // `disableTerminalFocusOverlay` are still first-class actions in the
-    // Commands editor, and the overlay still has its menu bar toggle and its
-    // × button, so anyone who wants those two macros can build them.
+    // Compiled-in defaults were tried and were wrong both ways: merged into
+    // `macros` they get persisted by the very next save() from any edit,
+    // rename or reorder, so a default turns into user data the first time you
+    // touch the tab; held in a parallel built-in list they would need
+    // shadowing, dedupe and a non-deletable row in CommandsView.
 }
 
 // Prepares a clean visual workspace without relying on private Spaces APIs:
@@ -774,7 +779,7 @@ enum WorkspacePreparer {
             guard let bid = app.bundleIdentifier, !keep.contains(bid) else { continue }
             guard currentSpacePids.contains(app.processIdentifier) else { continue }
             if app.isHidden { continue }
-            if app.hide() { hidden += 1 }
+            if WindowFacade.hide(app) { hidden += 1 }
         }
 
         // 2. Minimize only the Terminal windows on this Space. Match by
@@ -899,7 +904,7 @@ enum TerminalGridTiler {
         // doesn't trigger the reopen hook that `activate` AppleScript does,
         // so it won't spawn a phantom extra window.
         if let term = NSRunningApplication.runningApplications(withBundleIdentifier: terminalBundleId).first {
-            term.activate()
+            WindowFacade.activate(term)
         }
 
         if tiled < target {
@@ -1043,6 +1048,9 @@ enum ShellRunner {
         guard !trimmed.isEmpty else {
             return RawResult(status: 0, stdout: "", truncated: "")
         }
+        if let refusal = AudioOutput.shellRefusal(for: trimmed) {
+            return RawResult(status: -1, stdout: refusal, truncated: refusal)
+        }
         return await withCheckedContinuation { (cont: CheckedContinuation<RawResult, Never>) in
             let proc = Process()
             proc.launchPath = "/bin/zsh"
@@ -1085,6 +1093,9 @@ enum ShellRunner {
     // argument comes from external/untrusted data.
     @discardableResult
     static func runArgs(_ launchPath: String, _ args: [String], timeoutSeconds: Int = 30) async -> RawResult {
+        if let refusal = AudioOutput.shellRefusal(for: ([launchPath] + args).joined(separator: " ")) {
+            return RawResult(status: -1, stdout: refusal, truncated: refusal)
+        }
         return await withCheckedContinuation { (cont: CheckedContinuation<RawResult, Never>) in
             let proc = Process()
             proc.launchPath = launchPath
@@ -1120,6 +1131,7 @@ enum AppleScriptRunner {
     static func run(source: String) -> String {
         let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "ok: applescript (empty, skipped)" }
+        if let refusal = AudioOutput.appleScriptRefusal(for: trimmed) { return "error: \(refusal)" }
         guard let script = NSAppleScript(source: trimmed) else {
             return "error: could not compile AppleScript"
         }

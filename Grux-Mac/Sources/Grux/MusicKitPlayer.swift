@@ -76,6 +76,9 @@ enum MusicKitPlayer {
     // and an actual play attempt, capturing the precise error string so we can
     // tell "needs the entitlement / developer token" apart from other failures.
     static func probe(testStoreID: String) async -> String {
+        guard AudioOutput.permit(.music, source: "MusicKitPlayer.probe", text: testStoreID) else {
+            return "STOP: silent mode (~/.grux/SILENT), nothing played"
+        }
         var out: [String] = []
         let cur = MusicAuthorization.currentStatus
         out.append("currentStatus=\(cur)")
@@ -112,6 +115,9 @@ enum MusicKitPlayer {
     // Queue exactly one Song and play it, restoring the frontmost app if the
     // player happened to front Music.app (the medium-confidence macOS edge case).
     private static func playSingle(_ song: Song) async throws {
+        guard AudioOutput.permit(.music, source: "MusicKitPlayer.playSingle", text: "\(song.title) by \(song.artistName)") else {
+            throw CancellationError()
+        }
         let prior = NSWorkspace.shared.frontmostApplication
         let player = ApplicationMusicPlayer.shared
         player.queue = ApplicationMusicPlayer.Queue(for: [song])
@@ -120,7 +126,7 @@ enum MusicKitPlayer {
         try? await Task.sleep(nanoseconds: 180_000_000)
         if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.Music",
            let prior, prior.bundleIdentifier != "com.apple.Music" {
-            prior.activate()
+            WindowFacade.activate(prior)
         }
     }
 }

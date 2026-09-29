@@ -114,18 +114,18 @@ extension GruxControlTools {
         }
 
         // The Touch ID gate, on the same command class `ShellTool.dispatch` gates for the
-        // model. It only bites when the ceiling is `trust`, because every lower ceiling
+        // model, asked through the same predicate. It only bites when the ceiling is `trust`, because every lower ceiling
         // refuses these outright a few lines further down rather than running them, and
         // asking for a fingerprint in front of a refusal would be theatre.
         if info.mode == .trust,
-           let effect = ShellSafety.detectNetworkOrExternalEffect(command: wanted) {
+           let why = await shellTouchIDReason(command: wanted, cwd: info.cwd) {
             let allowed = await SensitiveActionGate.shared.authorize(
                 .shellDangerous, reason: "grux shell: \(wanted.prefix(80))")
             guard allowed else {
                 shellAudit(command: wanted, cwd: info.cwd, outcome: "blocked",
                            reason: "touch id refused", bytes: 0)
                 return MCPWire.textFailure("Grux asked for Touch ID before running that, "
-                    + "because it reaches off this Mac (\(effect)), and the request was "
+                    + "because \(why), and the request was "
                     + "refused. Nothing ran. Run it again to be asked again, or turn the "
                     + "gate off under Security in Grux Settings.")
             }
@@ -149,14 +149,13 @@ extension GruxControlTools {
                 let reason = result.blockedReason ?? "Grux would not run that."
                 var extra: [String: Any] = ["ran": false, "reason": reason]
                 if result.blocked {
-                    // `ShellSafety` produces exactly two shapes of refusal and this is the
-                    // only thing that tells them apart: `strictAllowlistBlock` writes
+                    // `ShellSafety` produces two shapes of refusal and `ShellSilence` a
+                    // third, and the reason is the only thing that tells them apart: `strictAllowlistBlock` writes
                     // "strict mode: '<binary>' not on allowlist", and containment writes
                     // "cd would leave rootDir" or "command writes to '<path>' which is
                     // outside rootDir". Only set on a refusal, because the gate reason is a
                     // third kind of sentence and labelling it as either would be a guess.
-                    extra["blocked_kind"] = reason.hasPrefix("strict mode:")
-                        ? "allowlist" : "containment"
+                    extra["blocked_kind"] = shellBlockedKind(reason: reason)
                 }
                 return MCPWire.textResult(jsonText(shellOutcome(
                     info: info, result: result, roots: roots, seconds: seconds,
@@ -213,6 +212,15 @@ extension GruxControlTools {
             return MCPWire.textFailure("That command did not finish: "
                 + "\(error.localizedDescription).")
         }
+    }
+
+    /// Why a trust-mode command needs Touch ID before it runs here, or nil.
+    ///
+    /// The model's door asks the same question in `ShellTool.dispatch`, and this door used
+    /// to ask a smaller one of its own (off the Mac only), so `rm -rf build` was gated
+    /// through Chat and ran unasked through `grux shell`. One predicate for both doors.
+    static func shellTouchIDReason(command: String, cwd: String? = nil) async -> String? {
+        await ShellTool.dangerGateReason(command: command, cwd: cwd)
     }
 
     // MARK: - The session
@@ -321,6 +329,14 @@ extension GruxControlTools {
             out["snapshot_is_for_this_command"] = snapshot.own
         }
         return out
+    }
+
+    /// Which gate refused a command: "allowlist" (strict ceiling), "containment" (outside
+    /// the folder) or "silent" (it would make sound while ~/.grux/SILENT is on). The CLI
+    /// answers each differently, so the kind is read from the reason's own shape.
+    nonisolated static func shellBlockedKind(reason: String) -> String {
+        if reason.hasPrefix(ShellSilence.refusalPrefix) { return "silent" }
+        return reason.hasPrefix("strict mode:") ? "allowlist" : "containment"
     }
 
     private static func shellOutcome(

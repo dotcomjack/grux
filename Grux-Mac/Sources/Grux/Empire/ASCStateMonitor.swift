@@ -184,6 +184,12 @@ final class ASCStateMonitor: ObservableObject {
                 return lhs.projectName.localizedCaseInsensitiveCompare(rhs.projectName) == .orderedAscending
             }
 
+            // Every successful read releases an announced answer the app has
+            // since left, so the next answer is announced (by this sweep or
+            // by a ship run, whichever sees it first).
+            for r in newRecords where r.error == nil {
+                AppStoreAnswerLog.shared.observe(app: Self.answerKey(r), state: r.appStoreState)
+            }
             // Transition detection - fire ONCE on entry into a rejected state.
             // Keyed on ascAppId (unique), not projectName (a collidable label).
             for r in newRecords where Self.rejectedStates.contains(r.appStoreState) {
@@ -216,14 +222,47 @@ final class ASCStateMonitor: ObservableObject {
         ["REJECTED", "METADATA_REJECTED", "INVALID_BINARY", "DEVELOPER_REJECTED"]
 
     private func onNewRejection(_ r: ASCAppRecord) {
-        let line = "Heads up - Apple rejected \(r.projectName). Open Empire dashboard to recover."
+        guard Self.shouldAnnounce(r) else {
+            WakeLog.shared.log("ASC sweep: \(r.projectName) \(r.appStoreState) was already announced; staying quiet")
+            return
+        }
+        let notice = Self.rejectionNotice(projectName: r.projectName, state: r.appStoreState)
         WakeLog.shared.log("ASC sweep: \(r.projectName) flipped to \(r.appStoreState) - speaking + posting badge")
-        SpeechEngine.shared.speak(line)
+        SpeechEngine.shared.speak(notice.spoken)
         // System notification so it surfaces even if Mac is asleep when Grux wakes.
-        NotificationManager.shared.sendInfo(
-            title: "Apple rejected \(r.projectName)",
-            body: "State: \(r.appStoreState). Open Empire dashboard."
-        )
+        NotificationManager.shared.sendInfo(title: notice.title, body: notice.body)
+    }
+
+    /// Whether this sweep announces a rejection: not when a ship run (or an
+    /// earlier sweep) already announced the same state for the same app.
+    static func shouldAnnounce(_ r: ASCAppRecord, log: AppStoreAnswerLog = .shared) -> Bool {
+        log.claim(app: answerKey(r), state: r.appStoreState, version: r.versionString)
+    }
+
+    /// The app as AppStoreAnswerLog keys it: bundle id, else App Store
+    /// Connect id. Never `projectName`, a label two apps can share.
+    static func answerKey(_ r: ASCAppRecord) -> String {
+        AppStoreAnswerLog.appKey(bundleId: r.bundleId, ascAppId: r.ascAppId) ?? "asc:" + r.ascAppId
+    }
+
+    /// What a new rejection says, spoken and in its banner: what happened and
+    /// the one next step, never Apple's raw state or an internal screen name.
+    static func rejectionNotice(projectName: String, state: String) -> (spoken: String, title: String, body: String) {
+        let body: String
+        switch state.uppercased() {
+        case "METADATA_REJECTED":
+            body = "App Store review rejected the listing for \(projectName), not the build. Open App Store Connect to see why."
+        case "INVALID_BINARY":
+            body = "Apple could not accept the build of \(projectName). Open App Store Connect to see why."
+        case "DEVELOPER_REJECTED":
+            // Taken out of review, not rejected: every line says so.
+            let line = "\(projectName) was taken out of review. Open App Store Connect to submit it again."
+            return ("Heads up, " + line, "\(projectName) was taken out of review", line)
+        default:
+            body = "App Store review rejected \(projectName). Open App Store Connect to see why."
+        }
+        return ("Heads up, Apple rejected \(projectName). Open App Store Connect to see why.",
+                "Apple rejected \(projectName)", body)
     }
 
     // MARK: - Discovery

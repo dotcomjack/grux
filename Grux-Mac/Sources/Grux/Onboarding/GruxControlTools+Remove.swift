@@ -91,9 +91,10 @@ extension GruxControlTools {
         // remembered rows keep their label, so `grux remove mailbox Work` against a single
         // live mailbox called Work started refusing as ambiguous once a DIFFERENT mailbox
         // that had also been called Work was remembered. There is nothing to choose between:
-        // one of them is tracked and the other is a note that it used to be.
+        // one of them is tracked and the other is a note that it used to be. Nor can two
+        // things already gone be ambiguous: both are untracked, so the rerun says so.
         let tracked = hits.filter(\.tracked)
-        let candidates = tracked.isEmpty ? hits : tracked
+        let candidates = tracked.isEmpty ? Array(hits.prefix(1)) : tracked
         guard candidates.count == 1, let row = candidates.first else {
             // NEVER GUESS BETWEEN TWO. Removing the wrong one of a matched pair is the exact
             // mistake a typed confirmation cannot catch, because the word typed is right.
@@ -843,7 +844,8 @@ extension GruxControlTools {
              + "Grux loads, and a folder under \(folder) holding the SKILL.md you wrote. The "
              + "only removal Grux has deletes both, and this command never deletes your "
              + "work. Move that folder somewhere else first if you want to keep the text, "
-             + "then delete the skill in the Skills pane, which is the surface that tells "
+             + "then delete the skill from Skills, beside the model in the Chat composer, "
+             + "which is the surface that tells "
              + "you it is deleting it."
     }
 }

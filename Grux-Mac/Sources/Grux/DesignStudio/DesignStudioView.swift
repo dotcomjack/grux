@@ -88,10 +88,12 @@ struct DesignStudioView: View {
 
     var body: some View {
         HSplitView {
+            // The two floors sum to GruxLayout.designStudioPaneMin, which the
+            // Command Panel asks the window for when this pane opens.
             leftRail
-                .frame(minWidth: 240, idealWidth: 320, maxHeight: .infinity)
+                .frame(minWidth: GruxLayout.listColumnMin, idealWidth: GruxLayout.designRailIdeal, maxHeight: .infinity)
             rightPane
-                .frame(minWidth: 300, maxWidth: .infinity, maxHeight: .infinity)
+                .frame(minWidth: GruxLayout.designPreviewMin, maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(GruxTheme.base)
         .foregroundStyle(GruxTheme.textPrimary)
@@ -564,7 +566,7 @@ struct DesignStudioView: View {
         if let id = selection,
            let indexURL = store.siteIndexURL(id: id),
            let siteRoot = store.siteRootURL(id: id) {
-            DesignPreviewView(indexURL: indexURL, siteRoot: siteRoot, revision: previewRevision, engine: engine)
+            DesignPreviewPane(indexURL: indexURL, siteRoot: siteRoot, revision: previewRevision, engine: engine)
                 .id(id)
         } else if selection != nil {
             GruxEmptyState(

@@ -69,8 +69,11 @@ final class EmptyStateAuditTests: XCTestCase {
         let skills = SkillsView.emptyCopy(assistantName: assistant)
 
         return [
-            Surface(featureId: "home", drawnBy: "HomeView.allQuietCopy",
-                    state: .reads(HomeView.allQuietCopy.headline + " " + HomeView.allQuietCopy.detail)),
+            // Home is Today (Phase D): each of its three cards has its own
+            // empty state, and together they are what a first run reads.
+            Surface(featureId: "home", drawnBy: "TodayModel.Copy",
+                    state: .reads(TodayModel.Copy.nextEmpty + " " + TodayModel.Copy.mailNoAccount + " "
+                                  + TodayModel.Copy.watchingEmpty)),
 
             // Chat's empty state was lifted out of the 1000 line ChatView into
             // its own type precisely so it could be read like this.

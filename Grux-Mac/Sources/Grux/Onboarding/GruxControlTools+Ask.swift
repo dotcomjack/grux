@@ -25,12 +25,16 @@ extension GruxControlTools {
 
     /// How long to wait for the assistant turn before answering without one.
     ///
-    /// Shorter than the 180 seconds `grux ask` gives the socket, on purpose. Whichever
+    /// Shorter than the 360 seconds `grux ask` gives the socket, on purpose. Whichever
     /// deadline fires first writes the sentence somebody reads, and only this side knows
     /// enough to say the turn is still running and where its answer will appear. The
     /// client's own timeout sentence is about an app that is busy starting up, which here
     /// would be a wrong story told confidently.
-    private static let askDeadlineSeconds: TimeInterval = 150
+    ///
+    /// Longer than a local server's 300 second idle limit, so a cold local model that
+    /// takes three minutes to read the prompt answers here instead of only in the chat
+    /// window, and the backend is the side that decides a local turn failed.
+    static let askDeadlineSeconds: TimeInterval = 330
 
     /// Ask chat one question and come back with the answer.
     ///
@@ -76,7 +80,7 @@ extension GruxControlTools {
         let started = Date()
         let turn = AskTurn()
         Task {
-            await ChatService.shared.send(userText: question)
+            await ChatService.shared.send(userText: question, initiator: .agent)
             turn.finished = true
         }
 

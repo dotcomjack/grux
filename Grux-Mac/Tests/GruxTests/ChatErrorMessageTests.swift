@@ -51,7 +51,11 @@ final class ChatErrorMessageTests: XCTestCase {
     /// must NOT reintroduce the guess.
     func testAnUnexplained400StillGivesAnHonestSentence() {
         let msg = ChatService.humanMessage(for: ClaudeError.http(400, "not json at all"))
-        XCTAssertTrue(msg.contains("400"))
+        // WAS an assertion that the status code appears. Status codes are
+        // banned from the face by the 3.0 design and by
+        // JargonInTheFaceTests; the code was only ever standing in for "say
+        // something real". What must survive is that it is actionable.
+        XCTAssertTrue(msg.lowercased().contains("retry"), "nothing to do about it: \(msg)")
         XCTAssertFalse(msg.lowercased().contains("too long"),
                        "with no information from the provider, inventing a cause is worse than admitting none")
     }
@@ -60,7 +64,7 @@ final class ChatErrorMessageTests: XCTestCase {
     /// quietly hand every failure over to the provider's wording.
     func testTheOtherStatusCodesAreUnchanged() {
         XCTAssertTrue(ChatService.humanMessage(for: ClaudeError.http(401, "{}")).contains("key"))
-        XCTAssertTrue(ChatService.humanMessage(for: ClaudeError.http(429, "{}")).lowercased().contains("rate limited"))
+        XCTAssertTrue(ChatService.humanMessage(for: ClaudeError.http(429, "{}")).lowercased().contains("too many requests"))
         XCTAssertTrue(ChatService.humanMessage(for: ClaudeError.http(413, "{}")).lowercased().contains("too large"))
         XCTAssertTrue(ChatService.humanMessage(for: ClaudeError.http(503, "{}")).lowercased().contains("provider"))
     }

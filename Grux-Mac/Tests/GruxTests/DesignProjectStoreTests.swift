@@ -191,8 +191,11 @@ final class DesignProjectStoreTests: XCTestCase {
         let v = try XCTUnwrap(store.snapshot(id: proj.id, label: "generation"))
         XCTAssertTrue(store.writeArtifact(id: proj.id, relativePath: "site/index.html", content: "B"))
 
-        // While a run is reported active on the project, both no-op.
-        store.isProjectRunning = { _ in true }
+        // While a run is reported active on the project, both no-op. The seam
+        // is type-level since 2026-09-22, so that wiring it at launch cannot
+        // build the store and read ~/Documents before there is a window.
+        defer { DesignProjectStore.isProjectRunning = nil }
+        DesignProjectStore.isProjectRunning = { _ in true }
         XCTAssertFalse(store.restore(id: proj.id, versionId: v.id), "restore no-ops while running")
         XCTAssertEqual(try String(contentsOf: store.siteIndexURL(id: proj.id)!, encoding: .utf8), "B",
                        "restore left the live tree untouched")
@@ -200,7 +203,7 @@ final class DesignProjectStoreTests: XCTestCase {
         XCTAssertNotNil(store.project(id: proj.id), "delete no-ops while running")
 
         // Once idle, both work again.
-        store.isProjectRunning = { _ in false }
+        DesignProjectStore.isProjectRunning = { _ in false }
         XCTAssertTrue(store.restore(id: proj.id, versionId: v.id))
         XCTAssertEqual(try String(contentsOf: store.siteIndexURL(id: proj.id)!, encoding: .utf8), "A")
         store.delete(id: proj.id)

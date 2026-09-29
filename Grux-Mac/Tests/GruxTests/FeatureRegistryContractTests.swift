@@ -84,7 +84,8 @@ final class FeatureRegistryContractTests: XCTestCase {
         // no-opped and it could not be marked labs. The literal is deliberate: the
         // set comparisons above catch drift between the two files, and this catches
         // a row added to BOTH without anyone deciding to add it.
-        XCTAssertEqual(FeatureRegistry.rows.count, 39)
+        // 37 since 2026-09-27, when the terminal overlay row left with the feature.
+        XCTAssertEqual(FeatureRegistry.rows.count, 37)  // 38 until then, 39 until Phase C task C13 deleted `domains`
     }
 
     func testEveryRowMatchesTheDocument() {
@@ -110,6 +111,45 @@ final class FeatureRegistryContractTests: XCTestCase {
                 XCTAssertTrue(known.contains(req.rawValue),
                               "\(row.id) names \(req.rawValue), which is not a contract capability")
             }
+        }
+    }
+
+    // MARK: How each row is reached
+
+    /// The Command Panel shows no surface rows, so the registry says, per row,
+    /// which doors reach it. Section 7.6 only: the scan stops at the next
+    /// level-two heading so section 8's tables are never read as this one.
+    func testEveryRowSaysHowItIsReached() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let doc = try String(contentsOf: root.appendingPathComponent("docs/feature-registry.md"), encoding: .utf8)
+        let section = try XCTUnwrap(doc.range(of: "## 7.6 How each row is reached"))
+        var body = String(doc[section.upperBound...])
+        if let next = body.range(of: "\n## ") { body = String(body[..<next.lowerBound]) }
+
+        // id -> the values in its "reached through" cell, one entry per line.
+        var lines: [String: [String]] = [:]
+        var ids: [String] = []
+        for line in body.split(separator: "\n") where line.hasPrefix("| ") && !line.hasPrefix("| id") {
+            let cells = line.split(separator: "|", omittingEmptySubsequences: false)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+            let id = cells.count > 1 ? cells[1] : ""
+            let cell = cells.count > 2 ? cells[2] : ""
+            ids.append(id)
+            lines[id] = cell.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+        }
+        XCTAssertEqual(ids.count, Set(ids).count, "a row has two reached-through lines")
+
+        let rowIds = Set(FeatureRegistry.rows.filter { $0.disposition != .ripped }.map(\.id))
+        XCTAssertTrue(Set(ids) == rowIds, "7.6 lists \(Set(ids).subtracting(rowIds).sorted()) that are not rows, "
+                       + "and misses \(rowIds.subtracting(ids).sorted())")
+
+        let allowed: Set<String> = ["input", "now", "recent", "hub", "palette", "window"]
+        for id in rowIds.sorted() {
+            guard let values = lines[id] else { continue }   // the set comparison names it
+            XCTAssertFalse(values.isEmpty, "\(id) says it is reached through nothing")
+            XCTAssertTrue(values.contains("palette"), "\(id) is not reached through the palette")
+            for v in values { XCTAssertTrue(allowed.contains(v), "\(id): \(v)") }
         }
     }
 

@@ -111,7 +111,7 @@ final class TerminalSessionsOnboardingTests: XCTestCase {
     ///
     /// This assertion was briefly worthless. Grepping SettingsView for
     /// "terminal" passed on day one, before any of this existed, because
-    /// Settings already had a Terminal Focus sub-pane for the OVERLAY. A test
+    /// Settings already had a sub-pane for a since-removed terminal overlay. A test
     /// that is green before the feature is written is not a test, so it now
     /// demands the things a session pane must actually show.
     func testTheTerminalEngineHasAPermanentSettingsHome() throws {
@@ -164,12 +164,11 @@ final class TerminalSessionsOnboardingTests: XCTestCase {
 
     /// CONSENT TRAVELS WITH THE CREDENTIAL SPEND, AT THE SAME SEVERITY.
     ///
-    /// The first version of this attached the consent step to `terminal.focus`,
-    /// which was wrong twice over. `terminal.focus` is an OBSERVER: a floating
-    /// overlay that watches up to four surrounding coding sessions and reads
-    /// their window titles. It spawns nothing and spends no credential, so
+    /// The first version of this attached the consent step to a since-removed
+    /// terminal overlay, which was wrong twice over. That overlay was an OBSERVER:
+    /// it read window titles, spawned nothing and spent no credential, so
     /// gating it on consent asked the user to approve something that feature
-    /// does not do, while the features that actually drive the CLI stayed
+    /// did not do, while the features that actually drive the CLI stayed
     /// ungated.
     ///
     /// The real signal is `stepAgentCliInstalled`. Wherever driving the CLI
@@ -264,7 +263,7 @@ final class TerminalSessionsOnboardingTests: XCTestCase {
     /// row makes that feature `needs-setup` forever unless something can also
     /// satisfy it. `stepCompleted` returns false whenever `stepDefaultsKey` is
     /// nil, so a step with no key is permanently unsatisfiable and would have
-    /// bricked `terminal.focus` while every other test stayed green.
+    /// bricked every row that blocks on it while every other test stayed green.
     ///
     /// It resolves generically off `kind == .step`, so the new requirement is
     /// wired without a special case. This asserts that rather than trusting it.
@@ -272,7 +271,7 @@ final class TerminalSessionsOnboardingTests: XCTestCase {
     func testTheNewConsentStepIsActuallySatisfiable() throws {
         let req = SetupRequirement.stepTerminalSessionsExplained
         let key = try XCTUnwrap(CapabilityResolver.stepDefaultsKey(for: req),
-                                "no defaults key, so this step can never be completed and terminal.focus is bricked")
+                                "no defaults key, so this step can never be completed and every row blocking on it is bricked")
         XCTAssertEqual(key, "grux.step.terminal_sessions_explained")
 
         let original = UserDefaults.standard.bool(forKey: key)

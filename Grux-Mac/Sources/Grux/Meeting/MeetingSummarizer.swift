@@ -8,6 +8,18 @@ enum MeetingSummarizer {
     struct Summary {
         let tldr: String
         let actionItems: [String]
+        /// P-R-6: each item's kind, judged once on this summary. Nil when
+        /// nothing judged it, which is every keyless install.
+        var moments: [String: MeetingMoment]? = nil
+
+        /// Writes this summary onto a record: the TL;DR, the items, and their
+        /// moments, replaced together so a re-summary never keeps a label
+        /// from an older list.
+        func apply(to record: inout MeetingRecord) {
+            record.summary = tldr
+            record.actionItems = actionItems
+            record.actionItemMoments = moments
+        }
     }
 
     static func summarize(_ record: MeetingRecord) async -> Summary? {
@@ -72,7 +84,13 @@ enum MeetingSummarizer {
                 spanName: "claude.complete",
                 feature: "uncategorized"
             )
-            return parse(reply)
+            guard var summary = parse(reply) else { return nil }
+            // ONE decision call per summary, labelling the items just
+            // extracted against the transcript they came from.
+            summary.moments = await MeetingMomentJudgment.judge(
+                items: summary.actionItems, transcript: transcript, engine: DecisionEngine.shared,
+                threshold: AppState.shared.config.listeningThreshold)
+            return summary
         } catch {
             WakeLog.shared.log("meeting-summarizer: failed \(error.localizedDescription)")
             return nil

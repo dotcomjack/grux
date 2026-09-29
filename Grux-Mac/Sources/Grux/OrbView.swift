@@ -25,12 +25,13 @@ enum GruxOrbState: Equatable, Hashable, CaseIterable {
 
 /// Animated gradient orb that visualizes Grux's current state.
 /// Three layers: soft outer halo, gradient core, inner highlight pulse.
+///
+/// The halo, highlight and rim are SwiftUI and never move. The turning core and
+/// the pulse rings are Core Animation (`OrbLayers.swift`), so an orb left on
+/// screen all day costs the main thread nothing per frame.
 struct OrbView: View {
     let state: GruxOrbState
     var level: Float = 0 // 0..1 - audio level (for speaking) or mic RMS
-
-    @State private var phase: Double = 0
-    @State private var pulse: Double = 0
 
     var body: some View {
         ZStack {
@@ -44,36 +45,13 @@ struct OrbView: View {
                         endRadius: 110
                     )
                 )
-                .scaleEffect(1.0 + 0.08 * sin(phase * 1.5))
                 .blur(radius: 6)
 
-            // Core gradient
-            Circle()
-                .fill(
-                    AngularGradient(
-                        colors: [
-                            state.primary,
-                            state.secondary,
-                            state.primary.opacity(0.6),
-                            state.secondary.opacity(0.8),
-                            state.primary
-                        ],
-                        center: .center
-                    )
-                )
-                .rotationEffect(.degrees(phase * 18))
-                .mask(
-                    Circle()
-                        .fill(
-                            RadialGradient(
-                                colors: [.white, .white.opacity(0.9), .white.opacity(0.35), .clear],
-                                center: .center,
-                                startRadius: 0,
-                                endRadius: 80
-                            )
-                        )
-                )
-                .scaleEffect(1.0 + Double(level) * 0.12 + 0.02 * sin(phase * 3))
+            // Core gradient, turning on the render server.
+            GeometryReader { geo in
+                OrbCoreLayer(spec: Self.coreSpec(for: state, diameter: min(geo.size.width, geo.size.height)))
+            }
+            .scaleEffect(1.0 + Double(level) * 0.12)
 
             // Inner highlight
             Circle()
@@ -103,48 +81,58 @@ struct OrbView: View {
 
             // Pulse rings when listening/speaking
             if state == .listening || state == .speaking {
-                Circle()
-                    .stroke(state.primary.opacity(0.5), lineWidth: 1.5)
-                    .scaleEffect(1.0 + pulse * 0.6)
-                    .opacity(1.0 - pulse)
-                Circle()
-                    .stroke(state.secondary.opacity(0.4), lineWidth: 1)
-                    .scaleEffect(1.0 + (pulse - 0.35).magnitude * 0.9)
-                    .opacity(max(0, 0.7 - pulse))
+                OrbRingsLayer(rings: Self.rings(for: state))
+                    .allowsHitTesting(false)
             }
         }
-        .onAppear { startAnimating() }
-        .onChange(of: state) { _, _ in startAnimating() }
         .animation(MotionTokens.gated(MotionTokens.crossfade), value: state)
     }
 
-    private func startAnimating() {
-        // Appearance: decorative-motion opt-out. Freeze the rotation and
-        // pulse at rest; state colors still swap, just without the crossfade.
-        guard !GruxTheme.reduceMotion else {
-            phase = 0
-            pulse = 0
-            return
-        }
-        withAnimation(.linear(duration: MotionTokens.orbRotationPeriod).repeatForever(autoreverses: false)) {
-            phase = 2 * .pi
-        }
-        withAnimation(.easeOut(duration: MotionTokens.orbPulsePeriod).repeatForever(autoreverses: false)) {
-            pulse = 1
-        }
+    /// The SwiftUI core ran 0 to 113 degrees per `orbRotationPeriod` (phase * 18
+    /// with phase 0 to 2 pi). Same angular speed, one seamless full turn.
+    static var turnSeconds: Double { MotionTokens.orbRotationPeriod * 360 / (2 * .pi * 18) }
+
+    static func coreSpec(for state: GruxOrbState, diameter: CGFloat) -> OrbCoreSpec {
+        let p = NSColor.orb(state.primary), s = NSColor.orb(state.secondary)
+        // The mask's endRadius was a fixed 80 points whatever the orb's size,
+        // so the fraction of the orb's radius depends on the diameter.
+        let radius = max(diameter / 2, 1)
+        return OrbCoreSpec(
+            colors: [p, s, p.withAlphaComponent(p.alphaComponent * 0.6),
+                     s.withAlphaComponent(s.alphaComponent * 0.8), p],
+            maskStops: [(1, 0), (0.9, 1.0 / 3), (0.35, 2.0 / 3), (0, 1)],
+            maskRadius: 80 / radius,
+            turnSeconds: turnSeconds)
+    }
+
+    /// The two rings the SwiftUI version drew, at the poses its animation
+    /// actually interpolated between (it interpolated the modifier values, so
+    /// the second ring's `abs` never folded).
+    static func rings(for state: GruxOrbState) -> [OrbRingSpec] {
+        let p = NSColor.orb(state.primary), s = NSColor.orb(state.secondary)
+        let period = MotionTokens.orbPulsePeriod
+        return [
+            OrbRingSpec(color: p.withAlphaComponent(p.alphaComponent * 0.5), lineWidth: 1.5,
+                        scale: 1.0...1.6, opacity: (1, 0), seconds: period, easeInOut: false),
+            OrbRingSpec(color: s.withAlphaComponent(s.alphaComponent * 0.4), lineWidth: 1,
+                        scale: 1.315...1.585, opacity: (0.7, 0), seconds: period, easeInOut: false),
+        ]
     }
 }
 
 /// Status pill shown beside the orb with the text label and a subtle glow.
 struct OrbStatusPill: View {
     let state: GruxOrbState
+    /// Overrides the word without changing the glow, so a surface can show
+    /// ARMED on a listening orb. Nil keeps the state's own label.
+    var label: String? = nil
     var body: some View {
         HStack(spacing: 6) {
             Circle()
                 .fill(state.primary)
                 .frame(width: 6, height: 6)
                 .shadow(color: state.primary.opacity(0.8), radius: 4)
-            Text(state.label.uppercased())
+            Text((label ?? state.label).uppercased())
                 .font(.caption2.monospaced().weight(.semibold))
                 .foregroundStyle(.secondary)
                 .kerning(1.2)

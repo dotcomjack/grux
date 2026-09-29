@@ -94,41 +94,60 @@ struct CookbookView: View {
 
     // MARK: - Header
 
+    // Title and buttons on one row where all of it fits at its own width;
+    // on a narrow pane the two buttons take the row under the title instead
+    // of truncating to "Check for ne...".
     private var header: some View {
-        HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: GruxSpacing.xs) {
-                Text("Local Models")
-                    .font(GruxType.title)
-                    .foregroundStyle(GruxTheme.textPrimary)
-                Text("Hardware-aware cookbook for running models on this Mac through Ollama")
-                    .font(GruxType.caption)
-                    .foregroundStyle(GruxTheme.textTertiary)
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline) {
+                headerTitle
+                Spacer()
+                headerButtons
             }
-            Spacer()
-            Button {
-                let detected = HardwareProfile.detect()
-                profile = detected
-                store.noteProfile(detected)
-                Task { await ollama.refresh() }
-            } label: {
-                Label("Refresh", systemImage: "arrow.clockwise")
-                    .font(GruxType.caption)
+            VStack(alignment: .leading, spacing: GruxSpacing.s) {
+                headerTitle
+                HStack(spacing: GruxSpacing.s) { headerButtons }
             }
-            .controlSize(.small)
-
-            // Sits next to Refresh on purpose. Refresh re-reads THIS Mac; this
-            // re-reads the WORLD. They are the two ways this tab can be wrong and
-            // they belong side by side.
-            Button {
-                checkRegistry()
-            } label: {
-                Label(checkingRegistry ? "Checking..." : "Check for newer models",
-                      systemImage: "sparkle.magnifyingglass")
-                    .font(GruxType.caption)
-            }
-            .controlSize(.small)
-            .disabled(checkingRegistry)
         }
+    }
+
+    private var headerTitle: some View {
+        VStack(alignment: .leading, spacing: GruxSpacing.xs) {
+            Text("Local Models")
+                .font(GruxType.title)
+                .foregroundStyle(GruxTheme.textPrimary)
+                .fixedSize()
+            Text("Hardware-aware cookbook for running models on this Mac through Ollama")
+                .font(GruxType.caption)
+                .foregroundStyle(GruxTheme.textTertiary)
+        }
+    }
+
+    @ViewBuilder
+    private var headerButtons: some View {
+        Button {
+            let detected = HardwareProfile.detect()
+            profile = detected
+            store.noteProfile(detected)
+            Task { await ollama.refresh() }
+        } label: {
+            Label("Refresh", systemImage: "arrow.clockwise")
+                .font(GruxType.caption)
+        }
+        .controlSize(.small)
+
+        // Sits next to Refresh on purpose. Refresh re-reads THIS Mac; this
+        // re-reads the WORLD. They are the two ways this tab can be wrong and
+        // they belong side by side.
+        Button {
+            checkRegistry()
+        } label: {
+            Label(checkingRegistry ? "Checking..." : "Check for newer models",
+                  systemImage: "sparkle.magnifyingglass")
+                .font(GruxType.caption)
+        }
+        .controlSize(.small)
+        .disabled(checkingRegistry)
     }
 
     private func checkRegistry() {

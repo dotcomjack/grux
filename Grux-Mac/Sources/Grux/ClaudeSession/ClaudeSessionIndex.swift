@@ -1,7 +1,6 @@
 import Foundation
 
-// One row in the Settings "Pick a session" dropdown. Also the input shape
-// the tailer consumes when the user assigns a session to a corner.
+// One recent Claude Code session, as the Workday log assembler reads it.
 struct ClaudeSessionDescriptor: Identifiable, Equatable, Hashable {
     let sessionId: String
     let fileURL: URL
@@ -13,8 +12,7 @@ struct ClaudeSessionDescriptor: Identifiable, Equatable, Hashable {
 }
 
 // Discovers all Claude Code session logs under ~/.claude/projects and
-// returns the most recently active N. Meant to populate the Settings
-// picker - not called on a tight loop.
+// returns the most recently active N. Not called on a tight loop.
 enum ClaudeSessionIndex {
 
     static var projectsRoot: URL {
@@ -56,9 +54,9 @@ enum ClaudeSessionIndex {
         // This used to read and split the whole thing, justified by a comment saying most
         // sessions are under 5MB and that a 50-file index read is about 250ms, which is
         // fine for a settings picker. Both halves of that stopped being true. The
-        // transcripts on this machine reach 537MB, and the caller is no longer a settings
-        // picker: `TerminalFocusState.refreshClaudeSessionIndexIfStale()` drives it from a
-        // timer. A `sample` of the shipping build put 8404 of its main-thread samples in
+        // transcripts on this machine reach 537MB, and the caller was no longer a settings
+        // picker: an overlay drove it from a timer, and the Workday log assembler now
+        // drives it on a schedule. A `sample` of the shipping build put 8404 of its main-thread samples in
         // here, split over hundreds of megabytes, which made it the single largest cost in
         // the app.
         //

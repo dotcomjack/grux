@@ -114,6 +114,8 @@ struct Approvals: ParsableCommand {
         var urgent: Bool?
         var reason: String?
         var state: String?
+        /// What the last approved run answered when it failed.
+        var lastFailure: String?
     }
 
     /// An item with its stamp already parsed, so 929 rows go through one formatter rather
@@ -285,8 +287,14 @@ struct Approvals: ParsableCommand {
         let pending = Self.oldestFirst(store.rows.filter(\.isPending))
         let shown = Array(pending.prefix(max(1, limit)))
         let answered = store.rows.count - pending.count
+        // A workflow waiting at a gate is not in this queue, and before this the screen
+        // said "Waiting nothing" while one sat asking 'fix', 'ship' or 'hold'.
+        let workflows = WaitingWorkflows.read()
 
-        if json { emitJSON(store, pending: pending, shown: shown); leave(.done) }
+        if json {
+            emitJSON(store, pending: pending, shown: shown, workflows: workflows)
+            leave(.done)
+        }
 
         // The whole command is the answer, so it opens on PROVE and stays there.
         frame.open(.prove)
@@ -305,7 +313,8 @@ struct Approvals: ParsableCommand {
         }
         print("")
 
-        let width = ["Mode", "Hard stop", "Waiting"].map(\.count).max() ?? 9
+        let width = ["Mode", "Hard stop", "Waiting", workflows.isEmpty ? "" : "Workflows"]
+            .map(\.count).max() ?? 9
         let modeLabel = known?.label ?? store.modeID
         print(Self.stat(r, known == nil ? .needed : .satisfied, "Mode",
                         store.modeChosen ? modeLabel : "\(modeLabel), never changed",
@@ -316,6 +325,10 @@ struct Approvals: ParsableCommand {
                         pending.isEmpty ? "nothing"
                             : "\(pending.count) thing\(pending.count == 1 ? "" : "s")",
                         width: width))
+        if !workflows.isEmpty {
+            print(Self.stat(r, .needed, "Workflows",
+                            "\(workflows.count) waiting on an answer", width: width))
+        }
 
         // ---- the hard stop, unmissable when it is on -------------------------------------
         if store.killed {
@@ -333,10 +346,30 @@ struct Approvals: ParsableCommand {
             print(r.legend([.satisfied, .needed]))
         }
 
+        // ---- workflows waiting at a gate -------------------------------------------------
+        if !workflows.isEmpty {
+            print("")
+            print("  " + r.heading("WORKFLOWS WAITING ON AN ANSWER"))
+            print("")
+            for run in workflows {
+                let waited = Self.span(run.since.map { Date().timeIntervalSince($0) })
+                print("    " + r.style.ink(RowState.needed.ink, RowState.needed.glyph) + " "
+                      + r.style.ink(.dim, waited) + "  " + run.name)
+                print(r.prose(run.question, indent: 6))
+                print("      " + r.style.ink(.dim, run.id + (run.dryRun ? "  dry run" : "")))
+            }
+            print("")
+            print(r.style.ink(.dim, r.prose(
+                "Answer one in Chat with the words it asks for, or on its card in the "
+                + "Workflows tab. grux approvals --approve and --skip do not reach these.", indent: 2)))
+        }
+
         // ---- what is waiting -------------------------------------------------------------
         if pending.isEmpty {
             print("")
-            if !store.queueExists {
+            if !workflows.isEmpty {
+                print(r.prose("Nothing is in the approval queue."))
+            } else if !store.queueExists {
                 // THE EXPECTED STATE OF A MAC NOBODY HAS ASKED FOR ANYTHING BIG YET, and it
                 // must not read like a fault.
                 print(r.prose("Nothing has ever been held back for you on this Mac. Grux "
@@ -374,6 +407,15 @@ struct Approvals: ParsableCommand {
             var tail = String(repeating: " ", count: indent) + r.style.ink(.dim, row.id)
             if row.item.urgent == true { tail += "  " + r.style.ink(.attention, "urgent") }
             print(tail)
+
+            // Approved before and it failed. Without this line a second approve is a
+            // blind retry of something that cannot work yet.
+            if let failure = row.item.lastFailure, !failure.isEmpty {
+                print(String(repeating: " ", count: indent)
+                      + r.style.ink(.attention, Self.clip("last try failed: " + failure,
+                                                          to: max(16, r.style.width - indent),
+                                                          tty: r.style.isTTY)))
+            }
 
             // Only ever printed when one is true, which on this Mac is never: every waiting
             // item here is an unclassified side effect. When it IS true it is the single most
@@ -504,7 +546,8 @@ struct Approvals: ParsableCommand {
 
     // MARK: - Machine readable
 
-    private func emitJSON(_ store: Store, pending: [Waiting], shown: [Waiting]) {
+    private func emitJSON(_ store: Store, pending: [Waiting], shown: [Waiting],
+                          workflows: [WaitingWorkflow]) {
         var out: [String: Any] = [
             "mode": store.modeID,
             "mode_chosen": store.modeChosen,
@@ -526,12 +569,23 @@ struct Approvals: ParsableCommand {
                 "urgent": row.item.urgent ?? false,
                 "reason": row.item.reason ?? "",
             ]
+            if let failure = row.item.lastFailure { item["last_failure"] = failure }
             if let created = row.item.createdAt { item["created_at"] = created }
             if let waited = row.waited { item["waited_seconds"] = Int(max(0, waited)) }
             if let runs = row.runs { item["runs"] = runs }
             let flags = Self.flags(row)
             if !flags.isEmpty { item["not_routine_because"] = flags }
             return item
+        }
+        let stamp = ISO8601DateFormatter()
+        out["workflows_waiting"] = workflows.map { run -> [String: Any] in
+            var row: [String: Any] = [
+                "id": run.id, "workflow": run.workflow, "name": run.name,
+                "question": run.question, "dry_run": run.dryRun,
+                "answer_in": "Chat, or the run's card in the Workflows tab",
+            ]
+            if let since = run.since { row["since"] = stamp.string(from: since) }
+            return row
         }
         print(Self.jsonText(out))
     }
@@ -739,11 +793,18 @@ struct Approvals: ParsableCommand {
         // Sized from the widest label PRESENT, so a card with no reason on it does not carry
         // the gutter of one that has.
         let reason = row.item.reason ?? ""
-        let width = reason.isEmpty ? 7 : 12
+        let failure = row.item.lastFailure ?? ""
+        let width = reason.isEmpty && failure.isEmpty ? 7 : 12
         say(Self.stat(r, .satisfied, "Waiting", Self.span(row.waited), width: width))
         if !reason.isEmpty {
             say(Self.stat(r, .satisfied, "Held because",
                             Self.clip(reason, to: max(20, r.style.width - width - 8),
+                                      tty: r.style.isTTY),
+                            width: width))
+        }
+        if !failure.isEmpty {
+            say(Self.stat(r, .needed, "Last try",
+                            Self.clip(failure, to: max(20, r.style.width - width - 8),
                                       tty: r.style.isTTY),
                             width: width))
         }

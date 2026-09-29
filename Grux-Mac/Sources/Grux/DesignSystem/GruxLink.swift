@@ -10,7 +10,8 @@ import SwiftUI
 /// screen.
 ///
 /// Re-measured 2026-08-23, because the first count in this comment was wrong in
-/// every number it gave. `Sources/` holds 3 real `Link` uses. Two of them set no
+/// every number it gave, and again 2026-09-22 when the first-run model gate
+/// gained an OpenRouter path. `Sources/` holds 4 real `Link` uses. Two of them set no
 /// foreground style at all: the onboarding model key step, which is the single
 /// screen where a stranger is asked to paste a credential and therefore the
 /// worst possible place to look like a different application, and the Brave key

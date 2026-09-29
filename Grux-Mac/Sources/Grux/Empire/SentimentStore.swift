@@ -52,8 +52,7 @@ final class SentimentStore: ObservableObject {
 
     private var jsonURL: URL { Persistence.supportDir.appendingPathComponent("sentiment.json") }
     private var mdURL: URL {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let dir = home.appendingPathComponent(".grux", isDirectory: true)
+        let dir = Persistence.gruxDir
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("sentiment.md")
     }

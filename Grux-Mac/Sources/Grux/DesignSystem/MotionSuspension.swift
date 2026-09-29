@@ -25,6 +25,10 @@ private final class SuspendedBox: @unchecked Sendable {
 
 private let suspendedBox = SuspendedBox()
 
+/// A window whose only perpetual motion runs on Core Animation's render server, so
+/// its being on screen is no reason to keep SwiftUI animating anywhere else.
+protocol MotionLivesOnTheRenderServer: AnyObject {}
+
 @MainActor
 final class MotionSuspension {
     static let shared = MotionSuspension()
@@ -52,6 +56,14 @@ final class MotionSuspension {
         reevaluate()
     }
 
+    /// Whether this window being on screen is a reason to keep SwiftUI motion
+    /// running. Split out so the rule is testable without a window server.
+    nonisolated static func keepsMotionAlive(_ window: AnyObject, isVisible: Bool, onScreen: Bool) -> Bool {
+        guard isVisible, onScreen else { return false }
+        if window is MotionLivesOnTheRenderServer { return false }
+        return !window.isKind(of: NSClassFromString("NSStatusBarWindow") ?? NSWindow.self)
+    }
+
     private func reevaluate() {
         let active = NSApp.isActive
         // `.visible` is set when any part of the window is on screen. A miniaturised or
@@ -62,12 +74,21 @@ final class MotionSuspension {
         // permanently true and the gate permanently open. Measured with it counted: 21.5%
         // of a core while the app sat in the background. Measured with it excluded: 0.8%.
         // The first version of this file shipped the bug and looked correct.
+        //
+        // The Focus pill is excluded for the same reason, and it was the same bug a
+        // second time. It is a `.canJoinAllSpaces` panel, so it is on screen on every
+        // Space all day, and while it counted the gate could never close: measured
+        // 2026-09-21 with the main window off screen, 33.3% of a core muted, the
+        // display cycle taking 1248 of 4103 main thread samples. Its orb now turns on
+        // the render server (`OrbLayers.swift`), so it needs no SwiftUI motion kept
+        // alive for it. A window opts out by adopting `MotionLivesOnTheRenderServer`,
+        // never by class name, so a new always-on panel has to decide on purpose.
         let anyVisible = NSApp.windows.contains { w in
-            guard w.isVisible, w.occlusionState.contains(.visible) else { return false }
-            return !w.isKind(of: NSClassFromString("NSStatusBarWindow") ?? NSWindow.self)
+            Self.keepsMotionAlive(w, isVisible: w.isVisible,
+                                  onScreen: w.occlusionState.contains(.visible))
         }
         // Both conditions, so a floating panel the user is watching beside another app,
-        // Orb Anywhere or the ambient HUD, keeps animating while Grux is not frontmost.
+        // the ambient HUD, keeps animating while Grux is not frontmost.
         let suspend = !active && !anyVisible
         guard suspend != isSuspended else { return }
         suspendedBox.isSuspended = suspend

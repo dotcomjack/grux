@@ -28,9 +28,11 @@ final class TriggerWatcher {
     private var started = false
 
     /// The directory every trigger lives in. All 57 call sites resolved to this one path.
-    let directory = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".grux")
+    let directory: URL
 
-    private init() {}
+    init(directory: URL = Persistence.gruxDir) {
+        self.directory = directory
+    }
 
     /// Register a file whose appearance should run `run`. Call before `start()`.
     func register(_ file: URL, _ run: @escaping () -> Void) {
@@ -71,10 +73,38 @@ final class TriggerWatcher {
         s.resume()
     }
 
+    /// How long a just-created EMPTY file is left for its writer.
+    ///
+    /// The directory event fires when the entry is created, before `printf ... > file` has
+    /// written a byte, and nothing fires when the bytes land. Measured 2026-09-27: 3 of 35
+    /// injects were read empty, deleted, and lost. So an empty file younger than this is
+    /// looked at again shortly after instead of being run; one older than this is a
+    /// `touch` trigger, empty by design, and runs. A file with bytes in it runs at once.
+    static let emptySettleSeconds: TimeInterval = 0.3
+    private var resweepPending = false
+
     private func sweep() {
         let fm = FileManager.default
+        var waiting = false
         for handler in handlers where fm.fileExists(atPath: handler.file.path) {
+            if let attrs = try? fm.attributesOfItem(atPath: handler.file.path),
+               (attrs[.size] as? Int) == 0,
+               let modified = attrs[.modificationDate] as? Date,
+               Date().timeIntervalSince(modified) < Self.emptySettleSeconds {
+                waiting = true
+                continue
+            }
             handler.run()
+        }
+        // One-shot, and only while a fresh empty file exists: nothing wakes at idle.
+        if waiting && !resweepPending {
+            resweepPending = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                MainActor.assumeIsolated {
+                    self?.resweepPending = false
+                    self?.sweep()
+                }
+            }
         }
     }
 

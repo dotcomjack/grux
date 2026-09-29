@@ -91,8 +91,8 @@ final class AudioDucker {
     }
 
     // Manual escape hatch invoked by the ~/.grux/fire-audio-restore watcher
-    // in GruxApp.swift. Use when something has stranded Music at the ducked
-    // level outside the ducker's normal notification flow.
+    // in Triggers/AppTriggers.swift. Use when something has stranded Music at
+    // the ducked level outside the ducker's normal notification flow.
     func forceRestoreNow() {
         forceRestoreTimer?.invalidate()
         forceRestoreTimer = nil
@@ -214,6 +214,8 @@ final class AudioDucker {
 
     // Returns nil when Music isn't running OR AppleScript fails. nil → no-op.
     private func readMusicVolume() -> Int? {
+        // Silent mode (AudioOutput) leaves Music alone entirely: no read, no duck.
+        guard !AudioOutput.isSilent else { return nil }
         let s = """
         tell application "Music"
             if it is running then return sound volume
@@ -229,6 +231,7 @@ final class AudioDucker {
 
     @discardableResult
     private func setMusicVolume(_ v: Int) -> Bool {
+        guard !AudioOutput.isSilent else { return false }
         let clamped = max(0, min(100, v))
         let s = """
         tell application "Music"

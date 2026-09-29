@@ -66,13 +66,34 @@ final class FoundryEngine: ObservableObject {
 
     // The Mac app installs to /Applications, so the source checkout has to be
     // named, not assumed: nobody's clone is anywhere in particular. GRUX_REPO_ROOT
-    // is the one answer, and it is validated (Package.swift + .git present) so a
+    // is the first answer, and it is validated (Package.swift + .git present) so a
     // stale or mistyped value fails here rather than halfway through a build.
-    // Nil means self-upgrade has no source to work from, which callers report.
+    //
+    // It was the ONLY answer, and that made Build it dead on arrival: a GUI launch
+    // from /Applications carries no shell environment, so the variable is never
+    // set for the app a person actually clicks. build.sh had already recorded the
+    // checkout it installed from in ~/.grux/source.json for Optimize Grux's work
+    // orders, so that file is the fallback, validated the same way. Nil means
+    // self-upgrade has no source to work from, which the card now says.
     nonisolated static func resolveRepoRoot() -> URL? {
-        guard let path = ProcessInfo.processInfo.environment["GRUX_REPO_ROOT"], !path.isEmpty else {
-            return nil
+        resolveRepoRoot(environment: ProcessInfo.processInfo.environment, sourceFile: recordedSourceFile)
+    }
+
+    /// The file build.sh writes; one definition shared with WorkOrderContext.
+    nonisolated static var recordedSourceFile: URL { WorkOrderContext.sourceFile }
+
+    nonisolated static func resolveRepoRoot(environment: [String: String], sourceFile: URL) -> URL? {
+        if let path = environment["GRUX_REPO_ROOT"], !path.isEmpty,
+           let root = validatedCheckout(at: path) {
+            return root
         }
+        guard let data = try? Data(contentsOf: sourceFile),
+              let source = try? JSONDecoder().decode(WorkOrderSource.self, from: data)
+        else { return nil }
+        return validatedCheckout(at: source.path)
+    }
+
+    private nonisolated static func validatedCheckout(at path: String) -> URL? {
         let fm = FileManager.default
         let root = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
         guard fm.fileExists(atPath: root.appendingPathComponent("Grux-Mac/Package.swift").path),
@@ -213,6 +234,32 @@ final class FoundryEngine: ObservableObject {
         WakeLog.shared.log("foundry: \(pass.rawValue) cycle finished")
     }
 
+    // A build that cannot start because the checkout is gone used to leave
+    // one line in wake.log and nothing anywhere a person looks: the proposal
+    // stayed accepted and the card kept offering Build it. The proposal still
+    // stays accepted, because a checkout can come back (build.sh records it
+    // again), but the timeline says what happened and what to do, and the
+    // card re-measures the source on every click and flips to its own
+    // "cannot build here" row.
+    static func noteMissingSource(for proposal: UpgradeProposal, timeline: FoundryTimelineStore? = nil) {
+        (timeline ?? .shared).append(FoundryTimelineEntry(
+            kind: .rejected,
+            title: "Build could not start: \(proposal.title)",
+            detail: "No source checkout on this Mac. Rebuild with build.sh from the source folder so Grux records where it is, or copy the handoff for your agent.",
+            lane: proposal.lane.displayName,
+            domain: proposal.domain.displayName
+        ))
+    }
+
+    // What the Self-Upgrade card reads to say "Building now" instead of
+    // offering a second Build it: the rail's in-flight set and, for an M or L
+    // proposal, the swarm job that owns it.
+    func isBuilding(_ id: UUID) -> Bool { building.contains(id) }
+
+    func escalatedJobId(for id: UUID) -> String? {
+        escalatedJobs.first(where: { $0.value == id })?.key
+    }
+
     // Accept-card kick: build a single just-accepted proposal.
     func buildAccepted(id: UUID) async {
         guard let proposal = ProposalStore.shared.proposal(id: id),
@@ -226,6 +273,7 @@ final class FoundryEngine: ObservableObject {
         guard !building.contains(proposal.id) else { return }
         guard let repoRoot = Self.resolveRepoRoot() else {
             WakeLog.shared.log("foundry: no repo root found (set GRUX_REPO_ROOT); skipping build of '\(proposal.title)'")
+            Self.noteMissingSource(for: proposal)
             return
         }
         building.insert(proposal.id)
@@ -400,6 +448,12 @@ final class FoundryEngine: ObservableObject {
         }
     }
 
+    /// Tuning's "self-upgrade, at most". Only ever lowers the earned tier,
+    /// and a ceiling that does not read as a tier fails closed at propose.
+    nonisolated static func cappedTier(earned: TrustTier, ceiling: Int) -> TrustTier {
+        min(earned, TrustTier(rawValue: ceiling) ?? .propose)
+    }
+
     // Tier routing after a green verify: Auto-Land installs straight behind
     // the rollback keeper; everything else files a one-tap approval card
     // (Mac panel + phone over the 0x40 channel). Protected never installs.
@@ -420,7 +474,10 @@ final class FoundryEngine: ObservableObject {
         // Defensive re-pin: protected zones never auto-land, even if a
         // record on disk predates the pinning rules or was hand-edited.
         let proposal = TrustLedger.applyProtectedPinning(to: stored)
-        let earned = TrustLedger.shared.tier(lane: proposal.lane, domain: proposal.domain)
+        // Tuning's ceiling: never more than the person allows, whatever the
+        // lane has earned.
+        let earned = Self.cappedTier(earned: TrustLedger.shared.tier(lane: proposal.lane, domain: proposal.domain),
+                                     ceiling: AppState.shared.config.selfUpgradeMaxTier)
         if Self.shouldAutoLand(earnedTier: earned, proposal: proposal) {
             install(proposalId: proposal.id)
         } else {

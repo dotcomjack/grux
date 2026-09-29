@@ -270,6 +270,40 @@ final class ThemeConfig: ObservableObject {
         self.reduceMotion = loaded.reduceMotion
         publish()
         if isPrimary { applyAppearance() }
+        // theme.json edited on disk outside Grux applies live, no relaunch.
+        sync = SettingsFileSync(url: fileURL) { [weak self] data in self?.applyFromDisk(data) ?? false }
+    }
+
+    private var sync: SettingsFileSync?
+    /// How many outside edits to theme.json were applied, for tests.
+    var diskApplies: Int { sync?.applied ?? 0 }
+    /// True while a change read from disk is being applied, so the didSets
+    /// do not write the file straight back.
+    private var applyingDisk = false
+
+    /// theme.json changed on disk and Grux did not write it. Applied through
+    /// the same WCAG gate as launch. False when the bytes do not decode.
+    private func applyFromDisk(_ data: Data) -> Bool {
+        guard let loaded = try? JSONDecoder().decode(ThemeSettings.self, from: data) else { return false }
+        guard loaded != settings else { return true }
+        applyingDisk = true
+        defer { applyingDisk = false }
+        // The same gate as the slider: a failing hue is not applied, and the
+        // inline warning says why, rather than the edit vanishing.
+        let audit = ThemeConfig.runWCAGAudit(palette: ThemePalette.derived(accentHue: loaded.accentHue))
+        if audit.passes {
+            accentHue = loaded.accentHue
+            accentWarning = nil
+        } else {
+            accentWarning = audit.failureSummary
+        }
+        appearance = loaded.appearance
+        glassIntensity = min(1, max(0, loaded.glassIntensity))
+        reduceMotion = loaded.reduceMotion
+        publish()
+        if isPrimary { applyAppearance() }
+        revision &+= 1
+        return true
     }
 
     // MARK: Accent (WCAG-gated)
@@ -359,9 +393,11 @@ final class ThemeConfig: ObservableObject {
     }
 
     private func settingsChanged() {
+        guard !applyingDisk else { return }
         publish()
         if isPrimary { applyAppearance() }
         Persistence.save(settings, to: fileURL)
+        sync?.noteOwnWrite()
         revision &+= 1
     }
 
@@ -445,7 +481,7 @@ enum MotionTokens {
 // MARK: - Theme revision keying for NSHostingController roots
 
 // Hosted-window counterpart of LaunchRootView's `.id(theme.revision)`.
-// Roots built once via NSHostingController (AmbientHUD, Orb Anywhere) never
+// Roots built once via NSHostingController (AmbientHUD, the focus card) never
 // re-key on theme commits, so surfaces that read GruxTheme statics only at
 // onAppear (the orb's repeatForever phase/pulse animations, reduceMotion)
 // kept their stale settings until the next state change. Wrapping the hosted

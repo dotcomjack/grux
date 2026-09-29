@@ -83,6 +83,9 @@ final class VoiceInput: ObservableObject {
     static let shared = VoiceInput()
 
     @Published var isRecording = false
+    /// Whether the recording in progress started with voice processing, so
+    /// stop() can tell a refused start from a quiet room.
+    private var voiceProcessingThisRecording = false
     @Published var isTranscribing = false
     @Published var transcript: String = ""
     @Published var liveLevel: Float = 0
@@ -112,8 +115,21 @@ final class VoiceInput: ObservableObject {
         interleaved: false
     )!
 
-    private var whisperKit: WhisperKit?
-    private var whisperInitTask: Task<Void, Never>?
+    /// The model, loaded once; a failed load is tried again on the next dictation
+    /// instead of being the answer until relaunch (see `RetryableLoad`).
+    private lazy var whisper = RetryableLoad<WhisperKit> { [modelName, modelRepo] in
+        let config = WhisperKitConfig(
+            model: modelName,
+            downloadBase: WhisperModelStore.downloadBase,
+            modelRepo: modelRepo,
+            verbose: false,
+            prewarm: true,
+            load: true,
+            download: WhisperModelStore.mayDownload
+        )
+        return try await WhisperKit(config)
+    }
+    private var whisperKit: WhisperKit? { whisper.value }
 
     // Whisper large-v3 (turbo) running 100% on-device via WhisperKit on the
     // Apple Neural Engine. This IS the free, open-source OpenAI Whisper model
@@ -130,37 +146,44 @@ final class VoiceInput: ObservableObject {
     private let modelName = "openai_whisper-large-v3_turbo"
     private let modelRepo = "argmaxinc/whisperkit-coreml"
 
-    init() {
-        whisperInitTask = Task.detached(priority: .userInitiated) { [weak self] in
-            await self?.initWhisper()
+    /// Whether anything has asked for the model yet (the launch prewarm or a dictation).
+    private(set) var whisperLoadRequested = false
+
+    /// Loads the model at launch only when this Mac can dictate right now: an input
+    /// device, and microphone access already granted. Measured 2026-09-27 on a Mac mini
+    /// that could not dictate: the load was about 87 s of Neural Engine compile at full
+    /// CPU on every launch, and the first panes opened meanwhile took 8 to 21 s. `start`
+    /// asks for access and loads a missing model before it records, so a mic plugged in
+    /// or granted later still works. Reading the authorization never raises a prompt.
+    ///
+    /// `prewarm` replaces the model load, so a test proves the prewarm is asked for
+    /// without starting a real Whisper load that outlives it.
+    init(canDictate: @MainActor () -> Bool = {
+        !MicDevices.listInputs().isEmpty
+            && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+    }, prewarm: (@MainActor (VoiceInput) async -> Void)? = nil) {
+        guard canDictate() else {
+            whisperStatus = "loads on first dictation (no microphone Grux may use yet)"
+            WakeLog.shared.log("whisper: no usable microphone yet, model loads on first dictation")
+            return
+        }
+        Task { [weak self] in
+            guard let self else { return }
+            if let prewarm { await prewarm(self) } else { await self.initWhisper() }
         }
     }
 
     private func initWhisper() async {
+        whisperLoadRequested = true
         WakeLog.shared.log("whisper: initializing (model=\(modelName), repo=\(modelRepo))")
-        await MainActor.run { self.whisperStatus = "downloading/loading \(self.modelName)…" }
-        do {
-            let config = WhisperKitConfig(
-                model: modelName,
-                modelRepo: modelRepo,
-                verbose: false,
-                prewarm: true,
-                load: true,
-                download: true
-            )
-            let kit = try await WhisperKit(config)
-            await MainActor.run {
-                self.whisperKit = kit
-                self.whisperReady = true
-                self.whisperStatus = "ready"
-            }
+        whisperStatus = "downloading/loading \(modelName)…"
+        if await whisper.get() != nil {
+            whisperReady = true
+            whisperStatus = "ready"
             WakeLog.shared.log("whisper: READY")
-        } catch {
-            let msg = "whisper init FAILED: \(error.localizedDescription)"
-            WakeLog.shared.log(msg)
-            await MainActor.run {
-                self.whisperStatus = "init failed: \(error.localizedDescription)"
-            }
+        } else if let error = whisper.lastFailure {
+            WakeLog.shared.log("whisper init FAILED: \(error.localizedDescription)")
+            whisperStatus = "init failed: \(error.localizedDescription)"
         }
     }
 
@@ -222,19 +245,15 @@ final class VoiceInput: ObservableObject {
             return
         }
 
-        // Make sure WhisperKit is ready before recording. If init was never
-        // kicked off (shouldn't happen), start it now.
-        if whisperInitTask == nil {
-            whisperInitTask = Task.detached(priority: .userInitiated) { [weak self] in
-                await self?.initWhisper()
-            }
-        }
+        // Make sure WhisperKit is ready before recording. A load still running is
+        // waited on; one that failed earlier is tried again here.
         if whisperKit == nil {
             WakeLog.shared.log("whisper: waiting for model before recording…")
-            _ = await whisperInitTask?.value
+            await initWhisper()
         }
         guard whisperKit != nil else {
-            error = "Whisper model not loaded. Check network for first-run download."
+            error = "Whisper model not loaded: "
+                + (whisper.lastFailure?.localizedDescription ?? "check network for first-run download.")
             return
         }
 
@@ -248,9 +267,27 @@ final class VoiceInput: ObservableObject {
             return
         }
 
+        // Premium noise cancellation: Apple's hardware voice processing I/O
+        // (AEC + noise suppression + AGC). Great for the built-in mic BUT
+        // turning it on was believed to force system-wide output to a comm-mode
+        // codec for the duration of dictation. Measured 2026-09-23: it does not,
+        // output stays full fidelity. What it DOES cost is another app's
+        // microphone capture, which stops dead. For mics the user has
+        // whitelisted as "preserve fidelity" (e.g. DJI Mic Mini - already
+        // has excellent on-device DSP), we skip VPIO entirely. Same for
+        // headphone and Bluetooth output, which the mic cannot hear (see
+        // VoiceProcessingPolicy).
+        MicWhitelist.autoWhitelistKnownExternalMics()
+        MicWhitelist.applyPreferredInputIfPossible()
+        let activeInputUID = MicDevices.systemDefaultInputUID() ?? ""
+
         // Rebuild the audio engine fresh every session. Reusing a stopped
         // engine after SpeechEngine has touched the mic can leave the HAL
         // in a wedged state where taps never fire or deliver silence.
+        //
+        // Built AFTER the preferred mic is applied, never before: an engine
+        // built first keeps whatever input was the default at that moment
+        // (see MicDevices.bindInput and the same note in AmbientListener).
         audioEngine = AVAudioEngine()
 
         // Mic tap pipeline:
@@ -260,41 +297,36 @@ final class VoiceInput: ObservableObject {
         //   2) AVAudioConverter for sample-rate conversion only (mono→mono).
         // This handles any native rate (24k / 44.1k / 48k / 96k) cleanly.
         let input = audioEngine.inputNode
-
-        // Premium noise cancellation: Apple's hardware voice processing I/O
-        // (AEC + noise suppression + AGC). Great for the built-in mic BUT
-        // turning it on here forces system-wide output to comm-mode codec
-        // (tinny mono) for the duration of dictation. For mics the user has
-        // whitelisted as "preserve fidelity" (e.g. DJI Mic Mini - already
-        // has excellent on-device DSP), we skip VPIO entirely.
-        MicWhitelist.autoWhitelistKnownExternalMics()
-        MicWhitelist.applyPreferredInputIfPossible()
-        let activeInputUID = MicDevices.systemDefaultInputUID() ?? ""
-        let bypassVPIO = MicWhitelist.isWhitelisted(uid: activeInputUID)
-        if AppState.shared.config.premiumNoiseCancellation && !bypassVPIO {
+        let vpio = VoiceProcessingPolicy.shouldEnable(
+            settingOn: AppState.shared.config.premiumNoiseCancellation,
+            micWhitelisted: MicWhitelist.isWhitelisted(uid: activeInputUID),
+            output: MicDevices.defaultOutputRoute(),
+            refusedRecently: VoiceProcessingRefusal.isRecent())
+        voiceProcessingThisRecording = vpio.enable
+        var boundToChosenMic = false
+        if vpio.enable {
             do {
                 try input.setVoiceProcessingEnabled(true)
                 // Don't bypass - we want the chain active.
                 input.isVoiceProcessingBypassed = false
                 // Ducking off: other-app audio pausing mid-command is jarring.
                 // AGC on for normalized levels into Whisper.
-                if #available(macOS 14.0, *) {
-                    input.voiceProcessingOtherAudioDuckingConfiguration =
-                        AVAudioVoiceProcessingOtherAudioDuckingConfiguration(
-                            enableAdvancedDucking: false,
-                            duckingLevel: .min
-                        )
-                }
+                input.voiceProcessingOtherAudioDuckingConfiguration = VoiceProcessingPolicy.otherAudioDucking
                 input.isVoiceProcessingAGCEnabled = true
                 input.isVoiceProcessingInputMuted = false
-                WakeLog.shared.log("voice: premium noise cancellation ENABLED (hw AEC + NS + AGC) for \(activeInputUID)")
+                WakeLog.shared.log("voice: premium noise cancellation ENABLED (hw AEC + NS + AGC) for \(activeInputUID) (\(vpio.reason))")
             } catch {
                 WakeLog.shared.log("voice: premium noise cancellation unavailable (\(error.localizedDescription)); using software pipeline")
             }
-        } else if bypassVPIO {
-            WakeLog.shared.log("voice: VPIO BYPASSED (whitelisted mic \(activeInputUID)) - speakers stay full-fidelity")
+        } else {
+            WakeLog.shared.log("voice: VPIO BYPASSED (\(vpio.reason)) input \(activeInputUID) - output stays full-fidelity")
+            boundToChosenMic = MicDevices.bindInput(input, toUID: activeInputUID)
+            if !boundToChosenMic {
+                WakeLog.shared.log("voice: could not bind the input to \(activeInputUID), the engine picks its own")
+            }
         }
-        let nativeFormat = input.outputFormat(forBus: 0)
+        // A bound input is tapped in its hardware format; see AmbientListener.
+        let nativeFormat = MicDevices.tapFormat(for: input, bound: boundToChosenMic)
         let nativeRate = nativeFormat.sampleRate
         let channelCount = Int(nativeFormat.channelCount)
         WakeLog.shared.log("whisper capture: native=\(Int(nativeRate))Hz ch=\(channelCount) → 16000Hz mono")
@@ -442,6 +474,14 @@ final class VoiceInput: ObservableObject {
         }
 
         let dbg = audioBuffer.debugCounts()
+        // A recording with voice processing that received no buffer at all is
+        // Core Audio refusing to start it (see VoiceProcessingRefusal), not a
+        // quiet room: a quiet room still delivers buffers. The next start,
+        // here or in ambient, goes without it.
+        if dbg.taps == 0 && voiceProcessingThisRecording {
+            VoiceProcessingRefusal.markRefused()
+            WakeLog.shared.log("voice: voice processing delivered no audio at all; listening without it for \(Int(VoiceProcessingRefusal.window / 60)) minutes")
+        }
         let drained = audioBuffer.drain()
         let samples = drained.samples
         // Require at least 0.3s of audio before transcribing
@@ -511,7 +551,7 @@ final class VoiceInput: ObservableObject {
             promptTokens: promptTokens
         )
         do {
-            let results = try await kit.transcribe(audioArray: samples, decodeOptions: options)
+            let results = try await WhisperDecode.transcribe(kit, samples, options: options)
             let raw = results
                 .map { $0.text }
                 .joined(separator: " ")

@@ -31,7 +31,7 @@ final class GraphMailStore: ObservableObject {
     @Published private(set) var config = GraphMailConfig()
 
     private let url: URL = {
-        let dir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".grux/jax", isDirectory: true)
+        let dir = Persistence.gruxDir.appendingPathComponent("jax", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("graph-mail-config.json")
     }()

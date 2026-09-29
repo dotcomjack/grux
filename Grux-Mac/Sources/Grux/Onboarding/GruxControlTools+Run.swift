@@ -201,7 +201,17 @@ extension GruxControlTools {
             "steps_waited": waited,
             "steps_detached": live.count - waited,
             "steps_off": macro.actions.count - live.count,
+            "steps_failed": failedSteps(inReport: report),
             "report": report,
         ]))
+    }
+
+    /// The waited steps that answered with an error. A refused step still
+    /// reported back, so without this the CLI counted it as having run.
+    /// The registry writes one `  - <result>` line per waited step, and a
+    /// result is `ok: ...` or `error: ...`; detached and disabled lines open
+    /// with a parenthesis and never count.
+    nonisolated static func failedSteps(inReport report: String) -> Int {
+        report.split(separator: "\n").filter { $0.hasPrefix("  - error") }.count
     }
 }

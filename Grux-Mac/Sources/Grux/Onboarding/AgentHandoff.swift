@@ -48,8 +48,7 @@ enum AgentHandoff {
     /// `stepYoutubeTranscriptsEnabled` to "turn it on in Settings". Both are
     /// actions INSIDE Grux, which is precisely what this prompt reserves for the
     /// person. Asking an agent to do them would have it either fail or reach
-    /// into an app it cannot drive. `stepTerminalFocusHookInstalled` is Grux
-    /// writing the hook itself, not the agent.
+    /// into an app it cannot drive.
     static let delegable: Set<SetupRequirement> = [
         .stepAgentCliInstalled,
         // Ollama is the one endpoint an agent really can stand up: it is an

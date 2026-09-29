@@ -16,9 +16,11 @@ import SwiftUI
 ///      while the sidebar no longer draws anything. A test that only exercises
 ///      the registry passes happily through this, which is the vacuous-guard
 ///      trap this project has already shipped twice.
-///   2. The badge stops FITTING. The nav rail is a hard 240pt and the longest
-///      row is "Terminal Focus", which is itself labs, so the badge lands on the
-///      tightest row in the app. Clipping here is invisible to every logic test.
+///   2. The badge stops FITTING. The legacy nav rail is a hard 240pt and the
+///      longest row is "Feature Review", which is itself labs, so the badge lands
+///      on the tightest row in the app. Clipping here is invisible to every logic
+///      test. The Command Panel draws no surface rows, so this is a legacy-shell
+///      budget; the panel's own tight row is the Recent chips, measured below.
 /// The setup card must not contradict itself between its headline and its subtitle.
 ///
 /// It did. The headline was the literal string "needs one more thing" regardless of
@@ -84,7 +86,7 @@ final class BetaBadgeTests: XCTestCase {
     /// that skipped `tabAliases` would return false for exactly the tabs Jack
     /// named as shells and the badge would vanish from all of them.
     func testAliasedTabKeysStillResolveToTheirLabsRow() {
-        for key in ["metaAds", "jaxHQ", "jaxCommand", "terminalFocus", "selfUpgrade", "featureReview"] {
+        for key in ["metaAds", "jaxHQ", "jaxCommand", "selfUpgrade", "featureReview"] {
             XCTAssertTrue(FeatureRegistry.isLabs(forTab: key),
                 "\(key) lost its labs badge, which means the tabAliases lookup was skipped")
         }
@@ -109,12 +111,12 @@ final class BetaBadgeTests: XCTestCase {
     /// Guards the count itself. If someone retiers a feature the number moves and
     /// this fails, which is the prompt to confirm the change was deliberate rather
     /// than a copy-paste while editing a neighbouring row.
-    func testTheLabsSetIsTheExpectedFourteen() {
+    func testTheLabsSetIsTheExpectedTwelve() {
         let labs = FeatureRegistry.rows.filter { $0.tier == .labs }.map(\.id).sorted()
         XCTAssertEqual(labs, [
-            "agents", "creative", "domains", "feature.review", "jax.command", "jax.hq",
+            "agents", "creative", "feature.review", "jax.command", "jax.hq",
             "mailbox.compose", "meta.ads", "phone", "reactor", "self.upgrade",
-            "social", "terminal.focus", "workflows",
+            "social", "workflows",
         ], "the labs set changed; confirm the retier was intended and update the contract")
     }
 
@@ -127,53 +129,73 @@ final class BetaBadgeTests: XCTestCase {
     /// anchored on a token inside a comment and therefore passed against a planted
     /// mutation. The comment beside this very call site contains the word "BETA",
     /// so a naive text search here would be exactly that bug again.
-    func testTheSidebarRowConstructsTheBadge() throws {
+    func testNoSidebarRowCarriesAPill() throws {
         let source = try Self.launchRootSourceWithoutComments()
         let row = try XCTUnwrap(Self.body(ofFunc: "sidebarRow", in: source),
                                 "could not locate sidebarRow; the scan anchor moved")
-        XCTAssertTrue(row.contains("BetaBadge()"),
-            "sidebarRow no longer constructs BetaBadge(), so no labs feature is marked anywhere "
-            + "in the shell. The registry still knows which are labs; nothing shows it.")
-        XCTAssertTrue(row.contains("isLabs(forTab:"),
-            "sidebarRow draws a badge without asking the registry, so it is either badging "
-            + "everything or badging a hardcoded list that can drift from the contract.")
+        XCTAssertFalse(row.contains("BetaBadge()"),
+            "a sidebar row draws a BETA pill again; 3.0 says it once, at the Labs door or beside the surface's own title")
+    }
+
+    /// 3.0, as decided 2026-09-22: "no per-row pills; BETA in the surface header
+    /// for labs features outside the Labs door". The door header draws the one
+    /// badge for the surfaces behind it.
+    func testTheLabsDoorIsBadgedOnceAndItsRowsAreNot() throws {
+        let source = try Self.launchRootSourceWithoutComments()
+        let door = try XCTUnwrap(source.components(separatedBy: "case .door(let id):").dropFirst().first)
+        let block = String(door.prefix(1500))
+        XCTAssertTrue(block.contains("if id == \"labs\" { BetaBadge() }"), "the Labs door lost its one badge")
+        XCTAssertTrue(block.contains("sidebarRow($0) }"), "rows behind a door are drawn some other way now")
+    }
+
+    func testTheLabsFeaturesOutsideTheDoorAreTheSixTheRegistrySays() {
+        XCTAssertEqual(Set(FeatureRegistry.labsOutsideTheLabsDoor),
+                       ["agents", "mailbox.compose", "creative", "social", "workflows", "meta.ads"])
+    }
+
+    /// Every labs feature outside the Labs door says BETA beside its own title.
+    func testEveryLabsFeatureOutsideTheDoorIsLabelledInItsOwnHeader() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/Grux")
+        let files = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)!
+            .compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" }
+        let all = try files.map { Self.stripComments(try String(contentsOf: $0, encoding: .utf8)) }.joined(separator: "\n")
+        for id in FeatureRegistry.labsOutsideTheLabsDoor {
+            let direct = all.contains("LabsHeaderBadge(feature: \"\(id)\")")
+            let viaCompose = id == ComposeDoor.featureId && all.contains("LabsHeaderBadge(feature: ComposeDoor.featureId)")
+            XCTAssertTrue(direct || viaCompose, "\(id) is labs, lives outside the Labs door, and says BETA nowhere")
+        }
     }
 
     // MARK: - the promise onboarding already made
 
     /// Onboarding tells every new user, on the How Grux works screen, that labs
     /// features "are labelled so you know which is which before you rely on one".
-    ///
-    /// That sentence shipped before anything drew a label, so first-run made a
-    /// promise the shell did not keep. This test binds the two: delete the badge
-    /// and the copy becomes a lie, delete the copy and the badge loses the
-    /// first-run introduction the discoverability rule requires. Either edit alone
-    /// fails here, which is the point.
+    /// The door badge and the header badges are what keep that true.
     func testOnboardingPromisesLabellingAndTheShellDeliversIt() throws {
         let steps = try Self.source(at: "Sources/Grux/Onboarding/OnboardingSteps.swift")
         XCTAssertTrue(steps.contains("Core and labs"),
-            "the How Grux works screen no longer introduces the core/labs split, so labs "
-            + "features are marked in the sidebar but never named at first run")
+            "the How Grux works screen no longer introduces the core/labs split")
         XCTAssertTrue(steps.contains("labelled so you know which is which"),
-            "onboarding stopped promising that labs features are labelled; if that was "
-            + "deliberate the badge needs a different first-run introduction, not none")
-
-        let row = try XCTUnwrap(Self.body(ofFunc: "sidebarRow",
-                                          in: Self.stripComments(try Self.source(at: "Sources/Grux/LaunchRootView.swift"))))
-        XCTAssertTrue(row.contains("BetaBadge()"),
-            "onboarding promises labs features are labelled and the sidebar draws no label, "
-            + "so first-run is telling the user something untrue")
+            "onboarding stopped promising that labs features are labelled")
+        let source = try Self.launchRootSourceWithoutComments()
+        XCTAssertTrue(source.contains("if id == \"labs\" { BetaBadge() }"),
+            "onboarding promises labs features are labelled and the Labs door draws no label")
+        let badge = try Self.source(at: "Sources/Grux/Onboarding/BetaBadge.swift")
+        XCTAssertTrue(badge.contains("struct LabsHeaderBadge"), "the header label is gone")
     }
 
-    // MARK: - the badge fits the rail it has to live in
+    // MARK: - the badge fits the legacy rail it has to live in
 
-    /// The rail is a hard 240pt and its own token says it must hold "Terminal
-    /// Focus" plus icon plus badge. Terminal Focus is labs, so this badge is added
-    /// to the widest row that exists. Measured through NSHostingView rather than
+    /// The legacy rail is a hard 240pt and its own token says it must hold its
+    /// longest label plus icon plus badge. "Feature Review" is that label and is
+    /// labs, so this badge is added to the widest row that exists. Measured through
+    /// NSHostingView rather than
     /// estimated, because an arithmetic guess at font metrics is how clipping ships.
-    func testTheWidestLabsRowStillFitsTheNavRail() {
-        let plain = Self.fittingWidth(HStack(spacing: 5) { Text("Terminal Focus") })
-        let badged = Self.fittingWidth(HStack(spacing: 5) { Text("Terminal Focus"); BetaBadge() })
+    func testTheWidestLabsRowStillFitsTheLegacyNavRail() {
+        let plain = Self.fittingWidth(HStack(spacing: 5) { Text("Feature Review") })
+        let badged = Self.fittingWidth(HStack(spacing: 5) { Text("Feature Review"); BetaBadge() })
 
         XCTAssertGreaterThan(badged, plain,
             "the badged row is no wider than the plain one, so BetaBadge occupies no space at all")
@@ -185,7 +207,7 @@ final class BetaBadgeTests: XCTestCase {
         let projected = 165 + delta
         XCTAssertLessThan(projected, GruxLayout.navRail,
             "the badge pushes the longest sidebar row to \(projected)pt against a fixed "
-            + "\(GruxLayout.navRail)pt rail, so \"Terminal Focus\" will clip. Shorten the badge, "
+            + "\(GruxLayout.navRail)pt rail, so \"Feature Review\" will clip. Shorten the badge, "
             + "or raise navRail AND every budget in GruxLayout that subtracts it.")
     }
 
@@ -213,6 +235,42 @@ final class BetaBadgeTests: XCTestCase {
             + "drawing its padding and background around missing or truncated text")
     }
 
+    // MARK: - the panel's Recent chips
+
+    /// The panel's tightest row is its foot: up to five Recent chips across
+    /// `panelWidth` less the panel's padding. The row never runs past the
+    /// panel's edge (R12.3): it drops the chips that do not fit whole
+    /// (D-chips), and one chip never grows past `chipMaxWidth`.
+    ///
+    /// Measured on the five widest labels a chip can carry (any key the
+    /// sidebar knows except Settings, which has the gear), drawn by the chip's
+    /// own face at the chip row's own spacing.
+    func testFiveRecentChipsFitThePanel() {
+        let candidates = SidebarIA.allItems.map(\.key).filter { $0 != "settings" }
+        let widest = candidates
+            .map { key in (key, Self.fittingWidth(Label(SidebarIA.railLabel(forKey: key),
+                                                         systemImage: SidebarIA.railIcon(forKey: key))
+                                                     .font(GruxType.caption))) }
+            .sorted { $0.1 > $1.1 }
+            .prefix(5)
+            .map(\.0)
+        XCTAssertEqual(widest.count, 5)
+        XCTAssertGreaterThan(Self.fittingWidth(PanelFoot.chipFace(widest[0])), 0,
+                             "the chip measured zero, so NSHostingView is not laying out and this proves nothing")
+
+        for key in widest {
+            XCTAssertLessThanOrEqual(Self.fittingWidth(PanelFoot.chipFace(key)), PanelFoot.chipMaxWidth + 1,
+                                     "the \(key) chip grew past its cap")
+        }
+        let budget = GruxLayout.panelWidth - 2 * GruxSpacing.l
+        let row = PaneFitHarness.measure("recent-row-widest", width: budget, height: GruxSpacing.xl * 2,
+                                         writePNG: false) {
+            PanelFoot.chipRow(widest) { PanelFoot.chipFace($0) }
+        }
+        XCTAssertTrue(row.fits,
+            "five chips (\(widest.map(SidebarIA.railLabel(forKey:)))) against \(budget)pt of panel: \(row.line)")
+    }
+
     // MARK: - looking at it
 
     /// Renders the sidebar rows the badge actually lands on, at the real rail
@@ -225,13 +283,13 @@ final class BetaBadgeTests: XCTestCase {
     /// Measurements prove the badge fits a number. They cannot show that it reads
     /// as a label rather than a smudge, and this project has shipped a confidently
     /// mislabelled screenshot before.
-    func testRenderTheBadgedRowsForInspection() {
+    func testRenderTheLegacyRailsBadgedRowsForInspection() {
         // The three of Jack's four named beta shells that have a sidebar row, plus
         // the longest label and a core row for contrast. `empire` is absent because
         // it is not a tab: it opens as its own window and has no sidebar row to
         // badge, which is recorded rather than papered over.
         let rows: [(String, Bool, Bool)] = [
-            ("Terminal Focus", true, false),   // longest label, and labs
+            ("Feature Review", true, false),   // longest label, and labs
             ("Meta Ads", true, true),          // labs AND needs setup, both marks at once
             ("Jax HQ", true, false),
             ("Social", FeatureRegistry.isLabs(forTab: "social"), false),

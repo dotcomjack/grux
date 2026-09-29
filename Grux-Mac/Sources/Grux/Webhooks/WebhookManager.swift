@@ -185,6 +185,17 @@ actor WebhookManager {
         return "sha256=\(hex)"
     }
 
+    /// Whether a workflow note is from a live run, as the engine said when it
+    /// posted. False for a dry run and for a note that does not say, with one
+    /// wake.log line for the second.
+    static func isLiveRun(_ info: [AnyHashable: Any], event: String) -> Bool {
+        guard let dry = info["isDryRun"] as? Bool else {
+            WakeLog.shared.log("webhooks: a workflow \(event) note did not say whether it was a dry run, so no webhook was sent")
+            return false
+        }
+        return !dry
+    }
+
     // MARK: - Lifecycle
 
     // Idempotent, callable from any boot path (GruxApp launch). Registers
@@ -202,6 +213,10 @@ actor WebhookManager {
             guard let commandId = info["commandId"] as? String,
                   let toPhase = info["toPhase"] as? Int,
                   let phaseName = info["phaseName"] as? String else { return }
+            // A dry run reaches nothing outside Grux, a webhook included. The
+            // engine says which it is when it posts (REVIEW-2); a note that
+            // does not say may be a dry run, so it sends nothing.
+            guard Self.isLiveRun(info, event: "phase transition") else { return }
             let runId = (info["runId"] as? UUID)?.uuidString ?? (info["runId"] as? String ?? "")
             let payload: [String: String] = [
                 "commandId": commandId,
@@ -209,14 +224,15 @@ actor WebhookManager {
                 "phaseName": phaseName,
                 "phaseIndex": String(toPhase)
             ]
-            Task { await WebhookManager.shared.publish(event: .commandPhaseTransitioned, payload: payload) }
+            Task { await self.publish(event: .commandPhaseTransitioned, payload: payload) }
         })
 
         observerTokens.append(center.addObserver(
             forName: .gruxCommandV2RunFinished, object: nil, queue: nil
         ) { note in
             let runId = (note.object as? UUID)?.uuidString ?? ""
-            Task { await WebhookManager.shared.publish(event: .commandRunFinished, payload: ["runId": runId]) }
+            guard Self.isLiveRun(note.userInfo ?? [:], event: "run finished") else { return }
+            Task { await self.publish(event: .commandRunFinished, payload: ["runId": runId]) }
         })
 
         observerTokens.append(center.addObserver(
@@ -242,7 +258,7 @@ actor WebhookManager {
             default:
                 return // queued / waiting / paused are not webhook milestones
             }
-            Task { await WebhookManager.shared.publish(event: event, payload: payload) }
+            Task { await self.publish(event: event, payload: payload) }
         })
 
         observerTokens.append(center.addObserver(
@@ -255,7 +271,7 @@ actor WebhookManager {
                 "title": (info["title"] as? String) ?? "",
                 "kind": (info["kind"] as? String) ?? ""
             ]
-            Task { await WebhookManager.shared.publish(event: .reminderFired, payload: payload) }
+            Task { await self.publish(event: .reminderFired, payload: payload) }
         })
     }
 

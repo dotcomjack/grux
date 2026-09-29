@@ -1,12 +1,75 @@
 import Foundation
 
 enum Persistence {
+    /// THE SUITE NEVER WRITES TO THE RUNNING APP'S STATE.
+    ///
+    /// Everything Grux persists hangs off this one directory, so one check
+    /// here closes the whole class of bug rather than one store at a time.
+    ///
+    /// Measured 2026-09-20 on the operator's own machine: the Foundry
+    /// timeline held 1,000 rows and every single one was test noise, 667
+    /// "Auto-land paused (crash-loop breaker)" and 333 "Demoted", because
+    /// `FoundryGovernorTests` drives `GruxUpdater.shared` directly. Worse than
+    /// the noise, each run called `clearAutoLandPause()`, which is the
+    /// human-only control that says it is safe to resume self-install. A test
+    /// run was silently clearing a real safety breaker on a real Mac.
+    ///
+    /// Under test this is a per-process temporary directory: isolated between
+    /// runs and stable within one. It does NOT disappear on its own (measured
+    /// 2026-09-27: 71 of them, 38 GB, filled a Mini's disk), so each run removes
+    /// the ones whose process has ended.
+    static let isUnderTest: Bool = NSClassFromString("XCTestCase") != nil
+
+    private static let testRoot: URL = {
+        let parent = URL(fileURLWithPath: NSTemporaryDirectory())
+        sweepFinishedTestSandboxes(in: parent)
+        let dir = parent
+            .appendingPathComponent("Grux-tests-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }()
+
+    /// Removes every `Grux-tests-<pid>` folder in `parent` whose process has ended.
+    /// A suite still running (another process, or this one) keeps its own.
+    static func sweepFinishedTestSandboxes(in parent: URL) {
+        let fm = FileManager.default
+        guard let names = try? fm.contentsOfDirectory(atPath: parent.path) else { return }
+        for name in names where name.hasPrefix("Grux-tests-") {
+            guard let pid = Int32(name.dropFirst("Grux-tests-".count)), pid > 0 else { continue }
+            // ESRCH is the only answer that means gone; EPERM means alive, not ours to signal.
+            guard kill(pid, 0) != 0, errno == ESRCH else { continue }
+            try? fm.removeItem(at: parent.appendingPathComponent(name, isDirectory: true))
+        }
+    }
+
     static var supportDir: URL {
+        if isUnderTest { return testRoot }
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let dir = base.appendingPathComponent("Grux", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
+
+    /// `~/.grux`: triggers, agent and Jax state, and most of the stores that
+    /// predate `supportDir`. The ONLY place this path is built (P-H-1,
+    /// `GruxDirIsBuiltOnceTests`).
+    ///
+    /// Measured 2026-09-21: 107 sites in about 60 files built it by hand, so
+    /// `isUnderTest` protected `supportDir` and nothing else, and a full suite
+    /// run changed `support/drafts.json`, `support/filtered-mail.json`,
+    /// `support/muted-senders.json`, `jax/autonomy-ledger.json` and
+    /// `jax/correction-lessons.json` in the operator's real folder. Under test
+    /// this is a folder inside the suite's own temporary directory.
+    static var gruxDir: URL {
+        if isUnderTest { return testGruxDir }
+        return URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".grux", isDirectory: true)
+    }
+
+    private static let testGruxDir: URL = {
+        let dir = testRoot.appendingPathComponent(".grux", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }()
 
     /// Where user-facing HTML exports land. Portable, inside the user's own
     /// Documents, created on demand.
@@ -53,8 +116,7 @@ enum Persistence {
     /// minutes, forever. Absent file means the feature is simply off, which is
     /// the correct posture for machinery only its author uses.
     static var liveWorktreeRoot: URL? {
-        let cfg = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux", isDirectory: true)
+        let cfg = Persistence.gruxDir
             .appendingPathComponent("live-worktree.txt")
         guard let raw = try? String(contentsOf: cfg, encoding: .utf8) else { return nil }
         let p = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -68,8 +130,7 @@ enum Persistence {
     /// failed to decode (see `load(_:from:fallback:)`). App-owned and neutral.
     static var quarantineDir: URL {
         if let quarantineDirOverride { return quarantineDirOverride }
-        let dir = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux", isDirectory: true)
+        let dir = Persistence.gruxDir
             .appendingPathComponent("quarantine", isDirectory: true)
         return dir
     }
@@ -84,7 +145,6 @@ enum Persistence {
     static var eventsURL: URL { supportDir.appendingPathComponent("events.json") }
     static var chatURL: URL { supportDir.appendingPathComponent("chat.json") }
     static var configURL: URL { supportDir.appendingPathComponent("config.json") }
-    static var terminalFocusConfigURL: URL { supportDir.appendingPathComponent("terminal-focus.json") }
     static var screenshotsDir: URL {
         let dir = supportDir.appendingPathComponent("screenshots", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

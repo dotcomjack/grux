@@ -241,10 +241,36 @@ fi
 # generates non-bundle-format `.bundle` resource directories (e.g.
 # swift-transformers_Hub.bundle) that codesign rejects when signed individually;
 # --deep traverses and signs only the real code inside the app wrapper.
+# The pinned hash is one machine's certificate. Any other machine with an
+# Apple Development certificate, of ANY team (the first one `security` lists),
+# gets it picked up here, so a second dev Mac, a CI box or a contributor with
+# their own team keeps stable TCC grants without editing this file. Nothing in
+# Grux.entitlements names a team, so no team is required. Measured 2026-09-27:
+# the e2e test Mac had no identity at all, every rebuild signed ad-hoc with a
+# fresh cdhash, and Accessibility, which System Settings showed as ON, prompted
+# again after every install.
+if ! security find-identity -v -p codesigning | grep -q "$SIGN_ID"; then
+    FOUND=$(security find-identity -v -p codesigning | bash scripts/first-dev-identity.sh)
+    if [[ -n "$FOUND" ]]; then
+        echo "   pinned identity not on this Mac; using its own Apple Development certificate $FOUND"
+        SIGN_ID="$FOUND"
+    fi
+fi
 if security find-identity -v -p codesigning | grep -q "$SIGN_ID"; then
     codesign --force --deep --sign "$SIGN_ID" --entitlements Grux.entitlements --options runtime --timestamp "$APP"
 else
-    echo "  (stable identity missing, falling back to ad-hoc, permissions will re-prompt)"
+    cat <<'WARN'
+   +----------------------------------------------------------------------+
+   | WARNING: no stable signing identity on this Mac. Signing AD-HOC.      |
+   | Every rebuild gets a new code hash, so macOS forgets each permission  |
+   | decision (Accessibility, Screen Recording, Microphone, Calendar...)   |
+   | and prompts again after every install, even when System Settings     |
+   | still shows Grux as ON.                                              |
+   | Fix: install an Apple Development certificate for your team, or set   |
+   | GRUX_SIGN_ID to the SHA-1 of any identity from                        |
+   |   security find-identity -v -p codesigning                            |
+   +----------------------------------------------------------------------+
+WARN
     codesign --force --deep --sign - --entitlements Grux.entitlements --options runtime --timestamp=none "$APP"
 fi
 
@@ -390,7 +416,18 @@ echo "[6/7] Install to /Applications…"
 # Quit running instance before replacing the binary
 if pgrep -x Grux > /dev/null; then
     osascript -e 'quit app "Grux"' 2>/dev/null || killall Grux 2>/dev/null || true
-    sleep 0.6
+    # Wait for it to be GONE, not for a fixed time. A fixed 0.6s sleep raced a
+    # quit that takes longer (willTerminate restores Apple Music's volume over
+    # AppleScript, budgeted at about a second): `open` below then landed on the
+    # instance that was still shutting down, LaunchServices activated it
+    # instead of launching the new build, and the run ended with NO Grux
+    # running, or with the OLD binary still running. Measured 2026-09-21,
+    # twice in one session.
+    for _ in $(seq 1 50); do pgrep -x Grux > /dev/null || break; sleep 0.2; done
+    if pgrep -x Grux > /dev/null; then
+        killall Grux 2>/dev/null || true
+        sleep 0.5
+    fi
 fi
 if [[ -d /Applications/Grux.app ]]; then
     rm -rf /Applications/Grux.app
@@ -400,8 +437,29 @@ cp -R "$APP" /Applications/
 # Scrub once more in place so Gatekeeper and codesign remain happy.
 xattr -cr /Applications/Grux.app
 
+# Record which checkout this install came from, for Optimize Grux's work
+# orders: a person's coding agent is told to work HERE rather than clone. Local
+# only, never inside the app (the binaries above were scrubbed of every
+# builder path). Release builds never reach this line, so the downloaded app
+# has no record and its work orders clone the matching tag instead.
+mkdir -p "$HOME/.grux"
+python3 - "$(pwd)" "$(git rev-parse --short HEAD 2>/dev/null || echo unknown)$(git diff --quiet 2>/dev/null || echo -dirty)" \
+    "$(stat -f %m /Applications/Grux.app/Contents/MacOS/Grux)" "$HOME/.grux/source.json" <<'SOURCE'
+import json, sys
+path, commit, mtime, out = sys.argv[1:5]
+json.dump({"path": path, "commit": commit, "binaryMtime": float(mtime)}, open(out, "w"), indent=2)
+SOURCE
+echo "   source recorded for Optimize Grux: ~/.grux/source.json"
+
 echo "[7/7] Opening…"
-open /Applications/Grux.app
+# ~/.grux/HEADLESS (the same live sentinel the app reads) means the screen is
+# someone else's: launch in the background and hidden, never activated.
+if [[ -e "$HOME/.grux/HEADLESS" ]]; then
+    echo "   headless: opening in the background, hidden"
+    open -g -j /Applications/Grux.app
+else
+    open /Applications/Grux.app
+fi
 
 echo "✅ Done: /Applications/Grux.app"
 echo "   audit log: ~/Library/Application Support/Grux/fs-audit.log"

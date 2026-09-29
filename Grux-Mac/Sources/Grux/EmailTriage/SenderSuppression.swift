@@ -17,7 +17,7 @@ final class SenderSuppressionStore: ObservableObject {
     @Published private(set) var domains: Set<String>   // lowercased BARE domains, e.g. "walmart.com"
 
     private let url: URL = {
-        let dir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".grux/support", isDirectory: true)
+        let dir = Persistence.gruxDir.appendingPathComponent("support", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("muted-senders.json")
     }()

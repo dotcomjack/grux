@@ -32,6 +32,11 @@ struct OnboardingView: View {
     @EnvironmentObject var state: AppState
     @ObservedObject private var model = OnboardingModel.shared
 
+    /// The bar under the scroll area. Screens publish it with
+    /// `.onboardingPrimary`; see `OnboardingFooter.swift` for why it cannot
+    /// live inside the content.
+    @State private var primary: OnboardingPrimaryAction?
+
     var body: some View {
         ZStack {
             GruxTheme.base.ignoresSafeArea()
@@ -46,28 +51,21 @@ struct OnboardingView: View {
             // Found by rendering the view and looking at it. Nothing else would
             // have: it compiles, it passes every behavioural test, and at a
             // comfortable window size it looks finished.
+            VStack(spacing: 0) {
             ScrollView {
-                Group {
-                    switch model.stage {
-                    case .level:       LevelStep()
-                    case .modelKey:    ModelKeyStep()
-                    case .identity:    IdentityStep()
-                    case .howItWorks:  HowItWorksStep()
-                    case .permissions: PermissionsStep()
-                    case .firstLook:   FirstLookStep()
-                    case .clone:       CloneStep()
-                    case .connections: ConnectionsStep()
-                    case .update:      UpdateStep()
-                    case .welcomeBack: WelcomeBackStep()
-                    case .done:        Color.clear
-                    }
-                }
-                .frame(maxWidth: 520)
-                .padding(40)
-                .frame(maxWidth: .infinity)
+                Self.column(for: model.stage)
+            }
+            // Shown at rest, not only while scrolling. A screen that overflows
+            // has to LOOK like it overflows; the walk that produced the footer
+            // found content cut off mid-sentence with nothing indicating it.
+            .scrollIndicators(.visible)
+            if let primary {
+                OnboardingFooterBar(action: primary)
+            }
             }
         }
-        .frame(minWidth: 640, minHeight: 520)
+        .onPreferenceChange(OnboardingPrimaryActionKey.self) { primary = $0 }
+        .frame(minWidth: GruxLayout.onboardingMinWidth, minHeight: GruxLayout.onboardingMinHeight)
         // Tint once here so every control in all three gates inherits it.
         // Without this the buttons render in the SYSTEM accent, which is blue
         // by default: `.keyboardShortcut(.defaultAction)` makes macOS fill
@@ -77,6 +75,37 @@ struct OnboardingView: View {
         // wearing the app's colour. Tinting the container rather than each
         // button also means a new control in any gate cannot forget.
         .tint(GruxTheme.accentPrimary)
+    }
+}
+
+extension OnboardingView {
+    /// One stage's screen inside the flow's content column, exactly as the
+    /// scroll area shows it. Static so the pane-fit sweep renders every stage
+    /// through the same builder (PaneFitSweepTests).
+    @ViewBuilder
+    static func column(for stage: OnboardingModel.Stage) -> some View {
+        Group {
+            switch stage {
+            case .level:       LevelStep()
+            case .modelKey:    ModelKeyStep()
+            case .identity:    IdentityStep()
+            case .howItWorks:  HowItWorksStep()
+            case .permissions: PermissionsStep()
+            case .firstLook:   FirstLookStep()
+            case .clone:       CloneStep()
+            case .connections: ConnectionsStep()
+            case .update:      UpdateStep()
+            case .welcomeBack: WelcomeBackStep()
+            case .prompt:      FirstPromptStep()
+            case .yourGrux:    YourGruxStep()
+            case .setup:       SetupStep()
+            case .done:        Color.clear
+            }
+        }
+        // The question is the accepted shape A: one wide field, centred.
+        .frame(maxWidth: stage == .prompt ? 640 : 520)
+        .padding(40)
+        .frame(maxWidth: .infinity)
     }
 }
 
@@ -146,15 +175,48 @@ struct ModelKeyStep: View {
     @State private var probingLocal = false
     @State private var localError: String?
 
+    /// WHAT THIS MAC ALREADY HAS, looked up before the screen asks for
+    /// anything. The gate used to open with "Paste an Anthropic API key"
+    /// whatever was true here, so somebody already running Ollama, which is
+    /// the free path the README leads with, was asked for a key they had
+    /// deliberately not got, with the local option as grey text below the
+    /// fold of the primary row. The probe is one request to a loopback
+    /// address and it changes what the screen leads with.
+    @State private var probe: ModelGate.Probe = .none
+
     // The model being fetched, so the screen can say WHICH one and how big
     // rather than spinning silently through a multi-gigabyte download.
     @State private var pulling: CookbookModel?
+
+    // P-F-1, the third path the operator chose: an OpenRouter key.
+    @State private var showOpenRouter = false
+    @State private var openRouterKey = ""
+    @State private var probingOpenRouter = false
+    @State private var openRouterError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("Connect a model")
                 .font(GruxTheme.Font.display)
                 .foregroundStyle(GruxTheme.textPrimary)
+
+            // LEAD WITH WHAT IS ALREADY TRUE ON THIS MAC. Shown only when the
+            // probe answered, so a Mac with no local server sees exactly the
+            // screen it saw before.
+            if let found = probe.model {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(ModelGate.foundTitle)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(GruxTheme.textPrimary)
+                    Text(ModelGate.foundDetail(model: found))
+                        .font(GruxTheme.Font.caption)
+                        .foregroundStyle(GruxTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 10).fill(GruxTheme.accentPrimary.opacity(0.10)))
+            }
 
             // Onboarding copy, deliberately NOT SetupRequirement.remediation.
             // That sentence is written for a setup card and says to add the key
@@ -171,6 +233,10 @@ struct ModelKeyStep: View {
                 .textFieldStyle(.roundedBorder)
                 .font(GruxTheme.Font.mono)
                 .disabled(model.validating)
+                // Same reason as the name field: a focused field eats Return,
+                // and pasting a key then pressing Return is the whole gesture
+                // this screen exists for.
+                .onSubmit { if primaryEnabled { runPrimary() } }
 
             // The rejected-key case. Inline and adjacent, not an alert: an
             // alert would take the key out of view at the exact moment the
@@ -203,10 +269,9 @@ struct ModelKeyStep: View {
                 if model.validating {
                     ProgressView().controlSize(.small)
                 }
-                Button("Continue") { submit() }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                              || model.validating || probingLocal)
+                // Continue is PINNED below the scroll area now, so it cannot be
+                // pushed off the bottom by an error line or the local-model
+                // card above it.
             }
 
             // THE FREE PATH, and it belongs on this screen because it is the one
@@ -268,6 +333,124 @@ struct ModelKeyStep: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+
+            openRouterPath
+        }
+        .task { await probeForLocalModel() }
+        .onboardingPrimary(primaryTitle, stage: .modelKey, enabled: primaryEnabled, run: runPrimary)
+    }
+
+    private var typedKey: String { key.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    /// The pinned button follows what the person actually has. With a key
+    /// typed it submits the key; with no key and a model already running here
+    /// it uses that, which is the whole point of looking first. With neither it
+    /// stays disabled, exactly as Continue always did.
+    private var primaryTitle: String {
+        typedKey.isEmpty && probe.model != nil ? ModelGate.useFound : "Continue"
+    }
+
+    private var primaryEnabled: Bool {
+        guard !model.validating, !probingLocal, !probingOpenRouter else { return false }
+        return !typedKey.isEmpty || probe.model != nil
+    }
+
+    private func runPrimary() {
+        if !typedKey.isEmpty {
+            submit()
+        } else if probe.model != nil {
+            useLocalModel()
+        }
+    }
+
+    /// Ask the loopback host whether something is already serving, before the
+    /// screen asks the person for anything.
+    ///
+    /// Only reports a model that is BOTH reachable and already pulled. A server
+    /// answering with nothing on it is not something to lead with, because
+    /// taking that path starts a multi-gigabyte download, and `useLocalModel`
+    /// already handles that case properly for somebody who chooses it.
+    private func probeForLocalModel() async {
+        guard probe == .none, !hasStoredKey else { return }
+        await ModelRegistry.shared.discoverLocal()
+        guard ModelRegistry.shared.local != nil else { return }
+        await OllamaManager.shared.refreshInstalled()
+        guard let usable = GruxConfig.usableLocalModels(OllamaManager.shared.installedTags).first
+        else { return }
+        probe = .found(usable)
+    }
+
+    /// The third way in: one key for many models, billed by OpenRouter.
+    private var openRouterPath: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button(ModelPaths.openRouterButton) { withAnimation { showOpenRouter.toggle() } }
+                .buttonStyle(.plain)
+                .font(GruxTheme.Font.caption)
+                .foregroundStyle(GruxTheme.accentPrimaryLight)
+                .disabled(model.validating || probingLocal || probingOpenRouter)
+            if showOpenRouter {
+                Text(ModelPaths.openRouterBody)
+                    .font(GruxTheme.Font.caption)
+                    .foregroundStyle(GruxTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack {
+                    SecureField("sk-or-...", text: $openRouterKey)
+                        .textFieldStyle(.roundedBorder)
+                        .font(GruxTheme.Font.mono)
+                        .disabled(probingOpenRouter)
+                    if probingOpenRouter { ProgressView().controlSize(.small) }
+                    Button("Use OpenRouter") { useOpenRouter() }
+                        .disabled(openRouterKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                  || probingOpenRouter)
+                }
+                Link("Get an OpenRouter key", destination: URL(string: "https://openrouter.ai/keys")!)
+                    .font(GruxTheme.Font.caption)
+                    .gruxLink()
+                if let err = openRouterError {
+                    Label(err, systemImage: "exclamationmark.triangle.fill")
+                        .font(GruxTheme.Font.caption)
+                        .foregroundStyle(GruxTheme.warnAmber)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    /// Check the key, add OpenRouter as the endpoint chat routes through, and
+    /// leave the gate only once the route is read back, as the local path does.
+    /// Nothing is saved for a key OpenRouter refused.
+    private func useOpenRouter() {
+        let key = openRouterKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        openRouterError = nil
+        probingOpenRouter = true
+        Task {
+            defer { probingOpenRouter = false }
+            switch await ModelPaths.checkOpenRouterKey(key) {
+            case .reject(let why):
+                openRouterError = why
+                return
+            case .accept:
+                break
+            }
+            let store = CustomEndpointStore.shared
+            guard let ep = store.add(name: "OpenRouter", baseURL: ModelPaths.openRouterBase, apiKey: key) else {
+                openRouterError = "Grux could not save OpenRouter as an endpoint. Add it in Settings, Models."
+                return
+            }
+            if ep.modelId == nil { store.setModelId(ModelPaths.openRouterModel, for: ep.id) }
+            AppState.shared.config.ollamaBaseURL = ep.baseURL
+            AppState.shared.saveConfig()
+            ModelRegistry.shared.setActiveProvider(.custom(ep.id))
+            await ModelRegistry.shared.discoverLocal()
+            // POST-CONDITION, read back: chat routes to OpenRouter, and its
+            // model list answered, which is what lets Chat open without a card.
+            guard ModelRegistry.shared.resolvedProvider == .custom(ep.id), ModelRegistry.shared.local != nil else {
+                openRouterError = "OpenRouter took the key, but Grux could not list its models to route chat there. "
+                    + "Check the connection and press Use OpenRouter again."
+                return
+            }
+            openRouterKey = ""
+            model.completeModelKey()
         }
     }
 
@@ -464,6 +647,7 @@ struct IdentityStep: View {
     @EnvironmentObject var state: AppState
     @ObservedObject private var model = OnboardingModel.shared
     @State private var name = ""
+    @FocusState private var nameFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -479,24 +663,40 @@ struct IdentityStep: View {
             TextField("Your name", text: $name)
                 .textFieldStyle(.roundedBorder)
                 .font(GruxTheme.Font.body)
-
-            HStack {
-                // Skippable on purpose. An empty name renders a greeting with
-                // no name, which is a finished sentence, so nothing downstream
-                // needs a placeholder.
-                Button("Skip") { model.completeIdentity() }
-                    .buttonStyle(.plain)
-                    .font(GruxTheme.Font.caption)
-                    .foregroundStyle(GruxTheme.textTertiary)
-                Spacer()
-                Button("Continue") {
-                    state.config.userName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-                    state.saveConfig()
-                    model.completeIdentity()
-                }
-                .keyboardShortcut(.defaultAction)
-            }
+                // RETURN HAS TO WORK FROM THE FIELD, and that needs BOTH of
+                // these. `onSubmit` only fires on a field that holds focus, and
+                // measured on a wiped Mac this screen held focus nowhere: the
+                // field never took it, so Return reached neither the field's
+                // submit nor the pinned button's default action, and typing a
+                // name and pressing Return did nothing at all. Every other
+                // screen was fine, which is why it took a walk to find.
+                //
+                // Focusing it is the fix and it is better anyway: the field
+                // arrives filled in and ready to be typed over.
+                .focused($nameFocused)
+                .onSubmit { commit() }
         }
+        // ALREADY FILLED IN, because macOS already knows. This field shipped
+        // empty while `NSFullUserName()` sat one call away, so the first thing
+        // Grux did was ask for something it could have read. Only when it looks
+        // like a name: see `Identity.suggestedName`.
+        .onAppear {
+            if name.isEmpty { name = Identity.systemSuggestion }
+            nameFocused = true
+        }
+        // Skippable on purpose. An empty name renders a greeting with no name,
+        // which is a finished sentence, so nothing downstream needs a
+        // placeholder.
+        .onboardingPrimary("Continue", stage: .identity, secondary: "Skip",
+                           runSecondary: { model.completeIdentity() },
+                           run: commit)
+    }
+
+    /// One definition, so the pinned button and the Return key cannot drift.
+    private func commit() {
+        state.config.userName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        state.saveConfig()
+        model.completeIdentity()
     }
 }
 
@@ -550,6 +750,45 @@ struct FirstLookStep: View {
                 }
                     .keyboardShortcut(.defaultAction)
             }
+        }
+    }
+}
+
+/// The OpenRouter path's words and its key check, pure where it can be.
+enum ModelPaths {
+    static let openRouterBase = "https://openrouter.ai/api/v1"
+    /// DeepSeek V4 Flash: tool use, and about $0.04 per million input tokens,
+    /// measured from OpenRouter's own model list on 2026-09-21. Changeable in
+    /// Settings, Models, like any endpoint's model.
+    static let openRouterModel = "deepseek/deepseek-v4-flash-0731"
+    static let openRouterButton = "Use an OpenRouter key instead"
+    static let openRouterBody = "One key for hundreds of models, billed by OpenRouter. Grux starts on DeepSeek V4 "
+        + "Flash, which uses tools and is inexpensive, and you can pick any other model in Settings, Models. "
+        + "The key stays in your Mac's Keychain."
+
+    /// What OpenRouter's key endpoint says about a key. The model list is
+    /// public, so reachability alone cannot tell a good key from a bad one.
+    static func verdict(status: Int) -> OnboardingModel.KeyVerdict {
+        switch status {
+        case 200..<300: return .accept
+        case 401, 403: return .reject("OpenRouter rejected that key. Check you copied all of it.")
+        case 402: return .reject("That OpenRouter account has no credit left. Add some at openrouter.ai, then try again.")
+        default: return .reject("OpenRouter did not answer normally (\(status)). Try again in a moment.")
+        }
+    }
+
+    static func checkOpenRouterKey(_ key: String) async -> OnboardingModel.KeyVerdict {
+        guard !key.isEmpty, let url = URL(string: openRouterBase + "/key") else {
+            return .reject("Paste a key to continue.")
+        }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 10
+        req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        do {
+            let (_, response) = try await URLSession.shared.data(for: req)
+            return verdict(status: (response as? HTTPURLResponse)?.statusCode ?? 0)
+        } catch {
+            return .reject("Could not reach OpenRouter. Check the connection, or use one of the other two.")
         }
     }
 }

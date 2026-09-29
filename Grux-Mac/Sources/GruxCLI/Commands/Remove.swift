@@ -126,7 +126,7 @@ struct Remove: ParsableCommand {
         }
 
         // ---- Which one, and the three ways that goes wrong -------------------------------
-        let hits = items.filter { Remove.matches(askedValue, $0) }
+        let hits = RemovalChoice.candidates(for: askedValue, in: items)
 
         guard hits.count == 1, let item = hits.first else {
             frame.open(.look)
@@ -504,14 +504,6 @@ struct Remove: ParsableCommand {
     private static func isSkillNoun(_ noun: String) -> Bool {
         let n = noun.lowercased()
         return n == "skill" || n == "skills"
-    }
-
-    private static func matches(_ typed: String, _ row: [String: Any]) -> Bool {
-        let t = typed.lowercased()
-        for key in ["id", "label", "alias"] {
-            if let v = row[key] as? String, !v.isEmpty, v.lowercased() == t { return true }
-        }
-        return false
     }
 
     /// The closest names to something that did not resolve.

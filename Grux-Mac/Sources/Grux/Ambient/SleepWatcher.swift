@@ -68,8 +68,7 @@ final class SleepWatcher {
     // MARK: - NDJSON layout
 
     nonisolated static var systemEventsDir: URL {
-        URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux", isDirectory: true)
+        Persistence.gruxDir
             .appendingPathComponent("ambient", isDirectory: true)
     }
 

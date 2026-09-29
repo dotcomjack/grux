@@ -328,8 +328,7 @@ final class MeetingCaptureService: ObservableObject {
 
         if summarize, !rec.utterances.isEmpty {
             if let summary = await MeetingSummarizer.summarize(rec) {
-                rec.summary = summary.tldr
-                rec.actionItems = summary.actionItems
+                summary.apply(to: &rec)
             }
         }
 
@@ -538,8 +537,7 @@ final class MeetingCaptureService: ObservableObject {
             ) {
                 await MainActor.run {
                     guard var latest = MeetingStore.shared.loadRecord(id: rec.id) else { return }
-                    latest.summary = summary.tldr
-                    latest.actionItems = summary.actionItems
+                    summary.apply(to: &latest)
                     MeetingStore.shared.save(latest)
                     MeetingStore.shared.reindex()
                     if self.activeMeeting?.id == latest.id { self.activeMeeting = latest }

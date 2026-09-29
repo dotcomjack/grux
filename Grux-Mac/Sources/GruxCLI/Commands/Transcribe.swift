@@ -195,6 +195,13 @@ struct Transcribe: ParsableCommand {
 
             guard decorated else {
                 // The whole point of the redirect: the transcript, one newline, nothing else.
+                // Silence leaves stdout EMPTY and says so on stderr: measured 2026-09-27, it
+                // printed a bare blank line, which a script reads as a transcript of nothing
+                // with no word on how much audio produced it.
+                guard !text.isEmpty else {
+                    FileHandle.standardError.write(Data((Self.silence(audio) + "\n").utf8))
+                    leave(.done)
+                }
                 print(text)
                 leave(.done)
             }

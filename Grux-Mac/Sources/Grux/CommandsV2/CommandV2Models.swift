@@ -79,6 +79,18 @@ public enum JSONValue: Codable, Equatable, Sendable, Hashable {
     }
 }
 
+// Interpolating a value (run logs, the Workflows drill-in) prints what it
+// holds: a scalar as itself, a list or object as JSON. Never the Swift case.
+extension JSONValue: CustomStringConvertible {
+    public var description: String {
+        if let s = stringValue { return s }
+        if case .null = self { return "null" }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        return (try? encoder.encode(self)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
+    }
+}
+
 // MARK: - Definition
 
 public struct CommandV2Definition: Codable, Identifiable, Sendable, Hashable {
@@ -90,7 +102,7 @@ public struct CommandV2Definition: Codable, Identifiable, Sendable, Hashable {
     public let parameters: [Parameter]
     public let phases: [Phase]
 
-    public enum Category: String, Codable, Sendable, Hashable {
+    public enum Category: String, Codable, Sendable, Hashable, CaseIterable {
         case ship, observe, develop, lifestyle, system
     }
 
@@ -113,20 +125,62 @@ public struct CommandV2Definition: Codable, Identifiable, Sendable, Hashable {
         public let action: CommandV2Action
         public let userApprovalRequired: Bool
         public let scheduledFollowup: ScheduledFollowup?
+        /// Where the run goes once this phase succeeds. nil means the next
+        /// phase in the list, which a branch arm may not rely on: an arm
+        /// that falls into its sibling arm runs both (see `structuralProblems`).
+        public let after: After?
 
         public init(
             id: String,
             displayName: String,
             action: CommandV2Action,
             userApprovalRequired: Bool = false,
-            scheduledFollowup: ScheduledFollowup? = nil
+            scheduledFollowup: ScheduledFollowup? = nil,
+            after: After? = nil
         ) {
             self.id = id
             self.displayName = displayName
             self.action = action
             self.userApprovalRequired = userApprovalRequired
             self.scheduledFollowup = scheduledFollowup
+            self.after = after
         }
+    }
+
+    public enum After: Codable, Sendable, Hashable {
+        case endRun
+        case continueAt(String)
+    }
+
+    /// What is wrong with the shape of this definition, in words. A definition
+    /// with any problem does not start. Beyond unknown targets, this refuses
+    /// the fall-through that once let testflight-feedback's `fix` arm run on
+    /// into the App Store submit: a phase that would slide into a phase some
+    /// branch jumps to must say `.endRun` or `.continueAt(...)` instead.
+    public func structuralProblems() -> [String] {
+        let ids = Set(phases.map(\.id))
+        var problems: [String] = []
+        var branchTargets = Set<String>()
+        for phase in phases {
+            if case .branch(_, let ifTrue, let ifFalse) = phase.action {
+                for target in [ifTrue, ifFalse] {
+                    if ids.contains(target) { branchTargets.insert(target) }
+                    else { problems.append("phase \(phase.id) branches to unknown phase \(target)") }
+                }
+            }
+            if case .continueAt(let target) = phase.after, !ids.contains(target) {
+                problems.append("phase \(phase.id) continues at unknown phase \(target)")
+            }
+            if let followup = phase.scheduledFollowup, !ids.contains(followup.nextPhaseId) {
+                problems.append("phase \(phase.id) resumes at unknown phase \(followup.nextPhaseId)")
+            }
+        }
+        for (phase, next) in zip(phases, phases.dropFirst()) where branchTargets.contains(next.id) {
+            if case .branch = phase.action { continue }
+            if phase.after != nil || phase.scheduledFollowup != nil { continue }
+            problems.append("phase \(phase.id) falls through into \(next.id), which a branch jumps to; say .endRun or .continueAt(\"\(next.id)\")")
+        }
+        return problems
     }
 
     public struct ScheduledFollowup: Codable, Sendable, Hashable {
@@ -468,13 +522,35 @@ public struct CommandV2Run: Codable, Identifiable, Sendable, Hashable {
     public var startedAt: Date
     public var completedAt: Date?
     public var currentPhaseId: String
-    public var status: Status
+    public var status: Status {
+        didSet { if status != .waitingForApproval { gateQuestion = nil; gateAskedAt = nil; gateReaskedAt = nil } }
+    }
     public var parameters: [String: JSONValue]
     public var state: [String: JSONValue]
     public var phaseHistory: [PhaseRecord]
     public var blockingReason: String?
     public var nextWakeAt: Date?
     public var lastError: String?
+    // A dry run executes only the phases that change nothing outside the run
+    // (see `CommandV2Executor.changesNothingOutside`) and records what every
+    // other phase would have done. Optional so runs saved before the field
+    // existed still decode; read it through `isDryRun`.
+    public var dryRun: Bool?
+    public var isDryRun: Bool { dryRun ?? false }
+    // What a run waiting at a gate is asking, with the words that answer it,
+    // saved with the run so `grux approvals` can say it with Grux closed.
+    // Set by the engine on save (see `upsert`), dropped here the moment the
+    // run stops waiting, so no copy of a finished run still asks.
+    public var gateQuestion: String?
+    // When the person was last asked the gate's question in Chat. A reply
+    // counts only if it was sent after this and within
+    // `CommandV2Engine.freeTextGateWindow` of it. Nil on a run saved before
+    // the field existed, which reads as asked long ago.
+    public var gateAskedAt: Date?
+    // When a message the gate could not take last asked it again. It asks
+    // again at most once per `CommandV2Engine.freeTextGateWindow`, so
+    // chatting past a buried question does not re-post it on every message.
+    public var gateReaskedAt: Date?
 
     public enum Status: String, Codable, Sendable, Hashable {
         case running, waitingForApproval, waitingScheduled,
@@ -501,6 +577,10 @@ public struct CommandV2Run: Codable, Identifiable, Sendable, Hashable {
         public var endedAt: Date?
         public var outcome: Outcome
         public var log: String
+        /// What the tool, command or agent printed, shown under its own
+        /// label in the run record, never as the step's line (SWEEP-12).
+        /// Absent in records saved before it existed.
+        public var details: String?
         public enum Outcome: String, Codable, Sendable, Hashable {
             // `.running` is the in-flight placeholder - the engine writes it
             // when a phase starts so the UI can render "(running)" until the
@@ -531,5 +611,56 @@ public struct CommandV2Run: Codable, Identifiable, Sendable, Hashable {
         self.parameters = parameters
         self.state = [:]
         self.phaseHistory = []
+    }
+}
+
+extension CommandV2Definition {
+    /// Where `phaseId` falls among the steps a person moves through, as
+    /// "step n of total"; nil for a step off that path.
+    func mainPathStep(of phaseId: String) -> (n: Int, total: Int)? {
+        let path = mainPath
+        guard let i = path.firstIndex(of: phaseId) else { return nil }
+        return (i + 1, path.count)
+    }
+
+    /// The steps a person moves through: the longest route of non-branch
+    /// phases from the first phase to the run's natural end, going the way
+    /// the engine goes (a branch to either target, a scheduled follow-up to
+    /// its next phase, `after` where set, else the next phase in order). A
+    /// route that comes back to a phase it passed is a retry loop and never
+    /// counts, and branch phases are never steps. So ship-ios-app is 13
+    /// steps, not its 17 phases.
+    var mainPath: [String] {
+        var best: [String] = []
+        func walk(_ index: Int, _ visited: Set<String>, _ path: [String]) {
+            guard index < phases.count else {
+                if path.count > best.count { best = path }
+                return
+            }
+            let phase = phases[index]
+            guard !visited.contains(phase.id) else { return }
+            let seen = visited.union([phase.id])
+            func go(_ id: String, _ path: [String]) {
+                guard let next = phases.firstIndex(where: { $0.id == id }) else { return }
+                walk(next, seen, path)
+            }
+            if case .branch(_, let ifTrue, let ifFalse) = phase.action {
+                go(ifTrue, path)
+                go(ifFalse, path)
+                return
+            }
+            let here = path + [phase.id]
+            if let followup = phase.scheduledFollowup {
+                go(followup.nextPhaseId, here)
+                return
+            }
+            switch phase.after {
+            case .endRun?: walk(phases.count, seen, here)
+            case .continueAt(let id)?: go(id, here)
+            case nil: walk(index + 1, seen, here)
+            }
+        }
+        walk(0, [], [])
+        return best
     }
 }

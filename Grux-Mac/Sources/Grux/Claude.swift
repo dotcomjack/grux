@@ -129,11 +129,29 @@ actor ClaudeClient {
     private(set) var lastInputTokens: Int = 0
     private(set) var lastOutputTokens: Int = 0
 
-    init() {
-        let cfg = URLSessionConfiguration.default
-        cfg.timeoutIntervalForRequest = 60
-        cfg.timeoutIntervalForResource = 180
-        self.session = URLSession(configuration: cfg)
+    /// Where an Anthropic response is reported for the credit (P-R-3). Nil is
+    /// the app's `CreditMonitor.shared`; a test passes its own.
+    private let credits: CreditMonitor?
+
+    /// `session` and `credits` exist for tests; the app passes neither.
+    init(session: URLSession? = nil, credits: CreditMonitor? = nil) {
+        if let session {
+            self.session = session
+        } else {
+            let cfg = URLSessionConfiguration.default
+            cfg.timeoutIntervalForRequest = 60
+            cfg.timeoutIntervalForResource = 180
+            self.session = URLSession(configuration: cfg)
+        }
+        self.credits = credits
+    }
+
+    /// P-R-3: one answered call, read for what it says about the Anthropic
+    /// credit. A 2xx is a success on the key; anything else is marked out only
+    /// for the empty-balance response (`CreditSignature.anthropic`). A
+    /// transport failure never gets here: there is no response to read.
+    private func noteCredit(status: Int, body: Data) async {
+        await CreditMonitor.observe(.anthropic, status: status, body: body, on: credits)
     }
 
     func usageSnapshot() -> (input: Int, output: Int, cacheCreate: Int, cacheRead: Int) {
@@ -172,9 +190,11 @@ actor ClaudeClient {
             // Feed the breaker from the places this path can fail, so every
             // caller reports without any of them remembering to.
             ProviderHealth.shared.record(failureBody: errBody, statusCode: http.statusCode)
+            await noteCredit(status: http.statusCode, body: data)
             throw ClaudeError.http(http.statusCode, errBody)
         }
         ProviderHealth.shared.recordSuccess()
+        await noteCredit(status: http.statusCode, body: Data())
         let decoded = try JSONDecoder().decode(ClaudeResponse.self, from: data)
         self.lastInputTokens = decoded.usage?.input_tokens ?? 0
         self.lastOutputTokens = decoded.usage?.output_tokens ?? 0
@@ -226,8 +246,10 @@ actor ClaudeClient {
         guard (200..<300).contains(http.statusCode) else {
             let bodyStr = String(data: data, encoding: .utf8) ?? "<binary>"
             ProviderHealth.shared.record(failureBody: bodyStr, statusCode: http.statusCode)
+            await noteCredit(status: http.statusCode, body: data)
             throw ClaudeError.http(http.statusCode, bodyStr)
         }
+        await noteCredit(status: http.statusCode, body: Data())
         let decoded = try JSONDecoder().decode(ClaudeResponse.self, from: data)
         self.lastInputTokens = decoded.usage?.input_tokens ?? 0
         self.lastOutputTokens = decoded.usage?.output_tokens ?? 0
@@ -298,9 +320,11 @@ actor ClaudeClient {
             // Feed the breaker from the places this path can fail, so every
             // caller reports without any of them remembering to.
             ProviderHealth.shared.record(failureBody: errBody, statusCode: http.statusCode)
+            await noteCredit(status: http.statusCode, body: data)
             throw ClaudeError.http(http.statusCode, errBody)
         }
         ProviderHealth.shared.recordSuccess()
+        await noteCredit(status: http.statusCode, body: Data())
         guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let contentArr = obj["content"] as? [[String: Any]] else {
             throw ClaudeError.decoding("vision: bad top-level shape")
@@ -375,6 +399,7 @@ actor ClaudeClient {
                         var body = ""
                         for try await line in bytes.lines { body += line + "\n"; if body.count > 800 { break } }
                         ProviderHealth.shared.record(failureBody: body, statusCode: http.statusCode)
+                        await self.noteCredit(status: http.statusCode, body: Data(body.utf8))
                         throw ClaudeError.http(http.statusCode, body)
                     }
                     // CLOSES A LIVELOCK I INTRODUCED. Background calls are gated
@@ -384,6 +409,7 @@ actor ClaudeClient {
                     // topped up would have working chat and permanently dead
                     // background work until they happened to press Test Key.
                     ProviderHealth.shared.recordSuccess()
+                    await self.noteCredit(status: http.statusCode, body: Data())
 
                     // State for the SSE parser
                     var activeToolID: String?
@@ -506,9 +532,11 @@ actor ClaudeClient {
             // Feed the breaker from the places this path can fail, so every
             // caller reports without any of them remembering to.
             ProviderHealth.shared.record(failureBody: errBody, statusCode: http.statusCode)
+            await noteCredit(status: http.statusCode, body: data)
             throw ClaudeError.http(http.statusCode, errBody)
         }
         ProviderHealth.shared.recordSuccess()
+        await noteCredit(status: http.statusCode, body: Data())
         guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw ClaudeError.decoding("top-level not dict")
         }

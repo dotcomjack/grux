@@ -17,6 +17,8 @@ final class Speaker: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
     func speak(_ text: String) {
         let cleaned = Self.cleanForSpeech(text)
         guard !cleaned.isEmpty else { return }
+        // SpeechEngine is the only caller and already asked; this is the backstop.
+        guard AudioOutput.permit(.speech, source: "Speaker.speak", text: cleaned) else { return }
         synth.stopSpeaking(at: .immediate)
         let utt = AVSpeechUtterance(string: cleaned)
         // Prefer a premium/enhanced US voice if available for a more natural read.

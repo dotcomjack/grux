@@ -65,8 +65,8 @@ final class CredentialsOfferedTests: XCTestCase {
                 exists, that is a new contract amendment, not a restored row.
                 """)
         }
-        XCTAssertEqual(ids.count, 41,
-            "the contract should carry 41 capability ids after CR-34, found \(ids.count)")
+        XCTAssertEqual(ids.count, 40,
+            "the contract should carry 40 capability ids (the terminal hook step left, key.typesafe joined), found \(ids.count)")
     }
 
     /// The live ones must still be there. Without this the rule could regress to
@@ -74,7 +74,7 @@ final class CredentialsOfferedTests: XCTestCase {
     func testTheCredentialsThatAreActuallyUsedStayOffered() {
         let offered = Set(FeatureRegistry.credentialsToOffer)
         for req in [SetupRequirement.keyAnthropic, .keyElevenlabs, .keyReplicate, .keyBrave,
-                    .keyResend, .keySlack, .keyNotion, .keyTelegram, .keyGodaddy] {
+                    .keyResend, .keySlack, .keyNotion, .keyTelegram, .keyTypesafe] {
             XCTAssertTrue(offered.contains(req),
                 "\(req.rawValue) is read by shipping code but Settings no longer offers a field "
                 + "for it, so it cannot be configured through the UI at all")

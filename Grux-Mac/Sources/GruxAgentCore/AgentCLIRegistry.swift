@@ -3,8 +3,8 @@ import Foundation
 // MARK: - AgentCLIRegistry
 //
 // Discovers which agent CLIs are installed on this machine and caches the
-// result. Replaces the three duplicated resolveClaudeBinary()s scattered across
-// the app (SwarmWorker, AccountSwitcher, TerminalFocusState) with one
+// result. Replaces the duplicated resolveClaudeBinary()s scattered across
+// the app (SwarmWorker, AccountSwitcher) with one
 // Foundation-only detector that every target can share.
 //
 // Detection is DATA, never an instruction to run: probing a CLI runs ONLY its
@@ -242,8 +242,7 @@ public actor AgentCLIRegistry {
     // The single source of truth for the env-strip table that keeps a spawned
     // Claude CLI on the user's Claude.ai subscription (OAuth) instead of metered
     // API billing. Consolidates the identical list previously copy-pasted in
-    // SwarmWorker, AccountSwitcher, and TerminalFocusState. Those three
-    // resolvers can migrate to call this.
+    // SwarmWorker and AccountSwitcher. Those resolvers can migrate to call this.
     public static func oauthSafeEnvironment(base: [String: String] = ProcessInfo.processInfo.environment) -> [String: String] {
         var env = base
         let stripKeys: Set<String> = [

@@ -16,22 +16,38 @@ import XCTest
 final class MetaAdsStoreErrorChannelTests: XCTestCase {
 
     /// Runs body with the ads-engine defaults key forced to a value (nil
-    /// removes it), restoring whatever the machine had afterwards so the test
-    /// never leaks config into the rest of the suite or the developer's own
-    /// defaults domain.
+    /// means unconfigured), then puts this process's argument domain back.
+    ///
+    /// THE KEY LIVES IN THE ARGUMENT DOMAIN, NEVER THE PERSISTENT ONE. Every
+    /// xctest process on a Mac shares one persistent domain (the tool's
+    /// bundle id), so a second suite running from another checkout read the
+    /// port this test wrote and pulled from it: the coalesce test counted 3
+    /// requests for 2 (measured 2026-09-27, reproduced with a stand-in second
+    /// process). The argument domain is searched first and belongs to this
+    /// process alone. An empty string is the unconfigured case, and it also
+    /// masks any value another run left in the shared domain.
     private func withBases(_ value: String?, _ body: @MainActor () async -> Void) async {
-        let key = MetaAdsService.baseURLsDefaultsKey
-        let saved = UserDefaults.standard.string(forKey: key)
-        if let value {
-            UserDefaults.standard.set(value, forKey: key)
-        } else {
-            UserDefaults.standard.removeObject(forKey: key)
-        }
+        let args = UserDefaults.argumentDomain
+        let saved = UserDefaults.standard.volatileDomain(forName: args)
+        var forced = saved
+        forced[MetaAdsService.baseURLsDefaultsKey] = value ?? ""
+        UserDefaults.standard.setVolatileDomain(forced, forName: args)
         await body()
-        if let saved {
-            UserDefaults.standard.set(saved, forKey: key)
-        } else {
-            UserDefaults.standard.removeObject(forKey: key)
+        UserDefaults.standard.setVolatileDomain(saved, forName: args)
+    }
+
+    /// The fixture above never writes the domain other test processes read.
+    @MainActor
+    func testTheBaseOverrideStaysInThisProcess() async throws {
+        let key = MetaAdsService.baseURLsDefaultsKey
+        let domain = try XCTUnwrap(Bundle.main.bundleIdentifier)
+        await withBases("http://127.0.0.1:9") {
+            XCTAssertEqual(MetaAdsService.baseURLs, ["http://127.0.0.1:9"],
+                "the override did not reach the service, so no test here drives the port it names")
+            let shared = UserDefaults.standard.persistentDomain(forName: domain)?[key] as? String
+            XCTAssertNotEqual(shared, "http://127.0.0.1:9",
+                "the override was written to the persistent domain every xctest process on this "
+                + "Mac reads, so another suite pulls from this test's server")
         }
     }
 

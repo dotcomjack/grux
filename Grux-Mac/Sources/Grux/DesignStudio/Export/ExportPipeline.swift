@@ -460,11 +460,22 @@ final class WebKitRenderer: NSObject, HTMLRendering {
 
 // WKNavigationDelegate captured off the MainActor: WebKit calls back on the
 // main thread and we only touch the plain closure, so no isolation is needed.
-private final class LoadWaiter: NSObject, WKNavigationDelegate {
+final class LoadWaiter: NSObject, WKNavigationDelegate {
     var onFinish: ((Error?) -> Void)?
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         onFinish?(nil)
+    }
+
+    /// Why an export stops when WebKit's page process ends under it.
+    static let lostRendererReason = "the page renderer stopped before the export finished"
+
+    // Offscreen, so no person sees it blank: the line, and the export fails
+    // at once with a plain reason instead of waiting out its timeout.
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        WebContentRecovery.offscreenContentProcessEnded(surface: "Design Studio export")
+        onFinish?(NSError(domain: "Grux.Export", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: Self.lostRendererReason]))
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {

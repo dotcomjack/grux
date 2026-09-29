@@ -28,7 +28,7 @@ final class IssueConfirmController {
             backing: .buffered,
             defer: false
         )
-        panel.level = .floating
+        WindowFacade.setLevel(.floating, of: panel)
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
@@ -60,8 +60,8 @@ final class IssueConfirmController {
 
         self.panel = panel
         self.hostingController = hc
-        panel.makeKeyAndOrderFront(nil)
-        panel.orderFrontRegardless()
+        WindowFacade.makeKeyAndOrderFront(panel)
+        WindowFacade.orderFrontRegardless(panel)
     }
 
     private func dismissPanel() {

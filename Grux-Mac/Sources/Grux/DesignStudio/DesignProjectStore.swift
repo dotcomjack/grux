@@ -18,8 +18,11 @@ extension Persistence {
     /// folder in the person's Documents. Measured on a Mac that had never run Grux: it
     /// appeared on the first launch, empty, before the Design Studio tab had ever been
     /// opened. Same shape as the backups folder beside it and fixed the same way.
+    ///
+    /// Under test it hangs off the suite's own scratch folder (`isUnderTest`), so
+    /// hosting Design Studio in a test never reads or writes the person's designs.
     static var designDir: URL {
-        URL(fileURLWithPath: NSHomeDirectory())
+        (isUnderTest ? supportDir : URL(fileURLWithPath: NSHomeDirectory()))
             .appendingPathComponent("Documents", isDirectory: true)
             .appendingPathComponent("Grux", isDirectory: true)
             .appendingPathComponent("design", isDirectory: true)
@@ -88,7 +91,25 @@ final class DesignProjectStore: ObservableObject {
     // Set at integration time to the engine's run check. When it reports a
     // generation is active on a project, restore and delete no-op so a snapshot
     // swap or folder removal can never race the writes of a live run.
-    var isProjectRunning: ((UUID) -> Bool)?
+    //
+    // STATIC, AND THAT IS THE FIX RATHER THAN A STYLE. It was an instance
+    // property, so wiring it meant touching `.shared`, which built the store,
+    // which read this library out of `~/Documents` on the main thread during
+    // `applicationDidFinishLaunching`. On a Mac that has not granted Documents
+    // access that read waits for a permission answer, and the app had no window
+    // yet to show the prompt against. Measured 2026-09-22 on a wiped Mac: Grux
+    // launched, showed NO window and NO menu bar item, never armed its trigger
+    // watcher, and stayed that way. 100% of samples in
+    // `DesignProjectStore.init` -> `Persistence.load` -> `readDataFromFile`.
+    //
+    // A type-level seam is settable without building anything, so launch can
+    // wire the integration and the library is read the first time somebody
+    // opens Design Studio, which is when a prompt makes sense.
+    nonisolated(unsafe) static var isProjectRunning: ((UUID) -> Bool)?
+
+    /// Whether the shared store has been built. Only a test reads it, and it
+    /// is what stops launch quietly touching `~/Documents` again.
+    nonisolated(unsafe) private(set) static var wasInstantiated = false
 
     // Cached transcript character counts so the per-keystroke run estimate does
     // not re-read chat.json from disk each call. Kept warm by every transcript
@@ -96,6 +117,7 @@ final class DesignProjectStore: ObservableObject {
     private var transcriptCharCounts: [UUID: Int] = [:]
 
     private init() {
+        Self.wasInstantiated = true
         // The directory is NOT created here. This init runs when the view hierarchy is
         // built, which is at launch, not when somebody opens Design Studio. It is created
         // by the writes below, which is when there is genuinely something to put in it.
@@ -274,7 +296,7 @@ final class DesignProjectStore: ObservableObject {
             WakeLog.shared.log("designStore: delete ignored, writes are suspended for a restore")
             return
         }
-        if isProjectRunning?(id) == true {
+        if Self.isProjectRunning?(id) == true {
             WakeLog.shared.log("designStore: delete ignored, a generation is running on project \(id)")
             return
         }
@@ -402,7 +424,7 @@ final class DesignProjectStore: ObservableObject {
     @discardableResult
     func restore(id: UUID, versionId: UUID) -> Bool {
         guard !Persistence.writesSuspended else { return false }
-        if isProjectRunning?(id) == true {
+        if Self.isProjectRunning?(id) == true {
             WakeLog.shared.log("designStore: restore ignored, a generation is running on project \(id)")
             return false
         }

@@ -240,7 +240,7 @@ actor WhisperQueueClient {
     // for a long meeting and wouldn't finish inside a smoke window. The 10-min
     // acceptance path already proves the server handles long real audio.
     func runSmokeTest() async -> String {
-        let gruxDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".grux")
+        let gruxDir = Persistence.gruxDir
         let resultPath = gruxDir.appendingPathComponent("whisper-queue-test-result.txt")
 
         func writeResult(_ s: String) {

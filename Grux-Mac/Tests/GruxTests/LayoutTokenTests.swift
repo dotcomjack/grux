@@ -144,4 +144,32 @@ final class LayoutTokenTests: XCTestCase {
         XCTAssertLessThan(GruxLayout.navRail, GruxLayout.windowFloorWidth / 3,
                           "the fixed nav rail is now \(GruxLayout.navRail / GruxLayout.windowFloorWidth * 100)% of the window floor")
     }
+
+    // MARK: - Command Panel (3.0 reskin)
+
+    /// The panel is the resting form and a pane is the surface it opens, so
+    /// a pane narrower than the panel would be the smaller of the two columns
+    /// while holding the larger content.
+    func testThePanelIsNarrowerThanThePaneItOpens() {
+        XCTAssertLessThan(GruxLayout.panelWidth, GruxLayout.paneWidth,
+                          "the panel (\(GruxLayout.panelWidth)pt) must stay narrower than the pane it opens (\(GruxLayout.paneWidth)pt)")
+    }
+
+    /// With a pane open the window floor is the panel plus a readable detail,
+    /// so the pane's own width must clear that detail minimum or opening a
+    /// surface lands it below the floor it is measured against.
+    func testAPaneHoldsAReadableDetail() {
+        XCTAssertGreaterThanOrEqual(GruxLayout.paneWidth, GruxLayout.detailContentMin,
+                                    "a pane of \(GruxLayout.paneWidth)pt is narrower than a readable detail (\(GruxLayout.detailContentMin)pt)")
+    }
+
+    func testThePanelHeightFloorIsAtOrBelowItsIdeal() {
+        XCTAssertLessThanOrEqual(GruxLayout.panelMinHeight, GruxLayout.panelIdealHeight)
+    }
+
+    /// The pane bar is chrome across the top of a pane. If it ever reached
+    /// the panel's height floor there would be no room left for the surface.
+    func testThePaneBarIsShorterThanThePanelFloor() {
+        XCTAssertLessThan(GruxLayout.paneBarHeight, GruxLayout.panelMinHeight)
+    }
 }

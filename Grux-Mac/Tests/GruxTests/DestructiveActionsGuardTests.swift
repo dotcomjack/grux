@@ -45,7 +45,6 @@ final class DestructiveActionsGuardTests: XCTestCase {
         "Clear preset",     // deselects, the preset still exists
         "Clear active",     // deselects, the preset still exists
         "Reset to all",     // widens a filter back to everything
-        "Reset to ⌥⌘T",     // restores a default hotkey
         "Reset",            // appearance and slider resets, no stored data
         "Restore defaults", // capture exclusion list back to shipped defaults
         "Clear filters",

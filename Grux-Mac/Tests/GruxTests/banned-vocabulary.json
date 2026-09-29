@@ -31,27 +31,27 @@
     "com.gruxai.grux",
     "gruxai.com",
     "jack@dotcomjack.com",
-    "com.dcj.gruxphone",
     "github.com/dotcomjack/",
     "@dotcomjack/",
     "dotcomjack/tap/",
     "Copyright (c) 2026 DotcomJack",
     "\"author\": \"DotcomJack\"",
     "com.dcj.",
-    "bundleIdPrefix: com.dcj"
+    "bundleIdPrefix: com.gruxai",
+    "dotcomjack-grux-"
   ],
   "allowed_contexts_why": {
     "com.gruxai.grux": "The shipping bundle id. Changing it revokes every macOS TCC permission grant the app holds.",
     "gruxai.com": "The product domain. Product identity, not personal identity.",
     "jack@dotcomjack.com": "The sanctioned PUBLIC contact address.",
-    "com.dcj.gruxphone": "The iPhone companion's bundle id, deliberately not renamed when the Mac app moved. Changing it revokes every grant the paired app holds and orphans the pairing. A shipping identifier a stranger re-signs under their own team anyway.",
     "github.com/dotcomjack/": "The repository's own URL. Every clone command, issue template link and advisory link has to name the account the project is hosted under, and a guard that fails on the project's own address makes documentation impossible to write.",
     "@dotcomjack/": "The npm scope the launcher publishes under. npm rejects the bare name `grux` through its typosquatting filter, so the scope is not a preference and the install command a reader types is `npx @dotcomjack/grux`. Same class as the repository URL.",
     "Copyright (c) 2026 DotcomJack": "The licence attribution. DotcomJack is the sanctioned PUBLIC builder alias.",
     "\"author\": \"DotcomJack\"": "The npm package author field. Same public alias.",
-    "com.dcj.": "The sanctioned bundle id prefix for shipped apps. Product identity.",
-    "bundleIdPrefix: com.dcj": "The same prefix as declared in the iOS project file, where it has no trailing dot.",
-    "dotcomjack/tap/": "The Homebrew tap, `brew install --cask dotcomjack/tap/grux`. Same class as github.com/dotcomjack/ and @dotcomjack/: a published package-registry namespace, which is project identity a stranger has to type, not a personal detail. Homebrew derives the tap name from the GitHub org, so this string is not a choice that could have been made differently."
+    "com.dcj.": "The old bundle id prefix. It survives ONLY in KeychainServiceMigrator and its tests, whose whole job is to hold the names an install may still be storing credentials under, and in private mini-services that never ship. Nothing user-facing carries it: the Mac app moved to com.gruxai.grux in August and the phone followed on 2026-09-22.",
+    "dotcomjack/tap/": "The Homebrew tap, `brew install --cask dotcomjack/tap/grux`. Same class as github.com/dotcomjack/ and @dotcomjack/: a published package-registry namespace, which is project identity a stranger has to type, not a personal detail. Homebrew derives the tap name from the GitHub org, so this string is not a choice that could have been made differently.",
+    "bundleIdPrefix: com.gruxai": "The prefix declared in the iOS project file, where it has no trailing dot. `com.gruxai` since the phone was renamed on 2026-09-22.",
+    "dotcomjack-grux-": "The tarball `npm pack` writes for the PUBLIC package `@dotcomjack/grux`: npm derives the filename from the scope, so it is the same published identity as @dotcomjack/ and dotcomjack/tap/, not a private detail. Recorded with the trailing hyphen so it matches the version-prefixed filename and nothing else. Added 2026-09-22, when the 3.0.0 release evidence quoted the real artifact name and turned this guard red on main."
   },
   "banned_why": {
     "dcj": "Word boundary matched, so it catches `DCJ Command` without catching `com.gruxai.grux`.",

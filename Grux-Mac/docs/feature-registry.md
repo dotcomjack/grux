@@ -1,6 +1,6 @@
 # Feature registry
 
-Status: IMPLEMENTED. The 39 rows below are `FeatureRegistry` in `Sources/Grux`, and
+Status: IMPLEMENTED. The 37 rows below are `FeatureRegistry` in `Sources/Grux`, and
 `scripts/check-contract.py` fails the build when this document and that file disagree.
 
 This page used to open with a banner saying the repository was private and that nothing in
@@ -55,7 +55,11 @@ groups**, command 11, workspace 7, intelligence 6, ambient 3, system 9.
 > carries its own capability profile and its own ship decision; three do. Nothing is minted
 > that is not a real surface in the tree.
 
-That yields 39 rows: **33 that ship** (24 `core`, 9 `labs`) and **6 that are cut**. The cut
+When this section was written that yielded 38 rows: **32 that shipped** (24 `core`, 8 `labs`)
+and **6 that were cut**. The registry now holds 37 rows that ship, 25 `core` and 12 `labs`,
+which is the count section 5 and `check-contract.py` hold to the code. (39 and
+33 until 2026-09-21, when Grux 3.0's Phase C task C13 deleted the `labs` row `domains`, the
+Domain monitor, with its GoDaddy registrar key capability; see contract CR-37.) The cut
 rows are not in the registry tables in section 5, because contract section 6 defines `tier`
 as `core | labs` and a third value would be an invention. They are enumerated in section 6
 of this file instead, which keeps the decision recorded without widening the enum. Section
@@ -71,7 +75,7 @@ The three sub-surface rows, and why each earns one:
 
 ### 2.2 Id mapping, applied once so nobody guesses
 
-Contract section 6 requires `Feature.id` to be lowercase and dotted. Eight sidebar
+Contract section 6 requires `Feature.id` to be lowercase and dotted. Seven sidebar
 `applyTab` keys are camelCase and `SidebarModel.swift:9-11` forbids renaming them, because
 the `--open-tab` automation depends on the strings verbatim. So the sidebar key cannot be
 the id. **The rule applied throughout this file: lowercase the key, and every camelCase
@@ -85,7 +89,6 @@ each guessing:
 | `cognitionMap` | `cognition.map` |
 | `featureReview` | `feature.review` |
 | `designStudio` | `design.studio` |
-| `terminalFocus` | `terminal.focus` |
 | `selfUpgrade` | `self.upgrade` |
 | `metaAds` | `meta.ads` |
 
@@ -163,9 +166,9 @@ becomes a change request. Feature Review and Self-Upgrade are both in that categ
 
 | id | label | tier | requires | optional | steps (blocking) | optionalSteps (degrading) |
 |---|---|---|---|---|---|---|
-| `home` | Home | core | none | `perm.calendar`, `key.anthropic`, `key.elevenlabs` | none | none |
+| `home` | Today | core | none | `perm.calendar`, `key.anthropic`, `key.elevenlabs` | none | none |
 | `reactor` | Reactor | labs | none | `perm.microphone`, `perm.calendar`, `key.elevenlabs`, `endpoint.imap` | none | none |
-| `chat` | Chat | core | 1 of {`key.anthropic`, `endpoint.ollama`} | `key.slack`, `key.notion`, `key.resend`, `key.brave`, `perm.microphone`, `key.elevenlabs`, `perm.screen_recording`, `perm.accessibility`, `perm.automation`, `perm.calendar`, `perm.contacts`, `endpoint.imap`, `key.replicate`, `endpoint.media_service` | none | `step.agent_cli_installed`, `step.youtube_transcripts_enabled`, `step.terminal_sessions_explained` |
+| `chat` | Chat | core | 1 of {`key.anthropic`, `endpoint.ollama`} | `key.slack`, `key.notion`, `key.resend`, `key.brave`, `perm.microphone`, `key.elevenlabs`, `perm.screen_recording`, `perm.accessibility`, `perm.automation`, `perm.calendar`, `perm.contacts`, `endpoint.imap`, `key.replicate`, `endpoint.media_service`, `key.typesafe` | none | `step.agent_cli_installed`, `step.youtube_transcripts_enabled`, `step.terminal_sessions_explained` |
 | `jax.command` | Jax Command | labs | none | `key.anthropic`, `perm.full_disk_access` | `step.agent_cli_installed`, `step.corpus_sources_confirmed`, `step.terminal_sessions_explained` | none |
 | `approvals` | Approvals | core | none | none | none | none |
 | `cognition.map` | Cognition Map | core | none | `key.anthropic` | none | none |
@@ -392,7 +395,7 @@ private host, and `LocalLLM.swift:351` reports to the hardcoded analytics token.
 | `compare` | Compare | core | `key.anthropic`, `endpoint.ollama` | none | none | none |
 | `cookbook` | Local Models | core | none | `endpoint.ollama` | none | none |
 | `creative` | Media Studio | labs | `key.replicate` | `endpoint.media_service`, `endpoint.registry` | none | none |
-| `design.studio` | Design Studio | core | `key.anthropic` | `endpoint.ollama`, `endpoint.registry` | none | `step.agent_cli_installed`, `step.terminal_sessions_explained` |
+| `design.studio` | Design Studio | core | 1 of {`key.anthropic`, `endpoint.ollama`} | `endpoint.registry` | none | `step.agent_cli_installed`, `step.terminal_sessions_explained` |
 
 **Notes.**
 
@@ -514,15 +517,34 @@ can only ever be `ready` can still be wrong.
 | `workflows` | Workflows | labs | none | `perm.notifications` | none | `step.agent_cli_installed`, `step.terminal_sessions_explained` |
 | `social` | Social | labs | none | `key.telegram` | none | none |
 | `focus` | Focus log | core | `perm.screen_recording`, `key.anthropic` | `perm.accessibility`, `perm.notifications` | `step.first_frame_reviewed`, `step.capture_exclusions_confirmed` | none |
-| `terminal.focus` | Terminal Focus | labs | `perm.screen_recording` | `perm.automation` | `step.terminal_focus_hook_installed` | none |
 | `self.upgrade` | Self-Upgrade | labs | none | none | `step.agent_cli_installed`, `step.terminal_sessions_explained` | none |
 | `integrations` | Integrations | core | none | none | none | none |
 | `integrations.webhooks` | Outbound Webhooks | core | none | none | none | none |
 | `jax.hq` | Jax HQ | labs | `endpoint.imap` | `key.anthropic`, `key.resend` | none | none |
 | `meta.ads` | Meta Ads | labs | none | `key.anthropic`, `key.telegram` | none | none |
-| `domains` | Domain monitor | labs | `key.godaddy` | none | none | none |
 | `phone` | Phone companion | labs | none | `key.elevenlabs` | `step.phone_paired` | none |
 | `settings` | Settings | core | none | none | none | none |
+
+**Amended 2026-09-27. `terminal.focus` (Terminal Focus) is removed outright.** The
+floating overlay, its hotkey, the coding agent hook it installed, its Settings sub-pane
+and its sidebar key are gone, and its one setup step, installing the terminal hook, left
+the contract with it. Grux still reads Claude Code session logs, for the Workday log. The Sessions
+pane it shared Settings with stays: that is the session engine, a different feature.
+
+**Amended 2026-09-22, CR-38. `design.studio` requires one of the Anthropic key or a
+local model, exactly as `chat` does since CR-33.**
+
+The same defect, in the same shape, one row along. `design.studio` required
+`key.anthropic` outright with `endpoint.ollama` merely optional, while
+`DesignStudio/DesignStudioEngine.swift` resolves its route through
+`ModelRegistry.resolvedRouting`, which is the same seam `ChatService.send` uses: a local
+model or a custom endpoint serves a generation run perfectly well. So an install whose
+chat works showed a needs-setup dot on the Studio rail row and a card asking for a
+credential the feature never reads.
+
+Found by asking what the dot on that row was actually claiming, which is the operator's
+own small call. Same treatment as CR-33: both ids stay in the `requires` cell so the
+row-by-row comparison still sees them, and the `1 of` prefix carries how they combine.
 
 **Amended 2026-08-26, CR-33. `chat` requires one of the Anthropic key or a local
 model, not the key specifically.**
@@ -693,7 +715,7 @@ notice.
 
 **Its own table, not a ninth column.** Section 6 of the contract already decided to keep the
 section 5 table narrow, which is why an `anyOf` group is encoded inside the `requires` cell
-rather than widening all thirty nine rows. These are FEATURE ids rather than capability ids,
+rather than widening every row. These are FEATURE ids rather than capability ids,
 so they could not share a capability cell even if that were wanted.
 
 | feature | depends on | why |
@@ -1016,9 +1038,9 @@ a prose insertion. Moved below the table.
 ## 7.4 The four consent steps, and what they are not
 
 `step.recording_consent_acknowledged`, `step.speech_model_downloaded`,
-`step.corpus_sources_confirmed` and `step.terminal_focus_hook_installed` were added together
+`step.corpus_sources_confirmed` and the Terminal Focus hook step were added together
 because all four were filed as consent gaps, but they are not equally serious and the record
-should say so.
+should say so. The hook step left the contract on 2026-09-27 with the feature it gated.
 
 **The recording one is real, and narrower than it first looked. Corrected 2026-08-10 after
 checking intent rather than stopping at the mechanism.**
@@ -1087,6 +1109,64 @@ pointing at nothing. The same holds for `endpoint.microsoft_graph` if the headle
 goes with the support triage cut under 6.3. A capability outliving its feature is exactly the
 dead vocabulary the checker's orphan rule exists to catch, and it is cheaper to say so now than
 to rediscover it from a red build.
+
+## 7.6 How each row is reached in 3.0
+
+The Command Panel shows no surface rows. Every row below is reached through the
+palette (`Cmd+Shift+P`), and additionally through the doors named here. A fold with
+no key of its own is listed under its parent's key in the palette. The words, and
+nothing else, are:
+
+- **input**: the panel's text field opens it.
+- **now**: a Now row can open it: something that needs you, a running job or
+  workflow, the next event or task, a proposal to review, or a "Set up" suggestion.
+  Developer and Labs rows never suggest setup.
+- **recent**: once opened it sits among the Recent chips in the foot. Settings never
+  does, because the foot has its own gear.
+- **hub**: a door on the Optimize Grux card opens it.
+- **palette**: the command palette lists it, or its parent.
+- **window**: it opens a window of its own: Pair iPhone, and the Settings window
+  from the foot's gear.
+
+| id | reached through |
+|---|---|
+| home | recent, palette |
+| reactor | recent, palette |
+| chat | input, now, recent, palette |
+| jax.command | recent, palette |
+| approvals | now, palette |
+| cognition.map | recent, palette |
+| feature.review | recent, palette |
+| projects | recent, palette |
+| tasks | now, recent, palette |
+| agents | now, recent, palette |
+| mailbox | now, recent, palette |
+| mailbox.compose | now, palette |
+| calendar | now, recent, palette |
+| notes | recent, palette |
+| documents | recent, palette |
+| contacts | now, recent, palette |
+| schedules | recent, palette |
+| folders | recent, palette |
+| research | now, recent, palette |
+| skills | recent, palette |
+| compare | recent, palette |
+| cookbook | recent, palette |
+| creative | now, recent, palette |
+| design.studio | now, recent, palette |
+| meetings | now, recent, palette |
+| speakers | recent, palette |
+| commands | recent, palette |
+| social | recent, palette |
+| workflows | now, recent, palette |
+| focus | now, recent, palette |
+| self.upgrade | now, recent, hub, palette |
+| integrations | recent, palette |
+| integrations.webhooks | palette |
+| jax.hq | recent, palette |
+| meta.ads | recent, palette |
+| phone | palette, window |
+| settings | palette, window |
 
 ## 8. Contract change requests
 
@@ -1363,7 +1443,7 @@ Where the prior 161 feature audit disagreed with the code, the code won. Recorde
 disagreements are not rediscovered.
 
 **Units do not line up, and a count comparison is not a discrepancy.** The audit scored 161
-features. The sidebar has 36 tabs and this registry has 39 rows. The audit was scoring
+features. The sidebar had 36 tabs and this registry had 39 rows at the time. The audit was scoring
 components or capabilities, not tabs. Do not reconcile the two by count.
 
 **Cookbook cannot host blueprints. Verified false, independently of the contract's own note.**

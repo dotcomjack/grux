@@ -103,7 +103,9 @@ final class VoiceProcessingGuardTests: XCTestCase {
             \(offenders.count) call site(s) enable VoiceProcessingIO without consulting \
             `\(Self.requiredGuard)` within \(Self.lookbackLines) lines:
             \(offenders.map { "  \($0.file):\($0.line)" }.joined(separator: "\n"))
-            Enabling VPIO drops ALL system audio to a narrow-band call codec. Either read the \
+            Enabling VPIO stops ANOTHER APP'S MICROPHONE CAPTURE dead (measured 2026-09-23; \
+            it does NOT degrade playback, which an older version of this message claimed). \
+            Either read the \
             setting before this call, or add the file to `exempt` with the reason it is safe.
             """)
     }

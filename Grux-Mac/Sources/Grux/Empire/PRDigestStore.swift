@@ -103,8 +103,7 @@ final class PRDigestStore: ObservableObject {
 
     private var jsonURL: URL { Persistence.supportDir.appendingPathComponent("pr-digest.json") }
     private var mdURL: URL {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let dir = home.appendingPathComponent(".grux", isDirectory: true)
+        let dir = Persistence.gruxDir
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("pr-digest.md")
     }
@@ -285,8 +284,7 @@ enum PRDigestService {
     // already renders in place of the empty list. The PUSH path (PRInboxServer)
     // is independent and still works.
     static var baseURLs: [String] {
-        let url = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux")
+        let url = Persistence.gruxDir
             .appendingPathComponent("pr-digest-hosts.txt")
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
         return text

@@ -44,7 +44,7 @@ final class DailyRecapPanelController {
             backing: .buffered,
             defer: false
         )
-        p.level = .floating
+        WindowFacade.setLevel(.floating, of: p)
         p.isOpaque = false
         p.backgroundColor = .clear
         p.hasShadow = false
@@ -82,7 +82,7 @@ final class DailyRecapPanelController {
         self.panel = p
         self.hostingController = hc
 
-        p.orderFrontRegardless()
+        WindowFacade.orderFrontRegardless(p)
         // Snap to visible immediately, then fade up. Prevents the panel from
         // sitting invisible if the animation is pre-empted.
         p.alphaValue = 1.0

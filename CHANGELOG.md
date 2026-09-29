@@ -7,6 +7,219 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [3.0.0] - staged, not released
+
+The release where Grux decides quickly, says what it is doing, and opens on
+one Command Panel.
+
+Every small judgment Grux makes on your behalf (was that sentence meant for
+me, does this email need you, is this command dangerous, is now a bad moment to
+interrupt) used to be a keyword list, a hand-written rule, or a full language
+model call. In 3.0 they all go through one decision engine. With a TypeSafe key
+it asks Jev, a typed decision model, and gets a calibrated probability back in
+about 400 ms, except for a command you said outright, which it answers on this
+Mac in about 1 ms without asking anyone. Without a key it answers on this Mac
+for everything, exactly as before, and asks nobody anything. Either way the old rule stays underneath as the floor: the
+engine can hold something back or confirm it, and nothing destructive ever runs
+on its say alone.
+
+First run is one question, "What do you want to do with Grux?", and the flow
+after it is built from your answer: what Grux picked, shown before anything is
+asked, then your name, a model, how Grux works, and setup one thing at a time.
+Everything Grux does for you is on one page, Tuning, opened from the orb.
+
+### Added
+
+- **One decision engine for every gate**, recorded in a local ledger at
+  `~/Library/Application Support/Grux/decisions.jsonl` that never leaves your
+  Mac. Today shows how many decisions ran, how long they took and what they
+  cost; the orb shows the same on hover, and Settings has a Usage card.
+- **One Listening control**: Always on, After "Hey Grux", or Off. The orb, the
+  menu bar, the HUD and the sidebar foot all say the same word (ARMED, MUTED,
+  SPEAKING, THINKING, OFF), and NOT HEARING when the microphone is open but
+  sending no sound. Listening waits for your consent before it opens the
+  microphone, and a fresh install says OFF until then.
+- **The approvals tray** in the sidebar foot: what is waiting for you, one tap
+  from anywhere.
+- **Known out-of-credit.** When a provider says your balance is empty, Grux
+  tells you once and says which features stop, instead of failing quietly.
+- **Add a brand** from setup or Settings, which brings its Meta Ads and Social
+  rows with it.
+- **A switch for the Developer door** in Settings, General. Commands, Agents,
+  Local Models and Compare live behind it.
+- **Tuning**: one page for what Grux does for you. Seven cards, named for what
+  they do rather than for a subsystem, each opening to its own dials: how sure
+  it must be before acting, how it talks back, when it may interrupt, what it
+  does on its own, what it spends, what it remembers, and what always asks
+  first. Opened from the orb, from Today, from the command palette, from the
+  menu bar and from the top of Settings.
+- **Tell Grux what you want.** Say what you want changed, from a colour to a
+  whole new surface, and Grux writes a work order your own coding agent picks
+  up: it asks you at most three questions (each with a recommendation), then
+  analyses, designs, builds, tests, installs and verifies, stopping three times
+  for you to say yes. Nothing about Grux changes without your yes.
+- **Labs is a shelf.** The Labs door opens on eight cards with one line each,
+  so what is still being built says what it is for before you open it.
+- **A daily cap on decisions.** Past it Grux decides on this Mac until
+  midnight, for free. Off by default, in Tuning.
+- **A ceiling on what Grux may do by itself.** Self-upgrade never goes past
+  what you allow, whatever it has earned. New installs start at "proposes
+  only".
+- **Dry runs for workflows.** Start any workflow as a dry run, or every
+  workflow on this Mac while `~/.grux/DRY-RUN-WORKFLOWS` exists. A dry run
+  goes end to end, including the App Store workflows: it runs the steps that
+  only touch the run itself, records what every other step would have done,
+  skips its waits, and changes nothing outside Grux. No tool call, shell
+  command, agent, webhook, notification banner or phone push. Every line it
+  says starts with "Dry run".
+- **Headless and silent.** With `~/.grux/HEADLESS` present, Grux runs on a Mac
+  whose screen belongs to someone else: it shows no window, takes no focus,
+  and keeps its own record of its windows under `~/.grux/headless-workspace`.
+  With `~/.grux/SILENT` present, it makes no sound. Show earlier, Latest,
+  scrolling Chat, the pane width and opening a workflow run each have a file
+  trigger under `~/.grux` that writes what the screen now shows.
+
+### Changed
+
+- **The shell is a 420pt Command Panel**: one input, a Now list of what needs
+  you, Optimize Grux as a card with four doors (Tune it, Change it, Hand it
+  over, Let it improve itself), and any surface as one pane beside it. The
+  sidebar is gone as the default frame; `legacyShell` in config.json keeps
+  it for one release, switched by Classic sidebar in Settings, General, which
+  switches right away. New: the handoff bundle under ~/.grux/handoff, a local
+  opens.jsonl, and a design token ratchet in CI.
+- **Under the Classic sidebar, the sidebar is twelve surfaces, two doors and
+  Settings.** A new install shows fourteen rows. Nine surfaces folded into the
+  one they belonged to: Speakers into Meetings, Workflows into Schedules,
+  Outbound Webhooks into Integrations, Compose into Mail, Projects into Tasks,
+  Folders into Settings, Skills into Chat, Approvals into the tray, the Focus
+  log into Today. Every old tab key still opens the right place.
+- **Home is Today**, and it leads with what needs you: your next task, the
+  mail that needs you, what Grux is watching, and one line on the day's
+  decisions and their cost.
+- **Mail counts what needs you, not what is unread.** Measured on a real
+  inbox: 245 unread, 48 that need you.
+- **Labs is badged once**, at the Labs door, instead of a pill on every row.
+- **Vendor names sit one size smaller** behind a small "ai" mark that expands
+  on hover, and status codes, raw model ids and internal names are gone from
+  every screen you use day to day.
+- **Grux is quiet when idle.** Muted and idle it used 33.3% of a core; it now
+  uses 1.0%. Listening and idle, 38.2% down to 12.9%.
+- **Grux stops asking permission to do nothing.** 72 of its 116 tools had no
+  safety classification, so reading a list of files, checking an agent's
+  status or opening an app all queued up as "unclassified side effect" and
+  waited for you. A spoken "open Chrome" could return an answer about
+  something else entirely while the real request sat in the queue. Every tool
+  is now classified, and the 44 that actually change something, spend money or
+  record are the only ones that ask.
+- **Background listening never takes the microphone from another app.** Grux
+  used to switch on Apple's voice processing while it listened, and that stops
+  any other app that is RECORDING dead: a call, a screen capture, a browser
+  holding the mic. Measured with a second recorder running, it lost its audio
+  11 seconds in and never got it back; it now records for the full take with
+  nothing dropped. Grux does not need voice processing to listen, because it
+  closes the microphone whenever it speaks and so has no echo to cancel.
+- **Your music and video were never the problem, and we said they were.**
+  Earlier notes, the Settings copy and the consent dialog all said voice
+  processing drops system output to a narrow-band call codec and makes Music,
+  Safari and YouTube go tinny. That was never measured. It was measured on
+  2026-09-23 and it is false: a 12 kHz tone came back 73 dB above the noise
+  floor while voice processing ran, the output device stayed 48000 Hz 2ch
+  32bit, and an app that was only playing sound saw no disruption at all. The
+  claim is gone from every surface that carried it.
+- **Grux notices when it goes deaf.** It could previously lose its audio feed
+  mid-session and keep reporting itself as listening, with every indicator
+  saying it was fine. Found on a real machine after 1 hour 40 minutes of it.
+  Eight seconds with no audio now restarts the capture and says NOT HEARING.
+
+- **Only you answer a workflow's question.** A workflow waiting on you takes
+  its answer from a message you send in Chat after it asked, within 30
+  minutes, in one of the words it asked for. An older reply makes it ask
+  again, and an agent's message never answers it.
+- **Workflow run records read as sentences.** Each step is titled by its own
+  name and says what it did in plain words. What a tool, a command or an
+  agent printed sits under Details, which starts closed.
+- **Chat opens on your newest message and keeps your place.** A long thread
+  lays out its newest 16 messages, with Show earlier for the rest. Show
+  earlier and resizing the window keep the message you were reading at the
+  top, and Latest lands at the end.
+- **Web views recover.** The Design Studio preview, the Social dashboard and
+  the draft reply preview write a line to Grux's log and reload once when
+  their page process is lost, instead of staying blank. Design Studio says
+  "Loading the preview" until the first page has drawn.
+
+### Fixed
+
+- A long Chat thread could open on a blank transcript.
+- Latest could stop 33 points short of the newest message, with following
+  off and the Latest chip still up.
+- Resizing the window moved the message you were reading by about three
+  messages.
+- Design Studio's preview could stay blank for up to about 8 seconds on the
+  first open after launch, with nothing saying it was loading.
+- A workflow run that failed read "Workflow finished" in the status line.
+- A dry run sent real webhooks for every step, and its milestones could post
+  a real banner and phone push once the run had left the recent runs.
+
+### Removed
+
+- **The Domain monitor** and the registrar key it asked for.
+- **The tunnel manager**, which had been inert since 2026-08-12. Phone pairing
+  works on the same network, as it has since then.
+- **Terminal Focus.** The BETA floating overlay that showed context from
+  surrounding Claude Code sessions is gone, with its sidebar key, its Terminal
+  sub-pane in Settings, its global hotkey, its menu bar item, its two macro
+  actions and the coding agent hook it offered to install. A saved macro that
+  still carries one of those two actions keeps every other step. The workspace
+  Focus card and the Sessions pane stay. The first launch of this build
+  uninstalls the Claude Code hook it installed: only its own entry leaves your
+  Claude Code settings, and the script goes only if Grux wrote it.
+
+### Decision latency, per gate
+
+Measured with `scripts/decision-latency-table.py` over one install's ledger
+(before: every decision before 2026-09-21 2:33 PM UTC; after: every decision
+from 2:50 PM UTC to 9:31 PM UTC), or from the calibration runs where a gate has
+no live rows yet. p50 is the median.
+
+| Gate | Before | After, with a key | Source of the after figure |
+|---|---|---|---|
+| Voice: was that meant for Grux | Jev 441 ms, 4,460 input tokens (742 calls); on device 4 ms | Jev 387 ms, 2,200 input tokens (159 calls) | ledger |
+| Voice: a command you said outright | Jev, 368 ms median (p90 872 ms) over 603 decisions | **1 ms**, answered on this Mac, no network | ledger + live |
+| A spoken request that reaches Chat | two calls in a row, 728 to 912 ms | one call, 341 ms | ledger, 1 call |
+| Which app a spoken request means | keyword match on device, under 5 ms | 404 ms, on the same call as the voice judgment | ledger, 2 calls |
+| Mail that needs you | heuristic on device, under 5 ms | 364 ms, once per message | ledger, 56 calls |
+| Approvals risk | rules on device, under 5 ms | 447 ms | ledger, 1 call |
+| Project attribution | none (new) | 439 ms | ledger, 4 calls |
+| Jax gate | Jev 414 ms (17 calls); on device 0 ms | unchanged on the wire | ledger, before window |
+| Notification triage | rules on device | 412 ms | calibration, 14 calls |
+| Email classify | a text model call that also drafted | 392 ms, drafting stays on the text model | calibration, 10 calls |
+| Focus drift and a good moment to interrupt | cooldown rule on device | 365 ms, one call for both | calibration, 12 calls |
+| Shell destructive, second opinion | rule list on device | no live calls yet; the rule list still decides alone without a key | none |
+| First-run answer to features | none (new) | 358 ms; not wired until the first-run screens land | calibration, 24 calls |
+
+**Slower, said plainly:** every gate that used to be a keyword or a rule on
+this Mac now takes about 350 to 450 ms when a key is present, where it took
+under 5 ms. It is slower because it is now judging what was said rather than
+matching a word. With no key, every gate answers on device exactly as fast as
+before.
+
+**Three things got faster.** A spoken request into Chat went from two calls to
+one. The voice judgment's prompt halved. And a command you say outright no
+longer waits on the network at all: the engine used to send every decision to
+Jev whenever a key was present, so a command took a 368 ms median round trip to
+be told what the device already knew. It now answers on this Mac in about 1 ms
+when it is certain, and still asks Jev for anything it is not certain about, so
+a paraphrase is judged on meaning exactly as before.
+
+**End to end, a spoken command reaches execution in about 1.5 seconds**, down
+from 3.1. That is not the 600 ms we were aiming at, and the reason is worth
+stating rather than burying: transcription has a floor of about 750 ms on the
+model Grux uses, and the pause Grux waits out before it will act is another
+600 ms. Trimming the audio was measured and changed nothing. Reaching 600 ms
+needs recognition that runs while you are still speaking, which is a build, not
+a setting.
+
 ## [1.2.1] - 2026-08-29
 
 The release where a stranger's first launch is quiet.
@@ -21,6 +234,17 @@ Nothing in this release is a feature. Every entry is Grux doing less, or doing
 the same thing behind a switch you can find and that survives a restart.
 
 ### Fixed
+
+- **Grux no longer acts on a command it overhears in the room.** Without a
+  Decisions key, a command phrase found anywhere in a sentence counted as a
+  command, so "we should mute the group chat" muted the microphone and a
+  television line advertising "mute the ads" muted it too. A phrase now has to
+  cover at least half of what was said.
+- **Half-heard reversible commands are ignored rather than queued.** Grux used
+  to put an approval in front of you for a tab switch it half heard in room
+  talk. Said to Grux by name, or right after it spoke, it still asks.
+- **Design Studio no longer asks for an Anthropic key it never uses.** It
+  routes like chat does, so a local model or a hosted endpoint serves it.
 
 - **The permission screens notice a grant instead of waiting to be asked.** The
   Automation step could never be satisfied: it read a stored answer that nothing
@@ -677,7 +901,8 @@ listed because each was a promise the app made and did not keep.
   deliberately unwired. It is declared as unused rather than removed, because it
   is a half-built feature and not a false claim.
 
-[Unreleased]: https://github.com/dotcomjack/grux/compare/v1.2.1...HEAD
+[Unreleased]: https://github.com/dotcomjack/grux/compare/v3.0.0...HEAD
+[3.0.0]: https://github.com/dotcomjack/grux/compare/v1.2.1...v3.0.0
 [1.2.1]: https://github.com/dotcomjack/grux/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/dotcomjack/grux/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/dotcomjack/grux/compare/v1.0.4...v1.1.0

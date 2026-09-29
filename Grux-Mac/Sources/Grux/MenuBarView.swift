@@ -5,8 +5,9 @@ struct MenuBarView: View {
     @EnvironmentObject var state: AppState
     @ObservedObject private var wake = WakeWordListener.shared
     @ObservedObject private var speech = SpeechEngine.shared
+    /// Changes only when hearing starts or stops, never at audio rate.
+    @ObservedObject private var micHealth = MicHealth.shared
     @ObservedObject private var ambient = AmbientState.shared
-    @ObservedObject private var terminalFocus = TerminalFocusState.shared
     @ObservedObject private var meeting = MeetingCaptureService.shared
     @ObservedObject private var v2Engine = CommandV2Engine.shared
     @ObservedObject private var supportDrafts = SupportDraftStore.shared
@@ -19,16 +20,27 @@ struct MenuBarView: View {
     // Item 24: shell bus fills the idle gap with canonical moments
     // (focus verdicts, workflow runs, agent jobs).
     @ObservedObject private var shellBus = ShellStateBus.shared
+    @ObservedObject private var ledger = DecisionLedger.shared
+
+    private var usageToday: DecisionUsageSummary {
+        DecisionUsageSummary.today(ledger.recent)
+    }
+
+    /// Same resolver the sidebar orb, the HUD and the focus card use, so the
+    /// menu bar cannot report a different microphone state from the one two
+    /// inches away in the window.
+    private var listeningTell: ListeningTell {
+        ListeningTell.resolve(mode: state.config.listeningModeInEffect,
+                              micMuted: state.micMuted,
+                              isSpeaking: speech.isSpeaking || speech.isBuffering,
+                              isThinking: state.isThinking,
+                              notHearing: micHealth.notHearing)
+    }
 
     private var orbState: GruxOrbState {
-        // Muted wins - keeps the menu bar dropdown orb in sync with the
-        // sidebar orb and the ambient HUD orb (all read micMuted).
-        if state.micMuted { return .muted }
-        if speech.isSpeaking || speech.isBuffering { return .speaking }
-        if wake.isListening && state.isThinking { return .thinking }
-        if state.isThinking { return .thinking }
-        if wake.isListening { return .listening }
-        return shellBus.current.mode.orbState
+        if shellBus.current.mode == .alert { return ShellMode.alert.orbState }
+        if listeningTell == .off { return shellBus.current.mode.orbState }
+        return listeningTell.orbState
     }
 
     var body: some View {
@@ -155,6 +167,16 @@ struct MenuBarView: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                // The last thing Grux decided and how long it took. Renders
+                // nothing until there is a decision, so it adds no chrome to
+                // a fresh install.
+                if let decision = DecisionUsageSummary.lastLine(ledger.last) {
+                    Text(decision)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .help(usageToday.line)
+                }
             }
             Spacer()
             if ambient.isEnabled && !state.micMuted {
@@ -303,7 +325,9 @@ struct MenuBarView: View {
                 .frame(width: 36, height: 36)
             VStack(alignment: .leading, spacing: 1) {
                 Text("GRUX OS").font(.headline.weight(.heavy)).kerning(2)
-                OrbStatusPill(state: orbState).scaleEffect(0.85, anchor: .leading)
+                OrbStatusPill(state: orbState, label: listeningTell.label)
+                    .scaleEffect(0.85, anchor: .leading)
+                    .help(listeningTell.help)
             }
             Spacer()
             if state.isThinking {
@@ -319,25 +343,18 @@ struct MenuBarView: View {
             }.buttonStyle(.plain)
             Menu {
                 Button("Open Chat") { WindowOpener.openChat() }
+                // The same Optimize Grux panel the sidebar opens.
+                Button("\(TuningCopy.optimizeTitle)…") {
+                    AppDelegate.shared?.openLaunchWindow(tab: AppState.shared.requestedTab)
+                    OptimizeState.shared.isOpen = true
+                }
+                Button("Tuning…") { AppDelegate.shared?.openLaunchWindow(tab: "tuning") }
                 Button("Settings…") { WindowOpener.openSettings() }
                 Button("Focus Log") { showEvents.toggle() }
                 Divider()
                 Button(FocusOverlayState.shared.isVisible ? "Hide Focus Overlay" : "Show Focus Overlay") {
                     FocusOverlayController.shared.toggle()
                 }
-                Button(OrbAnywhereState.shared.isVisible ? "Hide Floating Orb" : "Show Floating Orb") {
-                    let next = !OrbAnywhereState.shared.isVisible
-                    state.config.orbAnywhereEnabled = next
-                    state.saveConfig()
-                    OrbAnywhereController.shared.toggle()
-                }
-                // Separate from the glass Focus Overlay - controls the Terminal
-                // Focus overlay's user-dismiss flag, which keybindings the × button
-                // and the "overlay on"/"overlay off" voice macros.
-                Button(terminalFocus.userHidden ? "Show Terminal Focus Overlay" : "Hide Terminal Focus Overlay") {
-                    terminalFocus.toggleOverlay()
-                }
-                .keyboardShortcut("o", modifiers: [.command, .shift])
                 Divider()
                 Button("Run Check Now") { FocusWatcher.shared.runOnceNow() }
                 Button("Run Daily Recap Now") {

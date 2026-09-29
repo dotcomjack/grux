@@ -255,8 +255,7 @@ final class CognitionTrace: ObservableObject {
     private let maxEvents = 500
 
     private let storeURL: URL = {
-        let dir = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux").appendingPathComponent("jax")
+        let dir = Persistence.gruxDir.appendingPathComponent("jax")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("cognition-log.json")
     }()

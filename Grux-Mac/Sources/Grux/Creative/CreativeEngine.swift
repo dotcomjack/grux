@@ -1111,8 +1111,7 @@ final class CreativeEngine: ObservableObject {
     }
 
     private func creativeDir(brand: CreativeBrand) -> URL {
-        let base = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux", isDirectory: true)
+        let base = Persistence.gruxDir
             .appendingPathComponent("creative", isDirectory: true)
             .appendingPathComponent(brand.rawValue, isDirectory: true)
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
@@ -1131,8 +1130,7 @@ final class CreativeEngine: ObservableObject {
     }
 
     private func loadInboxFromDisk() {
-        let base = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux", isDirectory: true)
+        let base = Persistence.gruxDir
             .appendingPathComponent("creative", isDirectory: true)
         guard let brandDirs = try? FileManager.default.contentsOfDirectory(at: base, includingPropertiesForKeys: nil) else { return }
         var all: [CreativeBundle] = []
@@ -1922,7 +1920,7 @@ final class CreativeEngine: ObservableObject {
             brand: .untagged,
             intent: .fullBundle
         )
-        let outPath = NSHomeDirectory() + "/.grux/voice-image-test-result.txt"
+        let outPath = Persistence.gruxDir.appendingPathComponent("voice-image-test-result.txt").path
         // Only treat inbox[0] as ours when run actually grew the inbox and
         // did not record an error. Otherwise a failed run would silently
         // report the previous bundle as PASS.
@@ -2124,12 +2122,14 @@ struct CreativeStudioView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 56) {
+                // A hero margin on a wide pane, the pane's own gutter on a
+                // narrow one, where 48pt a side ate a quarter of it.
                 composer
-                    .padding(.horizontal, 48)
-                    .padding(.top, 48)
+                    .adaptiveHorizontalPadding(2 * GruxSpacing.xl)
+                    .padding(.top, 2 * GruxSpacing.xl)
 
                 gallery
-                    .padding(.horizontal, 48)
+                    .adaptiveHorizontalPadding(2 * GruxSpacing.xl)
                     .padding(.bottom, 80)
             }
         }
@@ -2152,10 +2152,13 @@ struct CreativeStudioView: View {
     private var composer: some View {
         VStack(alignment: .leading, spacing: 28) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("MEDIA STUDIO")
-                    .font(.system(size: 10, weight: .heavy, design: .monospaced))
-                    .kerning(2.6)
-                    .foregroundStyle(GruxTheme.textTertiary)
+                HStack(spacing: 6) {
+                    Text("MEDIA STUDIO")
+                        .font(.system(size: 10, weight: .heavy, design: .monospaced))
+                        .kerning(2.6)
+                        .foregroundStyle(GruxTheme.textTertiary)
+                    LabsHeaderBadge(feature: "creative")
+                }
                 Text("What do you want to make?")
                     .font(.system(size: 36, weight: .heavy, design: .default).width(.condensed))
                     .foregroundStyle(GruxTheme.textPrimary)
@@ -2482,13 +2485,14 @@ struct CreativeStudioView: View {
             }
             knobField("Props (comma separated)", $cProps, "a ceramic mug, a eucalyptus sprig")
 
-            HStack(alignment: .bottom, spacing: 20) {
+            // Wraps to a second row rather than running past a narrow pane.
+            GruxFlow(spacing: GruxSpacing.l + GruxSpacing.xs, rowSpacing: GruxSpacing.m, alignment: .bottom) {
                 aspectControl
                 countControl
                 strictToggle
                 referenceControl
-                Spacer()
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -2697,7 +2701,8 @@ struct CreativeStudioView: View {
                     .font(.system(size: 10, weight: .heavy, design: .monospaced))
                     .kerning(2.6)
                     .foregroundStyle(GruxTheme.textTertiary)
-                Spacer()
+                    .fixedSize()
+                Spacer(minLength: GruxSpacing.s)
                 librarySearchField
             }
 
@@ -2726,7 +2731,7 @@ struct CreativeStudioView: View {
     }
 
     private var galleryFilterBar: some View {
-        HStack(spacing: 8) {
+        GruxFlow(spacing: GruxSpacing.s, rowSpacing: GruxSpacing.s) {
             ForEach(GalleryFilter.allCases) { filter in
                 let count = engine.inbox.filter { filter.matches($0) }.count
                 let isOn = galleryFilter == filter
@@ -3075,7 +3080,7 @@ private struct ClipPlayerView: View {
         }
         .onAppear {
             if player == nil {
-                player = AVPlayer(url: URL(fileURLWithPath: videoPath))
+                player = AudioOutput.videoPlayer(url: URL(fileURLWithPath: videoPath), source: "CreativeEngine.clip")
             }
         }
         .onDisappear {
@@ -3342,8 +3347,7 @@ private struct CreativeStudioDetailSheet: View {
     }
 
     private func revealJSON(_ b: CreativeBundle) {
-        let url = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux/creative/\(b.brand.slug)/\(b.id).json")
+        let url = Persistence.gruxDir.appendingPathComponent("creative/\(b.brand.slug)/\(b.id).json")
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 

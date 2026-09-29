@@ -161,7 +161,9 @@ final class OnboardingResetTests: XCTestCase {
 
             model.reset()
 
-            XCTAssertEqual(model.stage, .level, "reset must land on the first screen, not the next one")
+            // `.prompt` since P-F-1: the first screen is the question.
+            XCTAssertEqual(model.stage, .prompt, "reset must land on the first screen, not the next one")
+            XCTAssertEqual(model.path, .question, "reset must come back through the question, not the levels")
             XCTAssertNil(model.keyError,
                          "a stale rejection would greet the user beside a key they have since fixed")
             XCTAssertTrue(model.isPresenting,
@@ -181,9 +183,10 @@ final class OnboardingResetTests: XCTestCase {
             let onDisk = Persistence.load(OnboardingModel.State.self,
                                           from: Self.stateURL,
                                           fallback: OnboardingModel.State.initial)
-            // `.level` now, not `.modelKey`: the flow begins by asking how much
-            // of it the user wants.
-            XCTAssertEqual(onDisk.stage, .level, "reset never reached disk")
+            // `.prompt` since P-F-1: the flow begins with the question, and
+            // the levels are behind "I would rather pick from a list".
+            XCTAssertEqual(onDisk.stage, .prompt, "reset never reached disk")
+            XCTAssertEqual(onDisk.path, .question)
         }
     }
 
@@ -199,6 +202,49 @@ final class OnboardingResetTests: XCTestCase {
         // The section also has to survive the filter it just matched, or search
         // jumps to a pane where the row has been hidden.
         XCTAssertTrue(SettingsSearchRegistry.sectionVisible(anchor: "general.firstRun", query: "onboarding"))
+    }
+
+    // MARK: - Where first run lands (Task 10, R10.4)
+
+    /// The panel with no pane is the landing by construction, so finishing
+    /// moves no request: a surface asked for during the flow still opens
+    /// after it (R5.6). Optimize opens either way.
+    @MainActor
+    func test_finishingUnderThePanelLeavesTheRequestAndOpensOptimize() {
+        withLandingRestored {
+            AppState.shared.config.legacyShell = false
+            AppState.shared.requestedTab = "calendar"
+            OptimizeHubState.shared.isExpanded = false
+            OnboardingModel.shared.finish(skippedFirstLook: true)
+            XCTAssertEqual(AppState.shared.requestedTab, "calendar", "finishing moved a request the panel was holding")
+            XCTAssertTrue(OptimizeHubState.shared.isExpanded, "first run did not land with Optimize open")
+        }
+    }
+
+    /// The classic sidebar has no panel to rest on, so it lands on Chat.
+    @MainActor
+    func test_finishingUnderTheClassicSidebarLandsOnChat() {
+        withLandingRestored {
+            AppState.shared.config.legacyShell = true
+            AppState.shared.requestedTab = PanelKeys.none
+            OnboardingModel.shared.finish(skippedFirstLook: true)
+            XCTAssertEqual(AppState.shared.requestedTab, "chat", "the classic sidebar was not sent to Chat")
+        }
+    }
+
+    /// `finish` also moves the shell and the hub; put those back with the
+    /// onboarding state so no later class inherits them.
+    @MainActor
+    private func withLandingRestored(_ body: () -> Void) {
+        let savedLegacy = AppState.shared.config.legacyShell
+        let savedTab = AppState.shared.requestedTab
+        let savedExpanded = OptimizeHubState.shared.isExpanded
+        defer {
+            AppState.shared.config.legacyShell = savedLegacy
+            AppState.shared.requestedTab = savedTab
+            OptimizeHubState.shared.isExpanded = savedExpanded
+        }
+        withOnboardingStateRestored(body)
     }
 
     // MARK: - Singleton guard

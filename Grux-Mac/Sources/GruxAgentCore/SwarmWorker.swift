@@ -78,25 +78,10 @@ public actor SwarmWorker {
         self.observer = observer
     }
 
-    // Resolve `claude` CLI absolute path. Honors $CLAUDE_BIN > PATH > common locations.
+    // Resolve `claude` CLI absolute path: $CLAUDE_BIN, then ClaudeBinaryLocator's
+    // locations. Last resort, the bare name, so /usr/bin/env can still try PATH.
     public static func resolveClaudeBinary() -> String {
-        if let env = ProcessInfo.processInfo.environment["CLAUDE_BIN"], !env.isEmpty,
-           FileManager.default.isExecutableFile(atPath: env) {
-            return env
-        }
-        let home = NSHomeDirectory()
-        let candidates = [
-            "\(home)/.local/bin/claude",
-            "\(home)/.claude/local/claude",
-            "/opt/homebrew/bin/claude",
-            "/usr/local/bin/claude",
-            "/usr/bin/claude"
-        ]
-        for c in candidates where FileManager.default.isExecutableFile(atPath: c) {
-            return c
-        }
-        // Last resort - let env resolve it.
-        return "claude"
+        ClaudeBinaryLocator.locate() ?? "claude"
     }
 
     // Outcome of building the confinement profile. The caller (run) inspects
@@ -161,6 +146,32 @@ public actor SwarmWorker {
         return [(root as NSString).resolvingSymlinksInPath]
     }
 
+    // Silent mode (`~/.grux/SILENT`) for the agents' own tools. A Claude or ACP
+    // agent runs its Bash commands itself, so no Grux shell door sees its `say`
+    // or `afplay`; the sandbox is the only place to stop them. Grux points this
+    // at `AudioOutput.isSilent` at launch; the default reads the sentinel, so a
+    // worker spawned before that wiring is still silent.
+    nonisolated(unsafe) public static var isSilent: () -> Bool = {
+        FileManager.default.fileExists(atPath: NSHomeDirectory() + "/.grux/SILENT")
+    }
+
+    // What a silent profile denies. `com.apple.audio.audiohald` is the one that
+    // matters on current macOS: measured 2026-09-27, `say -a ?` lists no output
+    // device once it is denied (coreaudiod alone changed nothing). The rest cover
+    // system sounds, speech and older systems.
+    static let soundServices = [
+        "com.apple.audio.audiohald",
+        "com.apple.audio.coreaudiod",
+        "com.apple.audio.SystemSoundServer-OSX",
+        "com.apple.speech.speechsynthesisd",
+    ]
+    // Players an agent could start with an Apple event (`osascript -e 'tell
+    // application "Music" to play'`). They play in their own process, outside
+    // the sandbox, so the event itself is what has to be refused.
+    static let playerBundleIDs = [
+        "com.apple.Music", "com.apple.iTunes", "com.spotify.client", "com.apple.QuickTimePlayerX",
+    ]
+
     // Build an allow-default sandbox-exec (SBPL) profile that DENIES writes to
     // the live Grux code tree the running app is built from, when one is known
     // (see protectedBuildRoots). The worker's OWN assigned root (spec.cwd) and
@@ -179,7 +190,8 @@ public actor SwarmWorker {
     // the tests happens to hold.
     static func sandboxDecision(
         writableRoot: String,
-        protectedRoots: [String] = protectedBuildRoots()
+        protectedRoots: [String] = protectedBuildRoots(),
+        silent: Bool = isSilent()
     ) -> SandboxDecision {
         // Resolve symlinks so a carve-out under a denied root still matches
         // by canonical path. Falls back to the raw path if resolution fails.
@@ -252,6 +264,15 @@ public actor SwarmWorker {
             }
         }
 
+        // Silent mode: no audio service, and no Apple event to a player.
+        let silenceBlock = !silent ? "" : """
+
+        (deny mach-lookup
+        \(Self.soundServices.map { "    (global-name \(sbplLiteral($0)))" }.joined(separator: "\n")))
+        (deny appleevent-send
+        \(Self.playerBundleIDs.map { "    (appleevent-destination \(sbplLiteral($0)))" }.joined(separator: "\n")))
+        """
+
         // Allow block: always allow the temp dir. Add the project root only
         // when mayCarve. The deny block follows so protected roots always win.
         let carveLine = mayCarve ? "\n    (subpath \(sbplLiteral(canonicalRoot)))" : ""
@@ -259,7 +280,7 @@ public actor SwarmWorker {
         (version 1)
         (allow default)
         (allow file-write*\(carveLine)
-            (subpath \(sbplLiteral(tmpDir))))\(denyBlock)
+            (subpath \(sbplLiteral(tmpDir))))\(silenceBlock)\(denyBlock)
         """
         return SandboxDecision(
             profile: profile,
@@ -417,6 +438,8 @@ public actor SwarmWorker {
         ]
         for k in stripKeys { env.removeValue(forKey: k) }
         env["NODE_NO_WARNINGS"] = "1"
+        env["PATH"] = ClaudeBinaryLocator.spawnPATH(
+            for: claudePath, base: env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin")
         proc.environment = env
         proc.currentDirectoryURL = URL(fileURLWithPath: spec.cwd)
 
@@ -512,6 +535,7 @@ public actor SwarmWorker {
         var costUSD: Double = 0
         var finalText: String = ""
         var success = false
+        var sawFinalResult = false
         var ttlTerminated = false
 
         while proc.isRunning {
@@ -541,7 +565,7 @@ public actor SwarmWorker {
                     let processed = await handleEvent(ev)
                     if let cost = processed.costUSD { costUSD = max(costUSD, cost) }
                     if let final = processed.finalText { finalText = final }
-                    if processed.success != nil { success = processed.success ?? false }
+                    if processed.success != nil { success = processed.success ?? false; sawFinalResult = true }
                 }
             } else {
                 _ = String(data: chunk, encoding: .ascii) // best effort drop
@@ -559,7 +583,7 @@ public actor SwarmWorker {
                 let processed = await handleEvent(ev)
                 if let cost = processed.costUSD { costUSD = max(costUSD, cost) }
                 if let final = processed.finalText { finalText = final }
-                if processed.success != nil { success = processed.success ?? false }
+                if processed.success != nil { success = processed.success ?? false; sawFinalResult = true }
             }
         }
 
@@ -606,7 +630,10 @@ public actor SwarmWorker {
         // is_error/api_error_status/error="rate_limit" reveal what really
         // happened. Override "success" downward when the detector fires so
         // workerCompleted classifies us as .pausedForAuth, not .done.
-        var finalSuccess = (success || okExit) && !limitSignalDetected
+        // The result line is the CLI's own verdict; the exit code only
+        // decides a run that never produced one. `success || okExit` let
+        // an expired OAuth (is_error result, exit 1) finish as done.
+        var finalSuccess = (sawFinalResult ? success : okExit) && !limitSignalDetected
 
         // TTL-during-finalization rescue: if the watchdog killed claude
         // (typically SIGTERM → exit 143) but the worker had already produced
@@ -629,6 +656,11 @@ public actor SwarmWorker {
             }
         }
 
+        // An expired sign-in is read only from a result the CLI itself
+        // marked failed, so a worker's own text about some other login
+        // cannot raise it.
+        let signInExpired = !finalSuccess && !limitSignalDetected && !cancelled
+            && sawFinalResult && SignInExpiry.detect(finalText)
         let interruption: WorkerInterruption? = limitSignalDetected
             ? WorkerInterruption(
                 kind: .authLimitHit,
@@ -636,12 +668,16 @@ public actor SwarmWorker {
                 claudeAccountId: nil,
                 resumePromptCheckpoint: lastAssistantText
             )
-            : nil
+            : signInExpired ? WorkerInterruption(kind: .signInExpired) : nil
+        if signInExpired { SignInExpiry.report(true) } else if finalSuccess { SignInExpiry.report(false) }
         let errorMessage: String? = {
             if cancelled { return "cancelled" }
             if limitSignalDetected { return "paused: hit Anthropic monthly usage limit" }
             if ttlRescued { return nil }
-            return finalSuccess ? nil : "exit \(exitCode)"
+            if finalSuccess { return nil }
+            // Keep the CLI's own words ("Failed to authenticate: ...").
+            let said = finalText.trimmingCharacters(in: .whitespacesAndNewlines)
+            return sawFinalResult && !said.isEmpty ? said : "exit \(exitCode)"
         }()
         let result = SwarmWorkerResult(
             workerId: spec.id,

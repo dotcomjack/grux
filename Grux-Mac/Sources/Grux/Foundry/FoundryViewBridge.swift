@@ -97,7 +97,10 @@ enum FoundryViewBridge {
             score: p.expectedGain,
             readyPrompt: p.readyPrompt,
             createdAt: p.createdAt,
-            status: cardStatus(p.status)
+            status: cardStatus(p.status),
+            stage: FoundryProposalStage(rawValue: p.status.rawValue) ?? .proposed,
+            touchedPaths: p.touchedPaths,
+            updatedAt: p.updatedAt
         )
     }
 

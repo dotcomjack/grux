@@ -1034,13 +1034,21 @@ enum IOSDispatcherV2 {
         let stateExtracted = extractFirstMatch(in: r.stdout, regex: #"appStoreState[\s":=]+([A-Z_]+)"#)
             ?? extractFirstMatch(in: r.stdout, regex: #"^([A-Z_]{6,})$"#)
             ?? "UNKNOWN"
+        var updates: [String: JSONValue] = [
+            "asc_state": .string(stateExtracted),
+            "asc_last_checked_at": .string(ISO8601DateFormatter().string(from: Date())),
+            // Which app this answer is for, the way the App Store Connect
+            // sweep names it, so one answer is announced once (AppStoreAnswerLog).
+            "asc_bundle_id": .string(cfg.bundleId),
+            "asc_app_id": .string(cfg.ascAppId)
+        ]
+        if let version = extractFirstMatch(in: r.stdout, regex: #"versionString[\s":=]+([0-9][0-9A-Za-z.]*)"#) {
+            updates["asc_version"] = .string(version)
+        }
         return .init(
             text: "[check_asc_status exit \(r.status)] state=\(stateExtracted)\n\(r.truncated)",
             success: r.status == 0,
-            stateUpdates: [
-                "asc_state": .string(stateExtracted),
-                "asc_last_checked_at": .string(ISO8601DateFormatter().string(from: Date()))
-            ]
+            stateUpdates: updates
         )
     }
 
@@ -1619,8 +1627,7 @@ enum ProjectsResolver {
     // Add one alias line per spelling you want to say out loud. A missing or
     // malformed file means "no aliases", never an error.
     static var aliasesURL: URL {
-        URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux")
+        Persistence.gruxDir
             .appendingPathComponent("project-aliases.json")
     }
 

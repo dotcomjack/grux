@@ -237,8 +237,7 @@ final class MusicWatcher {
     // MARK: - NDJSON layout
 
     nonisolated static var musicDir: URL {
-        URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux", isDirectory: true)
+        Persistence.gruxDir
             .appendingPathComponent("ambient", isDirectory: true)
     }
 

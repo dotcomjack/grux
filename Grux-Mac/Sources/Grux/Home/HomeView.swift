@@ -1,11 +1,16 @@
 import SwiftUI
 
-// The Home tab. The most beautiful surface in the app and the default tab on
-// cold boot. A full-bleed aurora hero with the orb + greeting, then a tight
-// "Daily Launch" briefing card stack assembled READ-ONLY from the live
-// stores, a prominent time-aware primary action ("Start my day" in the
-// morning, "Wrap up the day" in the evening), and a row of secondary quick
-// actions.
+// The Home tab, which is Today (Phase D). Your name, then three cards (Next,
+// Mail that needs you, Watching), Start my day, one line inviting you to just
+// say it, then the briefing. What each card shows is decided in TodayModel,
+// where a test can drive it; this file only draws it. Chat stays the landing
+// tab: Today is where you go, not where you land.
+//
+// The old Agenda, Open commitments, Agents and Foundry cards are gone because
+// Next and Watching now carry them, and the quick-action row is gone because
+// every pill in it was another door to a surface the rail already opens (New
+// chat, Research, Upgrade yourself, Pair phone). No two elements with the same
+// job in one view.
 //
 // Every action routes through an EXISTING seam (AppState.requestedTab,
 // FoundryEngine, MorningBriefScheduler, DailyRecapScheduler, AgentService,
@@ -15,6 +20,8 @@ import SwiftUI
 struct HomeView: View {
     @EnvironmentObject var state: AppState
     @StateObject private var model = HomeBriefingModel()
+    /// Changes only when hearing starts or stops, never at audio rate.
+    @ObservedObject private var micHealth = MicHealth.shared
     @StateObject private var briefingEngine = BriefingEngine.shared
     @Environment(\.openWindow) private var openWindow
 
@@ -28,18 +35,20 @@ struct HomeView: View {
                 HomeHeroView(greeting: b.greeting, dateLine: b.dateLine)
 
                 VStack(spacing: GruxSpacing.l) {
-                    startMyDayButton
-                    quickActions
+                    todayCards
+
+                    VStack(spacing: GruxSpacing.s) {
+                        startMyDayButton
+                        sayItLine
+                        Button("Tune how Grux works") { AppState.shared.requestedTab = "tuning" }
+                            .buttonStyle(.borderless)
+                            .font(GruxType.caption)
+                    }
 
                     if briefingEngine.latest != nil {
                         jaxBriefingCard
                     }
-
-                    if b.hasAnySignal {
-                        briefingStack
-                    } else {
-                        allQuietCard
-                    }
+                    briefingStack
                 }
                 .padding(.horizontal, GruxSpacing.xl)
                 .padding(.bottom, GruxSpacing.xl)
@@ -110,27 +119,6 @@ struct HomeView: View {
         }
     }
 
-    // MARK: - Quick actions
-
-    private var quickActions: some View {
-        HStack(spacing: GruxSpacing.s) {
-            QuickActionPill(title: "New chat", icon: "plus.bubble") {
-                _ = state.newThread()
-                state.requestedTab = "chat"
-            }
-            QuickActionPill(title: "Deep research", icon: "magnifyingglass") {
-                state.requestedTab = "research"
-            }
-            QuickActionPill(title: "Upgrade yourself", icon: "wand.and.stars") {
-                _ = FoundryEngine.shared.triggerManualCycle()
-                state.requestedTab = "selfUpgrade"
-            }
-            QuickActionPill(title: "Pair phone", icon: "iphone") {
-                openWindow(id: "pair-iphone")
-            }
-        }
-    }
-
     // MARK: - Briefing card stack
 
     // Jax voice-first briefing: the latest morning / night briefing Jax spoke in
@@ -196,115 +184,12 @@ struct HomeView: View {
             if briefingEngine.latest == nil, let today = b.todayBriefPreview {
                 todayCard(today)
             }
-            if !b.agenda.isEmpty {
-                agendaCard
-            }
-            if !b.commitments.isEmpty {
-                commitmentsCard
-            }
-            HStack(spacing: GruxSpacing.m) {
-                if b.jobsRunning > 0 || b.jobsPaused > 0 {
-                    jobsCard
-                }
-                if b.proposalsCount > 0 {
-                    proposalsCard
-                }
-            }
             if let meeting = b.meeting {
                 meetingCard(meeting)
             }
             if briefingEngine.latest == nil, let recap = b.recapPreview {
                 recapCard(recap)
             }
-        }
-    }
-
-    private var agendaCard: some View {
-        BriefingCard(title: "Agenda", icon: "calendar", accent: GruxTheme.accentPrimary) {
-            VStack(spacing: GruxSpacing.s) {
-                ForEach(b.agenda) { item in
-                    HStack(spacing: GruxSpacing.m) {
-                        Text(item.timeLabel)
-                            .font(GruxType.caption.monospacedDigit())
-                            .foregroundStyle(item.isToday ? GruxTheme.accentPrimaryLight : GruxTheme.textTertiary)
-                            .frame(width: 92, alignment: .leading)
-                        Text(item.title)
-                            .font(GruxType.body)
-                            .foregroundStyle(GruxTheme.textPrimary)
-                            .lineLimit(1)
-                        Spacer(minLength: 0)
-                    }
-                }
-            }
-        } action: {
-            CardLink(label: "Open calendar") { state.requestedTab = "calendar" }
-        }
-    }
-
-    private var commitmentsCard: some View {
-        BriefingCard(title: "Open commitments", icon: "checklist", accent: GruxTheme.warnAmber) {
-            VStack(spacing: GruxSpacing.s) {
-                ForEach(b.commitments) { c in
-                    HStack(spacing: GruxSpacing.m) {
-                        Circle()
-                            .fill(GruxTheme.warnAmber.opacity(0.8))
-                            .frame(width: 6, height: 6)
-                        Text(c.title)
-                            .font(GruxType.body)
-                            .foregroundStyle(GruxTheme.textPrimary)
-                            .lineLimit(1)
-                        Spacer(minLength: 0)
-                        if let due = c.dueLabel {
-                            Text(due)
-                                .font(GruxType.caption)
-                                .foregroundStyle(GruxTheme.textTertiary)
-                        }
-                    }
-                }
-            }
-        } action: {
-            CardLink(label: "Open tasks") { state.requestedTab = "tasks" }
-        }
-    }
-
-    private var jobsCard: some View {
-        BriefingCard(title: "Agents", icon: "cpu", accent: GruxTheme.accentCo) {
-            VStack(alignment: .leading, spacing: GruxSpacing.xs) {
-                if b.jobsRunning > 0 {
-                    statRow(count: b.jobsRunning, noun: "job", verb: "active", color: GruxTheme.successMint)
-                }
-                if b.jobsPaused > 0 {
-                    statRow(count: b.jobsPaused, noun: "job", verb: "paused", color: GruxTheme.warnAmber)
-                }
-            }
-        } action: {
-            if let jobId = b.resumableJobId {
-                CardLink(label: "Resume") {
-                    state.pendingResumeJobId = jobId
-                    state.requestedTab = "agents"
-                }
-            } else {
-                CardLink(label: "Open agents") { state.requestedTab = "agents" }
-            }
-        }
-    }
-
-    private var proposalsCard: some View {
-        BriefingCard(title: "Foundry", icon: "wand.and.stars", accent: GruxTheme.accentPrimary) {
-            VStack(alignment: .leading, spacing: GruxSpacing.xs) {
-                statRow(count: b.proposalsCount, noun: "proposal", verb: "pending", color: GruxTheme.accentPrimaryLight)
-                if let top = b.topProposal {
-                    Text(top.title)
-                        .font(GruxType.caption)
-                        .foregroundStyle(GruxTheme.textSecondary)
-                        .lineLimit(2)
-                    Text(top.costLabel)
-                        .font(GruxType.microCaps)
-                        .foregroundStyle(GruxTheme.textTertiary)
-                }
-            }
-        } action: {
-            CardLink(label: "Review") { state.requestedTab = "selfUpgrade" }
         }
     }
 
@@ -355,59 +240,124 @@ struct HomeView: View {
         }
     }
 
-    /// The card stack's copy when nothing has any signal, static so it can be
-    /// asserted on.
-    ///
-    /// This is what a first run reads, because every source it folds is empty on
-    /// a machine that has not been used yet. It says nothing is WRONG and then
-    /// says where the first signal comes from, because "All quiet" on its own
-    /// over a screen with no cards is indistinguishable from a briefing that
-    /// failed to build.
-    static let allQuietCopy = (
-        headline: "All quiet",
-        detail: "No agenda, commitments, or live work right now. "
-            + "This fills in on its own as you use the app, and the button above starts it."
-    )
+// MARK: - Today
 
-    private var allQuietCard: some View {
-        VStack(spacing: GruxSpacing.s) {
-            Image(systemName: "sparkles")
-                .font(.system(size: 22, weight: .light))
-                .foregroundStyle(GruxTheme.accentPrimaryLight)
-            Text(Self.allQuietCopy.headline)
-                .font(GruxType.title)
-                .foregroundStyle(GruxTheme.textPrimary)
-            Text(Self.allQuietCopy.detail)
-                .font(GruxType.body)
-                .foregroundStyle(GruxTheme.textTertiary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 360)
-            // Surface the connect-calendar nudge here so a user with calendar
-            // permission denied actually sees it (agendaEmptyCopy was computed
-            // but never rendered before). In the all-quiet state the agenda is
-            // always empty, so this reads "Connect a calendar..." when
-            // unauthorized and "Nothing on the calendar..." when authorized.
-            Text(b.agendaEmptyCopy)
-                .font(GruxType.caption)
-                .foregroundStyle(GruxTheme.textTertiary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 360)
+    private var todayCards: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 250), spacing: GruxSpacing.m, alignment: .top)],
+                  alignment: .leading, spacing: GruxSpacing.m) {
+            nextCard
+            mailCard
+            watchingCard
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, GruxSpacing.xl)
     }
 
-    // MARK: - Shared bits
-
-    private func statRow(count: Int, noun: String, verb: String, color: Color) -> some View {
-        HStack(spacing: GruxSpacing.s) {
-            Text("\(count)")
-                .font(.system(size: 20, weight: .heavy, design: .rounded))
-                .foregroundStyle(color)
-            Text("\(noun)\(count == 1 ? "" : "s") \(verb)")
-                .font(GruxType.body)
-                .foregroundStyle(GruxTheme.textSecondary)
+    private var nextCard: some View {
+        BriefingCard(title: "Next", icon: "arrow.right.circle", accent: GruxTheme.accentPrimary) {
+            if let next = model.today.next {
+                VStack(alignment: .leading, spacing: GruxSpacing.xs) {
+                    Text(next.title)
+                        .font(GruxType.title)
+                        .foregroundStyle(GruxTheme.textPrimary)
+                        .lineLimit(2)
+                    if !next.when.isEmpty {
+                        Text(next.when)
+                            .font(GruxType.caption)
+                            .foregroundStyle(GruxTheme.accentPrimaryLight)
+                    }
+                    ForEach(next.then, id: \.self) { line in
+                        Text("Then: \(line)")
+                            .font(GruxType.caption)
+                            .foregroundStyle(GruxTheme.textTertiary)
+                            .lineLimit(1)
+                    }
+                }
+            } else {
+                emptyLine(TodayModel.Copy.nextEmpty)
+            }
+        } action: {
+            CardLink(label: model.today.next?.kind == .event ? "Open calendar" : "Open tasks") {
+                state.requestedTab = model.today.next?.tab ?? "tasks"
+            }
         }
+    }
+
+    private var mailCard: some View {
+        BriefingCard(title: "Mail that needs you", icon: "envelope.badge", accent: GruxTheme.warnAmber) {
+            if !model.today.mail.isEmpty {
+                VStack(alignment: .leading, spacing: GruxSpacing.s) {
+                    ForEach(model.today.mail) { m in
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(m.subject)
+                                .font(GruxType.body)
+                                .foregroundStyle(GruxTheme.textPrimary)
+                                .lineLimit(1)
+                            Text(m.from)
+                                .font(GruxType.caption)
+                                .foregroundStyle(GruxTheme.textTertiary)
+                                .lineLimit(1)
+                        }
+                    }
+                    if model.today.mailTotal > model.today.mail.count {
+                        Text("and \(model.today.mailTotal - model.today.mail.count) more")
+                            .font(GruxType.caption)
+                            .foregroundStyle(GruxTheme.textTertiary)
+                    }
+                }
+            } else {
+                emptyLine(model.today.hasMailAccount ? TodayModel.Copy.mailEmpty : TodayModel.Copy.mailNoAccount)
+            }
+        } action: {
+            CardLink(label: "Open mail") { state.requestedTab = "mailbox" }
+        }
+    }
+
+    private var watchingCard: some View {
+        BriefingCard(title: "Watching", icon: "eye", accent: GruxTheme.accentCo) {
+            if !model.today.watching.isEmpty {
+                VStack(alignment: .leading, spacing: GruxSpacing.s) {
+                    ForEach(model.today.watching) { item in
+                        Button { state.requestedTab = item.tab } label: {
+                            HStack(spacing: GruxSpacing.s) {
+                                Image(systemName: item.icon)
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(GruxTheme.accentCo)
+                                    .frame(width: 14)
+                                Text(item.line)
+                                    .font(GruxType.body)
+                                    .foregroundStyle(GruxTheme.textSecondary)
+                                    .lineLimit(2)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            } else {
+                emptyLine(TodayModel.Copy.watchingEmpty)
+            }
+        } action: {
+            EmptyView()
+        }
+    }
+
+    /// The say-it line, from the one shared microphone tell. Speaking and
+    /// thinking are left out on purpose: they are moments, and observing the
+    /// speech engine here would redraw Today at audio rate while Grux talks.
+    private var sayItLine: some View {
+        Text(TodayModel.sayItLine(ListeningTell.resolve(mode: state.config.listeningModeInEffect,
+                                                        micMuted: state.micMuted,
+                                                        isSpeaking: false, isThinking: false,
+                                                        notHearing: micHealth.notHearing)))
+            .font(GruxType.caption)
+            .foregroundStyle(GruxTheme.textTertiary)
+            .frame(maxWidth: .infinity)
+            .multilineTextAlignment(.center)
+    }
+
+    private func emptyLine(_ text: String) -> some View {
+        Text(text)
+            .font(GruxType.body)
+            .foregroundStyle(GruxTheme.textTertiary)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 
@@ -465,41 +415,3 @@ private struct CardLink: View {
     }
 }
 
-// Secondary quick-action pill. Tight per the app's button scale (no chunky
-// controls): icon + label, transparent fill, subtle hover.
-private struct QuickActionPill: View {
-    let title: String
-    let icon: String
-    let action: () -> Void
-
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 5) {
-                Image(systemName: icon)
-                    .font(.system(size: 11, weight: .semibold))
-                Text(title)
-                    .font(.system(size: 12, weight: .medium))
-                    // One line, allowed to shrink slightly before truncating, so
-                    // a button label never wraps mid-word. Kept on its own
-                    // merits: it was TESTED as the suspected cause of Home
-                    // overflowing its pane at the window floor and measured NOT
-                    // to be (the nav rail stayed at 217pt of its 240 either
-                    // way), so do not read this as the fix for that.
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
-            }
-            .foregroundStyle(hovering ? GruxTheme.textPrimary : GruxTheme.textSecondary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .frame(maxWidth: .infinity)
-            .background(
-                Capsule().fill(Color.white.opacity(hovering ? 0.10 : 0.05))
-            )
-            .overlay(Capsule().stroke(Color.white.opacity(0.10), lineWidth: 0.8))
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-    }
-}

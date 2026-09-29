@@ -112,6 +112,38 @@ final class AgentService: ObservableObject {
 
     // MARK: - Public API
 
+    /// The job a swarm request becomes, before anything is saved or run. Pure,
+    /// so the clamp can be asserted without starting a swarm: the test that
+    /// used to call `startSwarm` for this left 284 failed "concurrency clamp
+    /// probe" jobs in the operator's real store and, on every run of the suite,
+    /// wrote an UNPROCESSED FAILED SWARM message into the live inject-chat
+    /// file, which the running app then read out loud (measured 2026-09-20).
+    nonisolated static func plannedJob(
+        title: String? = nil,
+        goal: String,
+        template: SwarmTemplate = .singleWorker,
+        rootDir: String,
+        budgetUSD: Double = 5.0,
+        maxParallelWorkers: Int = 3
+    ) -> AgentJob {
+        // THE ONE CHOKE POINT. Every caller reaches a swarm through here:
+        // RDWorker asks for 1, GoalPursuitEngine for 3, CommandV2AgentBridge for
+        // up to 4, and AgentTools for whatever the model put in max_parallel,
+        // which was unbounded. Clamping at each call site would be four places
+        // to forget, and the one that was forgotten is the one the model drives.
+        let effectiveWorkers = SessionConcurrency.clamp(maxParallelWorkers)
+        // Materialize the worker DAG.
+        let workers = SwarmPlanFactory.expand(template: template, goal: goal, rootDir: rootDir)
+        return AgentJob(
+            title: title ?? "swarm: \(template.rawValue)",
+            goal: goal,
+            budgetUSD: budgetUSD,
+            maxParallelWorkers: effectiveWorkers,
+            workers: workers,
+            rootDir: rootDir
+        )
+    }
+
     func startSwarm(
         title: String? = nil,
         goal: String,
@@ -120,23 +152,8 @@ final class AgentService: ObservableObject {
         budgetUSD: Double = 5.0,
         maxParallelWorkers: Int = 3
     ) async -> AgentJob {
-        // THE ONE CHOKE POINT. Every caller reaches a swarm through here:
-        // RDWorker asks for 1, GoalPursuitEngine for 3, CommandV2AgentBridge for
-        // up to 4, and AgentTools for whatever the model put in max_parallel,
-        // which was unbounded. Clamping at each call site would be four places
-        // to forget, and the one that was forgotten is the one the model drives.
-        let effectiveWorkers = SessionConcurrency.clamp(maxParallelWorkers)
-
-        // Materialize the worker DAG.
-        let workers = SwarmPlanFactory.expand(template: template, goal: goal, rootDir: rootDir)
-        let job = AgentJob(
-            title: title ?? "swarm: \(template.rawValue)",
-            goal: goal,
-            budgetUSD: budgetUSD,
-            maxParallelWorkers: effectiveWorkers,
-            workers: workers,
-            rootDir: rootDir
-        )
+        let job = Self.plannedJob(title: title, goal: goal, template: template, rootDir: rootDir,
+                                  budgetUSD: budgetUSD, maxParallelWorkers: maxParallelWorkers)
         try? await store.saveJob(job)
         await refreshJobs()
 
@@ -461,7 +478,12 @@ final class AgentService: ObservableObject {
         // Chat-completion nudge (empire-dash): on a terminal transition, inject
         // a chat message so the assistant re-engages with the deliverable
         // instead of going silent.
-        if previousStatus != job.status, job.isTerminal {
+        // Only a job that was seen NOT terminal in this process and is
+        // terminal now. A job loaded from disk already failed has no previous
+        // status here, and treating that as a transition re-injected the same
+        // 'UNPROCESSED FAILED SWARM' message into chat on every launch, five
+        // launches running, as the first thing the person read.
+        if let previousStatus, previousStatus != job.status, !previousStatus.isTerminal, job.isTerminal {
             notifyChatOfJobCompletion(job)
         }
     }
@@ -533,8 +555,7 @@ final class AgentService: ObservableObject {
         default:
             return
         }
-        let injectFile = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux")
+        let injectFile = Persistence.gruxDir
             .appendingPathComponent("inject-chat.txt")
         do {
             try injection.write(to: injectFile, atomically: true, encoding: .utf8)

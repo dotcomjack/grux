@@ -60,7 +60,7 @@ struct ReactorView: View {
             // Altitude tier: shrink the instrument on a narrow window so the
             // radial assembly never collides with the edges.
             let compact = geo.size.width < 900
-            let orbSize: CGFloat = compact ? 150 : 190
+            let orbSize: CGFloat = compact ? GruxLayout.reactorCompactOrb : 190
             let innerR: CGFloat = compact ? 110 : 132
             let spacingR: CGFloat = compact ? 22 : 26
             // Resolve the 6-store snapshot ONCE per body pass and reuse it for
@@ -75,7 +75,7 @@ struct ReactorView: View {
                 ringLabels(m, innerR: innerR, spacing: spacingR)
                 core(size: orbSize, reduceMotion: rm)
                 panelColumns
-                    .padding(.horizontal, 18)
+                    .padding(.horizontal, GruxLayout.reactorInset)
                     .padding(.top, 56)
                     .padding(.bottom, 124)   // clear the voice dock
             }
@@ -216,7 +216,7 @@ struct ReactorView: View {
                 }
         }
         .contentShape(Circle())
-        .onTapGesture { MicController.toggle() }
+        .onTapGesture { MicController.toggle(source: "reactor") }
         .gruxHoverable(lift: 1.04, rimOnHover: 0, fillOnHover: 0)
         .help(state.micMuted ? "Mic muted, tap to resume" : "Tap the core to mute")
     }

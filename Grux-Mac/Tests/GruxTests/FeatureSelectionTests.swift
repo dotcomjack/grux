@@ -119,7 +119,7 @@ final class FeatureSelectionTests: XCTestCase {
     /// still be enumerable, or "turn it back on" has no starting point.
     func testEveryFeatureStaysEnumerableWhileOff() {
         FeatureSelection.choose([])
-        XCTAssertEqual(FeatureRegistry.rows.count, 39,
+        XCTAssertEqual(FeatureRegistry.rows.count, 37,  // 38 until Terminal Focus left, 2026-09-27
                        "the registry stopped listing every feature once they were all off")
         for row in FeatureRegistry.rows {
             XCTAssertFalse(row.label.isEmpty, "\(row.id) has no label to show in a list")

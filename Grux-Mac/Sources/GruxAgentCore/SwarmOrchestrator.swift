@@ -189,6 +189,8 @@ public actor SwarmOrchestrator: SwarmWorkerObserver {
         } else {
             job.workers[idx].status = .failed
             job.workers[idx].errorMessage = result.errorMessage ?? "unknown failure"
+            // Why it failed, when a worker knows (an expired sign-in).
+            job.workers[idx].interruption = result.interruption
         }
         let total = job.workers.map(\.spentUSD).reduce(0, +)
         job.spentUSD = total

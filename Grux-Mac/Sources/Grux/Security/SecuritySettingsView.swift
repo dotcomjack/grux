@@ -16,11 +16,17 @@ struct SecuritySettingsView: View {
     @State private var newDenyHost = ""
     @State private var recentFlags: [SecurityAuditEntry] = []
 
-    private static let timeFormatter: DateFormatter = {
+    private static let dayFormatter: DateFormatter = {
         let f = DateFormatter()
-        f.dateFormat = "MMM d HH:mm"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "MMM d"
         return f
     }()
+
+    /// `Sep 21, 1:48 PM`, never `Sep 21 13:48`: the time goes through the one clock.
+    static func stamp(_ d: Date) -> String {
+        "\(dayFormatter.string(from: d)), \(TodayModel.clock(d))"
+    }
 
     var body: some View {
         Form {
@@ -135,7 +141,7 @@ struct SecuritySettingsView: View {
             } else {
                 ForEach(recentFlags) { entry in
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(Self.timeFormatter.string(from: entry.ts))
+                        Text(Self.stamp(entry.ts))
                             .font(.caption.monospacedDigit())
                             .foregroundStyle(.secondary)
                         Text(entry.verdict.uppercased())

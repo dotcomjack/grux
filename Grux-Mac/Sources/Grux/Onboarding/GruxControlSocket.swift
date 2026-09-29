@@ -34,7 +34,7 @@ final class GruxControlSocket {
 
     /// Beside `setup-status.json` and the file triggers. One machine-interface directory.
     nonisolated static var socketPath: String {
-        NSHomeDirectory() + "/.grux/mcp.sock"
+        Persistence.gruxDir.appendingPathComponent("mcp.sock").path
     }
 
     /// Owner read and write. Nothing else, ever.
@@ -791,7 +791,7 @@ enum GruxControlTools {
         // forward first is not politeness, it is the only way the grant lands on the right
         // bundle, and it is also why the person sees Grux's name on the dialog rather than
         // their shell's.
-        NSApp.activate(ignoringOtherApps: true)
+        WindowFacade.activateGrux()
 
         // Fire and answer immediately, because a permission dialog is a person deciding and
         // this call must not hold a socket open across it. The status file is rewritten by

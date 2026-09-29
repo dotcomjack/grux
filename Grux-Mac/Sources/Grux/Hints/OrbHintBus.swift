@@ -4,7 +4,7 @@ import SwiftUI
 // Broadcaster for tool-call-driven Orb status hints. Claude can call the
 // `grux_orb_hint` tool to push a transient status label (e.g. "indexing docs",
 // "waiting for confirmation") and optionally an orb state override.
-// OrbAnywhereView, the AmbientHUD header pill, and the menu-bar orb can all
+// The AmbientHUD header pill and the menu-bar orb can both
 // subscribe. Single active hint at a time (new pushes replace the old).
 //
 // Safety notes: the `message` string is clamped to 40 chars and treated as

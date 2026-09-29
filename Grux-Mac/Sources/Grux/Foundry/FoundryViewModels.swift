@@ -28,6 +28,14 @@ struct FoundryProposalCardModel: Identifiable, Codable, Equatable {
     var readyPrompt: String     // context-packed prompt, copied on Accept
     var createdAt: Date
     var status: FoundryProposalCardStatus
+    // The engine status by name. `status` folds building, verifying and landed
+    // into accepted for ranking, which is right for the sort and wrong for the
+    // card: it is how an accepted card read ACCEPTED with no next step while a
+    // build ran, stalled, or shipped. The card decides its direction from this.
+    var stage: FoundryProposalStage
+    // Paths the engine expects the change to touch; the handoff names them.
+    var touchedPaths: [String]
+    var updatedAt: Date
 
     init(
         id: String = UUID().uuidString,
@@ -42,7 +50,10 @@ struct FoundryProposalCardModel: Identifiable, Codable, Equatable {
         score: Double = 0,
         readyPrompt: String = "",
         createdAt: Date = Date(),
-        status: FoundryProposalCardStatus = .pending
+        status: FoundryProposalCardStatus = .pending,
+        stage: FoundryProposalStage? = nil,
+        touchedPaths: [String] = [],
+        updatedAt: Date? = nil
     ) {
         self.id = id
         self.title = title
@@ -57,6 +68,17 @@ struct FoundryProposalCardModel: Identifiable, Codable, Equatable {
         self.readyPrompt = readyPrompt
         self.createdAt = createdAt
         self.status = status
+        // Callers that only know the coarse status (tests, older glue) get the
+        // stage that status implies, so nothing reads as building by accident.
+        self.stage = stage ?? {
+            switch status {
+            case .pending: return .proposed
+            case .accepted: return .accepted
+            case .rejected: return .rejected
+            }
+        }()
+        self.touchedPaths = touchedPaths
+        self.updatedAt = updatedAt ?? createdAt
     }
 }
 

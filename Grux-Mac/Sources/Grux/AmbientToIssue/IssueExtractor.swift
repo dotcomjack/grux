@@ -472,10 +472,9 @@ final class IssueExtractor {
     // The lesson is in DashSanitizer already: express the banned characters as
     // \u{2014} and \u{2013} escapes, never as literals, so a future dash sweep
     // cannot silently disarm the code that enforces the rule.
-    // nonisolated because it is pure string work with no actor state, matching
-    // CloneExtractor.stripDashes. Without it the function is only reachable
-    // synchronously from the main actor, which is precisely why it went
-    // untested for as long as it did.
+    // nonisolated because it is pure string work with no actor state. Without
+    // it the function is only reachable synchronously from the main actor,
+    // which is precisely why it went untested for as long as it did.
     nonisolated static func scrubDashes(_ s: String) -> String {
         DashSanitizer.stripDashesOnly(s)
     }

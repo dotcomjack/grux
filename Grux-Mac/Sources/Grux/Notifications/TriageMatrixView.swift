@@ -17,8 +17,8 @@ struct TriageMatrixSection: View {
             // between the grid and the quiet-hours row rather than a hairline
             // inside one. Grouped rows already separate themselves.
             quietHoursRow
-            Toggle("Classify unknown notifications with Haiku", isOn: $store.llmEscalationEnabled)
-            Text("Unknown free-text notifications batch by default; Haiku files them into a category in the background and caches the answer. $0.01 estimated per day, usually less.")
+            Toggle("Judge notifications on what they say", isOn: $store.llmEscalationEnabled)
+            Text("With a decision key, each new free-text notification is read once and sent to interrupt, batch or silent on what it says, in place of its row above. Failures the rules catch still interrupt, and quiet hours still hold. Without a key, unknown ones batch and Haiku files them into a category in the background. $0.01 estimated per day, usually less.")
                 .font(GruxType.caption)
                 .foregroundStyle(.secondary)
             if let last = store.recentLog.first {

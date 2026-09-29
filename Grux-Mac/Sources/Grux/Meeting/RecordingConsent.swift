@@ -87,7 +87,7 @@ enum RecordingConsent {
         alert.buttons.last?.keyEquivalent = "\u{1b}"
         // The app can be in the background when the assistant calls the tool, and an alert
         // behind another window is an alert nobody answers.
-        NSApp.activate(ignoringOtherApps: true)
+        WindowFacade.activateGrux()
         return alert.runModal() == .alertFirstButtonReturn
     }
 

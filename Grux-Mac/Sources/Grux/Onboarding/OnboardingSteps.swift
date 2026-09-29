@@ -132,8 +132,11 @@ struct HowItWorksStep: View {
                 // permissions waiting.
                 point("You can hand the rest to your agent",
                       "The setup left over is mostly mechanical, and Grux will write a prompt describing exactly what this Mac still needs. Copy it from Settings, paste it into whatever coding agent you already use, and it does the parts it can. It never asks it for a credential or a permission, because it cannot get either.")
+                // REWRITTEN FOR 3.0 (P-F-1). It said two voice features ship
+                // off; 3.0 has one Listening control, and the microphone opens
+                // only once the person turns it on and macOS has asked.
                 point("What is off until you say so",
-                      "Two voice features ship switched off, so Grux is not listening until you turn one on. The wake word answers to \"\(WakeWordListener.spokenPhrase)\", which is the app's name and does not change when you rename the assistant. Ambient mode transcribes continuously on this Mac and takes the same microphone, so it replaces the wake word while it runs. Both are in Settings.")
+                      "Listening is off until you turn it on, and macOS asks for the microphone only when you do. You choose Always on, which is Ambient mode: Grux hears you all the time on this Mac and decides, in under a second, whether you were talking to it. Or you choose after the wake word, \"\(WakeWordListener.spokenPhrase)\", which is the app's name and does not change when you rename the assistant. Nothing you say is kept unless you ask Grux to remember it, and audio never leaves this Mac. Change it any time in Tuning, under Acts on what I say.")
                 point("Screen control is off too",
                       "Screen control lets Grux click, type and scroll for you through the macOS Accessibility API, so it can finish a task hands-free once it can see the screen. It ships off and stays off until you turn it on in Settings and grant Accessibility. With it off, Grux never moves your pointer or keyboard.")
                 // NAMED AT FIRST RUN, per the house rule, and this is the one
@@ -144,16 +147,39 @@ struct HowItWorksStep: View {
                 // never predicts an account consequence we cannot substantiate.
                 point("Grux can run a terminal for you",
                       "Parts of Grux work by opening a headless terminal session on this Mac and driving the agent CLI you already have installed, so it can finish long jobs without you sitting there. It uses whatever that CLI is already signed in to, so on a subscription the work comes out of that plan, and Grux strips API key variables out of the session so it cannot quietly bill an API account instead. Running several sessions at once is what pushes a plan into its rate limits, so Grux caps how many it starts for you, and Settings is where you raise or lower that cap.")
+                ForEach(Self.wayfinding, id: \.title) { point($0.title, $0.body) }
                 point("How to stop it",
                       "Every autonomous loop has an off switch in Settings, and the menu bar icon quits the app outright. Nothing continues after you quit.")
             }
-
-            HStack {
-                Spacer()
-                Button("Got it") { model.advance(from: .howItWorks) }
-                    .keyboardShortcut(.defaultAction)
-            }
         }
+        // PINNED. This screen needs about 1100pt to lay out, so its only exit
+        // was always the furthest thing from the reader.
+        .onboardingPrimary("Got it", stage: .howItWorks) { model.advance(from: .howItWorks) }
+    }
+
+    struct Wayfinding: Hashable { let title: String; let body: String }
+
+    /// P-F-1, Task F4: where things live, named once during the flow, because
+    /// "named at first run" is the part of the discoverability lock that rots
+    /// silently. Tuning joined when it existed (P-E-2); the Decisions key is
+    /// named here and offered again in setup's extras, as decided.
+    @MainActor
+    static var wayfinding: [Wayfinding] {
+        [
+            Wayfinding(title: OptimizeCopy.title,
+                       body: "The card in the panel. Four doors: tune how Grux behaves, say what you want changed and Grux writes a work order your own coding agent builds, hand your setup to that agent as a bundle, or let Grux propose its own upgrades."),
+            Wayfinding(title: "Now",
+                       body: "The short list under the input. Only things with an action: an approval, mail that needs you, a job running, the next thing on your day, something left to set up. Empty means nothing needs you."),
+            Wayfinding(title: "The command palette",
+                       body: "Press \(PaletteHotkeyConfig.spokenShortcut) anywhere: every surface, the microphone and your workflows, a few letters away. Anything you open earns a spot in Recent at the foot of the panel."),
+            Wayfinding(title: TuningCopy.title,
+                       body: "How sure Grux must be before it acts, how often it may interrupt you, what it may spend and what it remembers, on one page. The first door under Optimize Grux, or right click the orb."),
+            Wayfinding(title: HowItWorksCopy.decisionsKeyTitle, body: HowItWorksCopy.decisionsKeyBody),
+            // R10.2: the only first-run statement of how to turn this door on.
+            Wayfinding(title: "The Developer door",
+                       body: DoorsCopy.developer.body + " The switch is in Settings, under General."),
+            Wayfinding(title: "The Labs door", body: DoorsCopy.labs.body + " Reach it from the palette."),
+        ]
     }
 
     private var autonomy: some View {
@@ -167,7 +193,7 @@ struct HowItWorksStep: View {
             tier("TIER 1", "Builds", "Grux writes the change and runs the tests, then waits for you to look at it.", current: false)
             tier("TIER 2", "Lands", "Grux merges its own work once the tests pass, without asking each time.", current: false)
 
-            Text("You are starting at TIER 0. It stays there until you move it in Settings.")
+            Text("You are starting at TIER 0. It stays there until you raise it in Tuning.")
                 .font(GruxTheme.Font.caption)
                 .foregroundStyle(GruxTheme.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -361,13 +387,17 @@ struct PermissionsStep: View {
     /// the key it read had no writer at all.
     private func recheck() async {
         guard let req = current, !busy else { return }
-        if req == .permNotifications {
-            _ = await CapabilityRequest.refreshedNotificationAuthorization()
-        }
-        if req == .permAutomation {
-            CapabilityResolver.refreshAutomationObservation()
-        }
-        guard CapabilityResolver.isSatisfied(req) else { return }
+        let move = await PermissionsRecheck.shouldAdvance(req, refresh: { req in
+            if req == .permNotifications {
+                _ = await CapabilityRequest.refreshedNotificationAuthorization()
+            }
+            if req == .permAutomation {
+                // Off the main actor: this runs from a 2 s poll, and the probe blocks while
+                // the screen is locked.
+                await CapabilityResolver.refreshAutomationObservationInBackground()
+            }
+        }, isSatisfied: CapabilityResolver.isSatisfied, current: { current })
+        guard move else { return }
         // Granted, whether they came back to tell us or not. Clear any skip recorded
         // earlier, exactly as the Allow path does, so the ledger does not keep
         // re-offering something they have now given.
@@ -430,6 +460,26 @@ struct PermissionsStep: View {
     }
 }
 
+/// The permissions step's re-check decision, apart from the view, so the probe can be
+/// stubbed.
+@MainActor
+enum PermissionsRecheck {
+    /// Refresh, then advance only if the requirement is granted AND still the card showing.
+    ///
+    /// The probe is awaited, and the person can press Skip while it is out. Deciding from
+    /// the card that was showing when the probe started cleared that card's skip and called
+    /// `next()` a second time, passing the card after it unseen. Read `current` afterwards,
+    /// as the setup step does.
+    static func shouldAdvance(_ requirement: SetupRequirement,
+                              refresh: (SetupRequirement) async -> Void,
+                              isSatisfied: (SetupRequirement) -> Bool,
+                              current: () -> SetupRequirement?) async -> Bool {
+        await refresh(requirement)
+        guard current() == requirement else { return false }
+        return isSatisfied(requirement)
+    }
+}
+
 // MARK: - Connections, inbox last
 
 /// Level 3. The accounts, with the inbox deliberately at the end.
@@ -461,6 +511,9 @@ struct ConnectionsStep: View {
             ForEach(connections, id: \.rawValue) { req in
                 row(req)
             }
+
+            // C12: the door to the brand-scoped rows, named before they exist.
+            AddBrandRow()
 
             HStack {
                 Spacer()
@@ -647,21 +700,16 @@ struct UpdateStep: View {
                 ModelUpdateSummary(report: report)
             }
 
-            HStack {
-                Spacer()
-                // NEVER disabled, and it was for one revision. Gating the only
-                // exit on an async refresh means a stalled localhost probe can
-                // strand somebody on the last screen of onboarding with no way
-                // out, and this flow's own rule is that every screen can be
-                // left. The report is information, not a gate: the worst case
-                // for pressing this early is that Grux starts without having
-                // told you which local models fit, which the Local Models tab
-                // will say whenever you ask it.
-                Button("Start Grux") { model.advance(from: .update) }
-                    .keyboardShortcut(.defaultAction)
-            }
         }
         .task { await refresh() }
+        // NEVER disabled, and it was for one revision. Gating the only exit on
+        // an async refresh means a stalled localhost probe can strand somebody
+        // on the last screen of onboarding with no way out, and this flow's own
+        // rule is that every screen can be left. The report is information, not
+        // a gate: the worst case for pressing this early is that Grux starts
+        // without having told you which local models fit, which the Local
+        // Models tab will say whenever you ask it.
+        .onboardingPrimary("Start Grux", stage: .update) { model.advance(from: .update) }
     }
 
     /// Refreshes availability before reporting it, which is the "update" half of
@@ -744,9 +792,9 @@ struct ModelUpdateSummary: View {
 ///
 /// This is the step that makes the assistant sound like the person using it
 /// rather than like a product. It indexes what they have ALREADY written, which
-/// is the only thing that works on a first launch: the other clone path in this
-/// codebase mines Grux's own transcripts and correctly returns nothing on day
-/// one, because on day one there are none.
+/// is the only thing that works on a first launch: a clone mined from Grux's own
+/// transcripts would have nothing to read on day one, because on day one there
+/// are none.
 ///
 /// Three rules this screen keeps, and each one was a way to get it wrong:
 ///
@@ -970,4 +1018,12 @@ struct WelcomeBackStep: View {
             }
         }
     }
+}
+
+/// Copy for How Grux works that another surface or a test also reads.
+enum HowItWorksCopy {
+    static let decisionsKeyTitle = "The Decisions key"
+    static let decisionsKeyBody = "Grux decides what you meant on this Mac, for free. A Decisions key (Jev, from TypeSafe) "
+        + "makes those calls faster and surer: a busy day of 265 decisions measured $0.02. Add one in Integrations, "
+        + "or in the extras at the end of setup."
 }

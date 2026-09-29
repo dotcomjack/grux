@@ -331,11 +331,10 @@ enum HomeBriefingBuilder {
 
     // MARK: Shared formatters
 
+    /// One clock for Home: delegates to Today's, so the card stack and the
+    /// Today cards can never format a time two ways.
     static func clockLabel(_ date: Date, calendar: Calendar = .current) -> String {
-        let f = DateFormatter()
-        f.dateFormat = "h:mm a"
-        f.timeZone = calendar.timeZone
-        return f.string(from: date)
+        TodayModel.clock(date, calendar: calendar)
     }
 
     static func weekdayLabel(_ date: Date, calendar: Calendar = .current) -> String {
@@ -365,6 +364,17 @@ enum HomeBriefingBuilder {
 final class HomeBriefingModel: ObservableObject {
 
     @Published private(set) var briefing: HomeBriefing
+
+    /// Today's three cards (Phase D), built in the same refresh from the same
+    /// snapshot, so the cards and the briefing never disagree.
+    struct TodaySnapshot: Equatable {
+        var next: TodayModel.Next?
+        var mail: [TodayModel.MailSummary] = []
+        var mailTotal = 0
+        var hasMailAccount = false
+        var watching: [TodayModel.WatchItem] = []
+    }
+    @Published private(set) var today = TodaySnapshot()
 
     // Test seam for the clock; the live model uses the wall clock.
     var now: () -> Date = { Date() }
@@ -406,6 +416,19 @@ final class HomeBriefingModel: ObservableObject {
             .sink { [weak self] _ in self?.refresh(includeAgenda: false) }
             .store(in: &cancellables)
         AgentService.shared.$jobs
+            .sink { [weak self] _ in self?.refresh(includeAgenda: false) }
+            .store(in: &cancellables)
+        // Today's cards read mail, approvals and the task stack too.
+        MailStore.shared.$messages
+            .sink { [weak self] _ in self?.refresh(includeAgenda: false) }
+            .store(in: &cancellables)
+        ApprovalQueue.shared.$items
+            .sink { [weak self] _ in self?.refresh(includeAgenda: false) }
+            .store(in: &cancellables)
+        AppState.shared.$tasks
+            .sink { [weak self] _ in self?.refresh(includeAgenda: false) }
+            .store(in: &cancellables)
+        AppState.shared.$lastVerdict
             .sink { [weak self] _ in self?.refresh(includeAgenda: false) }
             .store(in: &cancellables)
 
@@ -486,6 +509,37 @@ final class HomeBriefingModel: ObservableObject {
             latestMorningBrief: morningBrief
         )
         briefing = HomeBriefingBuilder.build(input)
+        today = Self.buildToday(now: nowDate, agenda: agenda, commitments: commitments, jobs: jobs,
+                                proposals: proposals.count)
+    }
+
+    /// Next: the task in focus, then Now, then Next tasks (later ones are not
+    /// next), and commitments with their due times, against the agenda.
+    private static func buildToday(now: Date, agenda: [CalendarService.EventSummary],
+                                   commitments: [HomeBriefingInput.CommitmentLine],
+                                   jobs: [AgentJob], proposals: Int) -> TodaySnapshot {
+        let app = AppState.shared
+        let focused = app.currentTask
+        let open = app.activeTasks.filter { $0.parentId == nil && $0.priority != .later }
+        let ordered = (focused.map { [$0] } ?? [])
+            + open.filter { $0.id != focused?.id && $0.priority == .now }
+            + open.filter { $0.id != focused?.id && $0.priority == .next }
+        var lines = ordered.map { TodayModel.TaskLine(id: $0.id, title: $0.title, dueAt: nil) }
+        lines += commitments.map { TodayModel.TaskLine(id: $0.id, title: $0.title, dueAt: $0.dueAt) }
+
+        let mail = TodayModel.mailThatNeedsYou(MailStore.shared.messages)
+        let paused = jobs.filter { $0.status == .waiting || $0.status == .paused }.count
+        let watch = TodayModel.WatchInput(
+            focusTask: focused?.title,
+            drifting: app.lastVerdict == .drifting || app.lastVerdict == .offTask,
+            jobsRunning: jobs.count - paused,
+            jobsWaitingOnYou: paused,
+            proposals: proposals,
+            focusChecksToday: app.events.filter { Calendar.current.isDate($0.timestamp, inSameDayAs: now) }.count)
+        return TodaySnapshot(next: TodayModel.next(tasks: lines, events: agenda, now: now),
+                             mail: mail.items, mailTotal: mail.total,
+                             hasMailAccount: !EmailAccountStore.shared.accounts.isEmpty,
+                             watching: TodayModel.watching(watch))
     }
 
     private var lastAgenda: [CalendarService.EventSummary] = []

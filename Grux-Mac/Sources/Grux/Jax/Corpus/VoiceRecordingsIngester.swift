@@ -30,8 +30,7 @@ actor VoiceRecordingsIngester: CorpusIngester {
     private let audioExtensions: Set<String> = ["m4a", "wav", "mp3", "caf", "aiff", "aac"]
 
     static var voiceDir: URL {
-        URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux")
+        Persistence.gruxDir
             .appendingPathComponent("jax")
             .appendingPathComponent("voice")
     }
@@ -90,7 +89,7 @@ actor VoiceRecordingsIngester: CorpusIngester {
             }
 
             do {
-                let results = try await kit.transcribe(audioArray: samples, decodeOptions: options)
+                let results = try await WhisperDecode.transcribe(kit, samples, options: options)
                 let text = results.map { $0.text }.joined(separator: " ")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 let cleaned = Self.stripSpecials(text)
@@ -126,11 +125,12 @@ actor VoiceRecordingsIngester: CorpusIngester {
         do {
             let config = WhisperKitConfig(
                 model: modelName,
+                downloadBase: WhisperModelStore.downloadBase,
                 modelRepo: modelRepo,
                 verbose: false,
                 prewarm: false,
                 load: true,
-                download: true
+                download: WhisperModelStore.mayDownload
             )
             let loaded = try await WhisperKit(config)
             self.kit = loaded

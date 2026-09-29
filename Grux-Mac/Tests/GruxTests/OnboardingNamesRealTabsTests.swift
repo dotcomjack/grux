@@ -28,7 +28,8 @@ final class OnboardingNamesRealTabsTests: XCTestCase {
 
         let launchRoot = try Self.source(at: "Sources/Grux/LaunchRootView.swift")
         let enumBody = try XCTUnwrap(
-            launchRoot.range(of: "enum Tab: Hashable { case ").map { r -> String in
+            // The conformance list may grow (Hashable, CaseIterable); the anchor is the enum's name.
+            launchRoot.range(of: #"enum Tab: [^{]*\{ case "#, options: .regularExpression).map { r -> String in
                 let after = launchRoot[r.upperBound...]
                 let end = after.firstIndex(of: "}") ?? after.endIndex
                 return String(after[..<end])
@@ -80,6 +81,17 @@ final class OnboardingNamesRealTabsTests: XCTestCase {
                 XCTAssertFalse(literal.contains("Usage tab"),
                     "\(file) still advertises the Usage tab, which 83274f1 deleted")
             }
+        }
+    }
+
+    // MARK: - The panel, not the sidebar (Task 10)
+
+    func test_wayfindingNamesThePanelNotTheSidebar() {
+        let titles = HowItWorksStep.wayfinding.map(\.title)
+        XCTAssertEqual(titles.prefix(3), [OptimizeCopy.title, "Now", "The command palette"])
+        for w in HowItWorksStep.wayfinding {
+            XCTAssertFalse(w.body.lowercased().contains("sidebar"), "\(w.title) still says sidebar")
+            XCTAssertFalse(w.body.contains("button under the Grux name"), "\(w.title) describes the old pill")
         }
     }
 

@@ -74,6 +74,11 @@ final class AppState: ObservableObject {
     // switches its TabView selection, then clears it back to nil so a stale
     // value never re-fires the next time Settings opens.
     @Published var requestedSettingsTab: String?
+    // A section inside a tab, for a folded child with no key of its own:
+    // `fire-open-tab integrations:webhooks` opens Integrations scrolled to
+    // Outbound Webhooks (Phase C C5, "a child opens its parent at the
+    // child"). The tab clears it once it has scrolled.
+    @Published var requestedSection: String?
     // When non-nil, the Agents tab pops the Resume sheet for this jobId as
     // soon as it appears. Set by GruxApp.handleAction when the user taps an
     // "agent paused" notification (or the phone "Resume on Mac" button).
@@ -150,8 +155,14 @@ final class AppState: ObservableObject {
 
     static let shared = AppState()
 
+    /// Keeps `config` in step with config.json edited outside Grux.
+    private(set) var configSync: SettingsFileSync?
+
     private init() {
         load()
+        configSync = SettingsFileSync(url: Persistence.configURL) { [weak self] data in
+            self?.applyConfigFromDisk(data) ?? false
+        }
         // Best-effort local-model discovery at launch so ModelRegistry.active()
         // can route offline chat the moment the user flips the toggle. Failure is
         // silent (local stays nil; active() falls back to anthropic).
@@ -192,6 +203,16 @@ final class AppState: ObservableObject {
         } else {
             self.activeThreadId = threadsList.first?.id
         }
+        // One-time repair of titles that shipped before the hygiene check
+        // existed. Fixing the generator only helps threads created after it;
+        // the ones already named after an error sit in the rail until
+        // something renames them.
+        for entry in threadsList {
+            if let repaired = ChatThreadStore.repairedTitle(for: entry) {
+                _ = store.rename(id: entry.id, title: repaired)
+            }
+        }
+        threadsList = store.list()
         self.threads = threadsList
         if let activeId = self.activeThreadId, let thread = store.load(id: activeId) {
             self.chat = thread.messages
@@ -202,8 +223,29 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// config.json changed on disk and Grux did not write it: apply it.
+    /// False, and nothing changed, when the bytes do not decode.
+    ///
+    /// The offline switch moves the router the way the toggle does: an edit
+    /// on disk is the person's choice, and a flag that changed without
+    /// moving the router would say one thing and do another. Nothing is
+    /// saved back: the file on disk is theirs, in their formatting.
+    private func applyConfigFromDisk(_ data: Data) -> Bool {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let cfg = try? decoder.decode(GruxConfig.self, from: data) else { return false }
+        config = cfg
+        let switched = offlineMode != cfg.offlineMode
+        isRestoringState = true
+        offlineMode = cfg.offlineMode
+        isRestoringState = false
+        if switched { ModelRegistry.shared.setActiveProvider(cfg.offlineMode ? .local : .anthropic) }
+        return true
+    }
+
     func saveAll() {
         Persistence.save(config, to: Persistence.configURL)
+        configSync?.noteOwnWrite()
         Persistence.save(tasks, to: Persistence.tasksURL)
         Persistence.save(events, to: Persistence.eventsURL)
         // Chat is persisted per-thread through ChatThreadStore - no flat
@@ -212,6 +254,7 @@ final class AppState: ObservableObject {
 
     func saveConfig() {
         Persistence.save(config, to: Persistence.configURL)
+        configSync?.noteOwnWrite()
     }
     func saveTasks() { Persistence.save(tasks, to: Persistence.tasksURL) }
     func saveEvents() { Persistence.save(events, to: Persistence.eventsURL) }
@@ -552,21 +595,31 @@ final class AppState: ObservableObject {
     // per thread - subsequent appends find a non-default title and skip.
     private func autoTitleIfNeeded(threadId: UUID) async {
         guard let thread = ChatThreadStore.shared.load(id: threadId) else { return }
-        guard thread.title == "New chat" else { return }
-        let userTurns = thread.messages.filter { $0.role == .user }.count
+        guard thread.title == ChatTitleHygiene.neutralDefault else { return }
+        // NOTICES NEVER REACH THE TITLE GENERATOR. Measured 2026-09-20: two of
+        // eight visible threads were titled from error text, because the whole
+        // thread went to the generator and it dutifully summarised the failure.
+        let visible = thread.messages.filter { !$0.isNotice }
+        let userTurns = visible.filter { $0.role == .user }.count
         guard userTurns >= 2 else { return }
         guard let routing = chatBackgroundRouting() else {
             WakeLog.shared.log("title: skipped - no model route")
             return
         }
         guard let title = await ChatCompactor.generateTitle(
-            messages: thread.messages,
+            messages: visible,
             backend: routing.backend,
             model: routing.modelId,
             apiKey: routing.apiKey
         ) else { return }
+        // And whatever does come back is checked before it is shown, because
+        // the conversation itself can be about an error without the thread
+        // needing to be named after one.
+        let firstUserLine = visible.first(where: { $0.role == .user })?.content ?? ""
+        let clean = ChatTitleHygiene.clean(generated: title, firstUserLine: firstUserLine)
+        guard clean != ChatTitleHygiene.neutralDefault else { return }
         await MainActor.run {
-            _ = ChatThreadStore.shared.rename(id: threadId, title: title)
+            _ = ChatThreadStore.shared.rename(id: threadId, title: clean)
             self.threads = ChatThreadStore.shared.list()
         }
     }
@@ -612,7 +665,10 @@ final class AppState: ObservableObject {
         guard let thread = ChatThreadStore.shared.load(id: threadId) else { return false }
         guard thread.messages.count > keepLastN + 4 else { return false }
         let priorSummary = thread.summary
-        let toCompact = Array(thread.messages.prefix(thread.messages.count - keepLastN))
+        // Notices (error bubbles, recovery hints) are for the person, never for
+        // the summary: folded in, they read as things the user said and the
+        // summary then carries them forward as established context.
+        let toCompact = Array(thread.messages.prefix(thread.messages.count - keepLastN)).filter { !$0.isNotice }
         let keep = Array(thread.messages.suffix(keepLastN))
         guard let routing = chatBackgroundRouting() else {
             WakeLog.shared.log("compact: skipped - no model route")

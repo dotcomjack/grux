@@ -46,6 +46,43 @@ final class WorkdayLogStoreTests: XCTestCase {
         XCTAssertTrue(md.contains("(no code shipments recorded)"))
     }
 
+    // MARK: - The date is a date (integrated review follow-up)
+
+    /// `read_workday_log` used the model's `date` as a file name unchecked, so
+    /// `../x` read a JSON file outside the log folder. A day key is now a real
+    /// calendar date, yyyy-MM-dd, and the file it names sits in the log folder.
+    func test_aDayKeyThatIsNotACalendarDateNamesNoFile() {
+        for bad in ["../../../../Desktop/x", "../outside", "/etc/passwd", "/tmp/2026-09-28",
+                    "..%2F..%2Fx", "%2e%2e%2foutside", "2026-09-28/../../x", "2026-09-28%2F..",
+                    "2026-02-30", "2026-13-01", "2026-9-28", "20260928", "2026-09-28 ", "", "today"] {
+            XCTAssertNil(WorkdayLogStore.jsonURL(forDayKey: bad), bad)
+        }
+        let dir = Persistence.workdayLogsDir.standardizedFileURL.resolvingSymlinksInPath()
+        for good in ["2026-09-28", "2024-02-29", "1999-12-31"] {
+            let url = WorkdayLogStore.jsonURL(forDayKey: good)
+            XCTAssertEqual(url?.deletingLastPathComponent().standardizedFileURL.resolvingSymlinksInPath(), dir, good)
+            XCTAssertEqual(url?.lastPathComponent, "\(good).json")
+        }
+    }
+
+    /// The live read, with a real log planted one folder up.
+    @MainActor
+    func test_readWorkdayLogCannotReadAFileOutsideTheLogFolder() async throws {
+        let name = "outside-\(UUID().uuidString.prefix(8))"
+        let planted = Persistence.workdayLogsDir.deletingLastPathComponent().appendingPathComponent("\(name).json")
+        let enc = JSONEncoder()
+        enc.dateEncodingStrategy = .iso8601
+        try enc.encode(emptyFixture(dayKey: "2026-04-22")).write(to: planted)
+        defer { try? FileManager.default.removeItem(at: planted) }
+
+        XCTAssertNil(WorkdayLogStore.load(dayKey: "../\(name)"), "the store read a file outside its folder")
+        for date in ["../\(name)", planted.deletingPathExtension().path, "..%2F\(name)"] {
+            let out = await ChatService.dispatchTool(name: "read_workday_log", input: ["date": date])
+            XCTAssertTrue(out.hasPrefix("error:"), "\(date): \(out.prefix(120))")
+            XCTAssertFalse(out.contains("Quiet day"), "\(date): the planted log was read")
+        }
+    }
+
     // MARK: - Helpers
 
     private func fixture(dayKey: String) -> WorkdayLog {

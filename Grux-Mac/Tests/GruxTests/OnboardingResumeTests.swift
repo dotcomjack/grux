@@ -154,7 +154,8 @@ final class OnboardingResumeTests: XCTestCase {
 
         for stage in Stage.allCases where stage != .done {
             let saved = OnboardingModel.State(stage: stage, skippedFirstLook: false,
-                                              level: .everything, skipped: ["a.b"])
+                                              level: .everything, skipped: ["a.b"],
+                                              path: .question, answer: "run my inbox")
             Persistence.save(saved, to: url)
             let loaded = Persistence.load(OnboardingModel.State.self, from: url,
                                           fallback: .initial)
@@ -171,7 +172,9 @@ final class OnboardingResumeTests: XCTestCase {
     /// ever became `.done` a single corrupt byte would silently mark somebody
     /// set up, which is this file's whole subject.
     func testTheFallbackStateIsTheStartOfTheFlowAndNotTheEnd() {
-        XCTAssertEqual(OnboardingModel.State.initial.stage, .level)
+        // The question since P-F-1; a file that will not decode starts a
+        // stranger at the front door, never past it.
+        XCTAssertEqual(OnboardingModel.State.initial.stage, .prompt)
         XCTAssertTrue(OnboardingModel.presents(OnboardingModel.State.initial.stage))
     }
 

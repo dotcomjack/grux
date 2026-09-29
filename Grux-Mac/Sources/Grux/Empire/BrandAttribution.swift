@@ -132,8 +132,7 @@ enum BrandAttribution {
     // MARK: - Paths
 
     static var gruxDir: URL {
-        URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux", isDirectory: true)
+        Persistence.gruxDir
     }
 
     static var configURL: URL {

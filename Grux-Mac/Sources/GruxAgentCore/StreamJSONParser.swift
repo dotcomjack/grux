@@ -93,8 +93,11 @@ public enum StreamJSONParser {
             return .unknown(trimmed)
 
         case "result":
-            // Final summary line. Includes total cost.
+            // Final summary line. Includes total cost. A failed run (expired
+            // OAuth, API error, usage limit) still says subtype "success";
+            // only `is_error` tells it apart.
             let success = (obj["subtype"] as? String) == "success"
+                && (obj["is_error"] as? Bool) != true
             let cost = obj["total_cost_usd"] as? Double
             let text = (obj["result"] as? String) ?? ""
             return .finalResult(text: text, costUSD: cost, success: success, raw: trimmed)

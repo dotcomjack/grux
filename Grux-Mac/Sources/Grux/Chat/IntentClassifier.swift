@@ -184,4 +184,118 @@ enum ChatIntentClassifier {
     static func pimRoute(utterance: String, now: Date = Date()) -> PIMPlan? {
         PIMIntents.plan(for: utterance, now: now)
     }
+
+    // MARK: - The engine as a second opinion on the fast path
+
+    /// What the router decided and what it cost, so the caller can log it and
+    /// the release notes can carry a measured latency.
+    struct PIMRouteDecision: Equatable {
+        let confidence: Double
+        let latencyMs: Int
+        let provider: DecisionProviderKind
+        /// False means "do not take the fast path", not "do nothing". The
+        /// utterance goes to the model like any other turn.
+        let confirmed: Bool
+    }
+
+    /// The pattern matcher PROPOSES; the engine may only VETO.
+    ///
+    /// The fast path skips the model entirely and then acts, so a wrong match
+    /// executes a wrong calendar event with a spoken acknowledgement. The
+    /// engine is a second opinion on that, and it is deliberately one-way:
+    ///
+    /// - No match from the pattern matcher means no fast path, and the engine
+    ///   is never asked. It cannot invent a route that the deterministic path
+    ///   did not find.
+    /// - On device the answer to a yes/no question is 0.5, which is the
+    ///   provider saying it cannot judge. That is not a veto, so a person with
+    ///   no key gets exactly today's behaviour and never a new refusal.
+    /// - Only a provider that can actually judge, answering below the execute
+    ///   threshold, sends the utterance to the model instead.
+    ///
+    /// Takes an ALREADY MATCHED plan rather than matching one itself. That is
+    /// load-bearing: `send()` runs on the main actor, and an `await` anywhere
+    /// above the readiness guard is a suspension point that lets other
+    /// main-actor work interleave before the guard is read. Measured
+    /// 2026-09-20: awaiting a version of this that matched internally let a
+    /// turn which should have been refused locally reach the network and come
+    /// back HTTP 400, which is the exact hole that guard exists to close. The
+    /// caller matches synchronously and only suspends once there is something
+    /// to ask about.
+    static func confirmPIMRoute(plan: PIMPlan,
+                                utterance: String,
+                                engine: DecisionEngine,
+                                threshold: Double) async -> PIMRouteDecision {
+        let result = await engine.decide(
+            surface: pimGate,
+            state: pimState(plan: plan, utterance: utterance),
+            questions: pimQuestions)
+        return pimDecision(answer: result.answers["meant"], provider: result.provider,
+                           latencyMs: result.latencyMs, threshold: threshold)
+    }
+
+    /// Chat's use of this gate: the answer a batched event already carries for
+    /// these exact words and this exact plan, or else one call of its own.
+    static func resolvePIM(plan: PIMPlan, utterance: String, preDecided: PreDecidedPIM?,
+                           engine: DecisionEngine, threshold: Double) async -> PIMRouteDecision {
+        if !plan.kind.isJudged {
+            return PIMRouteDecision(confidence: 1, latencyMs: 0, provider: .local, confirmed: true)
+        }
+        if let preDecided, preDecided.applies(to: plan, utterance: utterance) { return preDecided.decision }
+        return await confirmPIMRoute(plan: plan, utterance: utterance, engine: engine, threshold: threshold)
+    }
+
+    /// The gate's name on the engine and in the ledger.
+    static let pimGate = "chat.intent"
+
+    /// What the engine judges a matched plan against.
+    ///
+    /// Names the action and today's date. Without them the judge saw only a
+    /// card title and a time, could not tell a calendar event from a note, and
+    /// could not check "Friday" against anything, so it held back plain asks
+    /// (live 2026-09-27: 0.33 for a calendar ask, 0.46 for a note).
+    static func pimState(plan: PIMPlan, utterance: String, today: Date = Date()) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US")
+        f.dateFormat = "EEEE, MMMM d yyyy"
+        return "The person said: \(utterance)\nToday is \(f.string(from: today)).\n"
+            + "Grux is about to \(plan.kind.judgeAction) without asking anything else: "
+            + "\(plan.cardTitle). \(plan.cardDetail)"
+    }
+
+    static var pimQuestions: [String: DecisionQuestion] { ["meant": .noul(instructions: pimInstructions)] }
+
+    /// The verdict from an answer, whoever asked the question: this gate on its
+    /// own, or a batched event that asked on its behalf. Pure.
+    static func pimDecision(answer: DecisionAnswer?, provider: DecisionProviderKind,
+                            latencyMs: Int, threshold: Double) -> PIMRouteDecision {
+        guard case .noul(let probability)? = answer else {
+            return PIMRouteDecision(confidence: 1, latencyMs: latencyMs, provider: provider, confirmed: true)
+        }
+        // A provider that cannot judge does not get a vote.
+        let confirmed = provider == .local || probability >= threshold
+        return PIMRouteDecision(confidence: probability, latencyMs: latencyMs,
+                                provider: provider, confirmed: confirmed)
+    }
+
+    /// A verdict this gate already has, because a spoken request asked its
+    /// question on the voice event's one call (P-R-1). Chat reads it instead of
+    /// opening a second round trip on the same utterance. It only counts for
+    /// the exact words and the exact plan it was decided for.
+    struct PreDecidedPIM: Equatable {
+        let utterance: String
+        let planKind: PIMIntentKind
+        let cardTitle: String
+        let decision: PIMRouteDecision
+
+        func applies(to plan: PIMPlan, utterance other: String) -> Bool {
+            utterance == other && planKind == plan.kind && cardTitle == plan.cardTitle
+        }
+    }
+
+    static let pimInstructions =
+        "Is that what the person asked for? Answer high only if the action matches what they said, "
+        + "including the date, the time and the people named. Answer low if any of those were guessed, "
+        + "if they were asking a question rather than giving an instruction, or if they were talking "
+        + "about the thing rather than asking for it to be done."
 }

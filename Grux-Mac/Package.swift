@@ -144,7 +144,7 @@ let package = Package(
             path: "Sources/SwarmDemo"
         ),
         // Unit tests, pure, no UI. Covers ClaudeSessionJSONL parser,
-        // ClaudeSessionSlotMapper, agent core (StreamJSONParser, SwarmPlan,
+        // agent core (StreamJSONParser, SwarmPlan,
         // MegapromptScaffold, AgentStore round-trip), and other pure logic.
         .testTarget(
             name: "GruxTests",

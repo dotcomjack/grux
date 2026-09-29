@@ -4,7 +4,8 @@ struct LaunchRootView: View {
     @EnvironmentObject var state: AppState
     @Environment(\.openWindow) private var openWindow
     @ObservedObject private var speech = SpeechEngine.shared
-    @ObservedObject private var wake = WakeWordListener.shared
+    /// Changes only when hearing starts or stops, never at audio rate.
+    @ObservedObject private var micHealth = MicHealth.shared
     // Item 24: canonical shell moments (focus verdicts, workflow runs, agent
     // jobs) fill the gap when no local signal is active.
     @ObservedObject private var shellBus = ShellStateBus.shared
@@ -30,15 +31,26 @@ struct LaunchRootView: View {
     // user back to defaultTab ('chat') on every committed appearance change.
     @State private var didApplyLaunchTab = false
 
-    enum Tab: Hashable { case home, reactor, chat, jaxHQ, jaxCommand, cognitionMap, featureReview, projects, tasks, agents, meetings, calendar, documents, creative, designStudio, compare, cookbook, folders, notes, research, skills, schedules, speakers, contacts, mailbox, roadmap, commands, workflows, metaAds, social, focus, terminalFocus, selfUpgrade, integrations, settings }
+    /// CaseIterable so the pane-fit sweep walks every case: a new tab cannot
+    /// escape it (PaneFitSweepTests).
+    enum Tab: Hashable, CaseIterable { case home, reactor, chat, jaxHQ, jaxCommand, cognitionMap, featureReview, projects, tasks, agents, meetings, calendar, documents, creative, designStudio, compare, cookbook, folders, notes, research, skills, schedules, speakers, contacts, mailbox, roadmap, commands, workflows, metaAds, social, focus, selfUpgrade, integrations, settings, labs, tuning }
+
+    /// The one word this orb, the menu bar, the HUD and the focus card all
+    /// show. Resolved in ShellStateBus so no surface can invent its own.
+    /// The same helper the Command Panel calls, so the two shells cannot
+    /// compute the word differently.
+    private var listeningTell: ListeningTell {
+        ListeningTell.resolve(state: state, speech: speech, notHearing: micHealth.notHearing)
+    }
 
     private var orbState: GruxOrbState {
-        // Muted wins over everything so the user always sees their tap reflected.
-        if state.micMuted { return .muted }
-        if speech.isSpeaking || speech.isBuffering { return .speaking }
-        if state.isThinking { return .thinking }
-        if wake.isListening { return .listening }
-        return shellBus.current.mode.orbState
+        // An alert is the one thing that outranks the listening story on the
+        // glow. The pill keeps telling the truth about the microphone.
+        if shellBus.current.mode == .alert { return ShellMode.alert.orbState }
+        // With listening off there is no microphone story to tell, so the
+        // shell bus (focus, workflows, agents) gets the orb back.
+        if listeningTell == .off { return shellBus.current.mode.orbState }
+        return listeningTell.orbState
     }
 
     var body: some View {
@@ -65,8 +77,8 @@ struct LaunchRootView: View {
         // Manual HStack layout replaces NavigationSplitView. SwiftUI's
         // split view on macOS renders the sidebar as a translucent
         // overlay that visually extends over the detail pane's leading
-        // edge, so "Terminal Focus" showed as "nal Focus" with the first
-        // 5 characters under the sidebar blur. An explicit HStack gives
+        // edge, so the longest row label lost its first 5 characters
+        // under the sidebar blur. An explicit HStack gives
         // true non-overlapping columns.
         HStack(spacing: 0) {
             sidebar
@@ -76,7 +88,7 @@ struct LaunchRootView: View {
                 // hero orb is a fixed 68pt, so flexing it would shift the whole
                 // app's chrome every time a detail pane resized, for no gain.
                 // It also has headroom rather than a clipping risk: at the
-                // sidebar row font the longest label ("Terminal Focus") plus
+                // sidebar row font the longest label ("Feature Review") plus
                 // its icon, badge and List insets comes to roughly 165 of the
                 // 240. The cost is 29% of the 840pt floor, but the floor is a
                 // floor: on an ordinary 1440pt window it is about 17%. Every
@@ -122,73 +134,7 @@ struct LaunchRootView: View {
 
             Divider()
 
-            VStack(spacing: 0) {
-                Group {
-                    switch selection {
-                    // NOT gated, deliberately. Home is a COMPOSITE of
-                    // independent tiles, so a tab-level gate would hide a dozen
-                    // working sections because one registrar credential is
-                    // missing. It gates per SECTION instead, which is why the
-                    // domain monitor renders its own card.
-                    case .home: HomeView()
-                    case .reactor: ReactorView().capabilityGated("reactor")
-                    case .chat: ChatView().capabilityGated("chat")
-                    case .jaxHQ: JaxHQView().capabilityGated("jaxHQ")
-                    case .jaxCommand: JaxCommandView().capabilityGated("jaxCommand")
-                    case .cognitionMap: CognitionMapView().capabilityGated("cognitionMap")
-                    case .featureReview: FeatureReviewView().capabilityGated("featureReview")
-                    case .projects: ProjectsView().capabilityGated("projects")
-                    case .tasks: TasksDetailView().capabilityGated("tasks")
-                    case .agents: AgentsView().capabilityGated("agents")
-                    case .meetings: MeetingsView().capabilityGated("meetings")
-                    case .calendar: CalendarView().capabilityGated("calendar")
-                    case .documents: DocumentLibraryView().capabilityGated("documents")
-                    case .creative: CreativeStudioView().capabilityGated("creative")
-                    case .designStudio: DesignStudioView().capabilityGated("designStudio")
-                    case .compare: CompareView().capabilityGated("compare")
-                    case .cookbook: CookbookView().capabilityGated("cookbook")
-                    case .folders: FoldersManagementView().capabilityGated("folders")
-                    case .notes: NotesView().capabilityGated("notes")
-                    case .research: ResearchView().capabilityGated("research")
-                    case .skills: SkillsView().capabilityGated("skills")
-                    case .schedules: UserCronEditorView().capabilityGated("schedules")
-                    case .speakers: SpeakersView().capabilityGated("speakers")
-                    case .contacts: ContactsView().capabilityGated("contacts")
-                    case .mailbox: MailboxView().capabilityGated("mailbox")
-                    case .roadmap: RoadmapView()
-                    case .commands: CommandsView().capabilityGated("commands")
-                    case .workflows: CommandsV2View().capabilityGated("workflows")
-                    case .metaAds: MetaAdsView().capabilityGated("metaAds")
-                    case .social: SocialView().capabilityGated("social")
-                    case .focus: FocusLogView().capabilityGated("focus")
-                    case .terminalFocus: TerminalFocusSettingsView().capabilityGated("terminalFocus")
-                    case .selfUpgrade: SelfUpgradeView().capabilityGated("selfUpgrade")
-                    case .integrations: IntegrationsView().capabilityGated("integrations")
-                    // NEVER gated, and this one is a hard rule rather than a
-                    // preference. Settings is where every capability is fixed,
-                    // so gating it on a capability would be a deadlock: the card
-                    // would tell somebody to go to Settings while standing in
-                    // front of the Settings they cannot reach.
-                    case .settings: SettingsView()
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                // Items 23+26: rebuild ONLY the detail pane when a theme change
-                // commits so GruxTheme computed-color call-sites repaint. Keyed
-                // here (not on the whole HStack) so the sidebar's
-                // List(selection:) and the @State selection survive: keying the
-                // root subtree forced a full rebuild that re-fired onAppear and
-                // reset the active tab to chat on every appearance commit.
-                .id(theme.revision)
-
-                // Live swarm + Foundry activity strip pinned under the
-                // content area. Collapses to zero height when idle. Dot or
-                // background click jumps to Agents; the Foundry chip jumps
-                // to Self-Upgrade.
-                ActivityStripView { kind in
-                    selection = (kind == .foundry) ? .selfUpgrade : .agents
-                }
-            }
+            SurfacePane(selection: $selection)
         }
         // Window floor MUST be >= nav sidebar (240) + the widest detail pane's
         // min so content never overflows and clips. The chat tab is the widest
@@ -213,6 +159,7 @@ struct LaunchRootView: View {
             guard !didApplyLaunchTab else { return }
             didApplyLaunchTab = true
             applyTab(defaultTab)
+            state.requestedTab = Self.tabKey(for: selection)
         }
         .onChange(of: state.requestedTab) { _, new in
             applyTab(new)
@@ -221,6 +168,12 @@ struct LaunchRootView: View {
             // Feed the palette's recent-tabs section. Fires for sidebar
             // clicks AND programmatic applyTab jumps (both mutate selection).
             sidebarStore.recordRecent(Self.tabKey(for: new))
+            // The request follows what is showing. It is only heard on a
+            // change, so a stale value (a sidebar click away, or a tab asked
+            // for while first run covered the shell) swallowed the next ask
+            // for that same tab. Setting it to the key already applied is a
+            // no-op round trip through applyTab.
+            state.requestedTab = Self.tabKey(for: new)
         }
         .onReceive(NotificationCenter.default.publisher(for: .gruxOpenAgentJobWindow)) { note in
             // Posted by the fire-test-expand-job CLI trigger. Mirrors what
@@ -248,26 +201,141 @@ struct LaunchRootView: View {
                         sidebarGroupHeader("Pinned")
                     }
                 }
-                // Four blueprint groups (Command, Workspace, Intelligence,
-                // Ambient) plus System for the remaining tabs. Collapse
-                // state persists via SidebarStateStore.
-                ForEach(SidebarIA.groups) { group in
-                    Section(isExpanded: expansionBinding(group.id)) {
-                        ForEach(group.items, id: \.key) { item in
+                // THE 3.0 RAIL. Twelve surfaces, then the doors, then
+                // Settings, computed from the door recorded on each registry
+                // row rather than from a hand-maintained list of 35 keys in
+                // five groups. `SidebarIA.groups` is still the source of
+                // icons, labels and the locked --open-tab keys, and every one
+                // of those keys still resolves: folding changes where a person
+                // FINDS something, never whether a script can reach it.
+                ForEach(railSplit.scrolling) { row in
+                    switch row.kind {
+                    case .surface(let key):
+                        if let item = railItem(for: row, key: key) {
                             sidebarRow(item)
                         }
-                    } header: {
-                        sidebarGroupHeader(group.title)
+                    case .door(let id):
+                        Section(isExpanded: expansionBinding("door." + id)) {
+                            // Behind the Labs door the door itself says BETA, once.
+                            ForEach(doorContents(id), id: \.key) { sidebarRow($0) }
+                        } header: {
+                            HStack(spacing: 6) {
+                                if id == "labs" {
+                                    // The door opens its shelf; the chevron still
+                                    // lists the eight underneath it.
+                                    Button { selection = .labs } label: {
+                                        sidebarGroupHeader("\(row.label)  \(row.count)")
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("Open the Labs shelf")
+                                } else {
+                                    sidebarGroupHeader("\(row.label)  \(row.count)")
+                                }
+                                if id == "labs" { BetaBadge() }
+                            }
+                        }
                     }
                 }
             }
             .listStyle(.sidebar)
             .scrollContentBackground(.hidden)
+            // The pinned tail. A List of its own rather than a bare row,
+            // because a sidebar row outside a List loses both its styling and
+            // its part in `selection`, and a Settings row that cannot be
+            // selected is worse than one that scrolls away.
+            if !railSplit.pinned.isEmpty {
+                Divider().opacity(0.35)
+                List(selection: $selection) {
+                    ForEach(railSplit.pinned) { row in
+                        if case .surface(let key) = row.kind,
+                           let item = railItem(for: row, key: key) {
+                            sidebarRow(item)
+                        }
+                    }
+                }
+                .listStyle(.sidebar)
+                .scrollContentBackground(.hidden)
+                .scrollDisabled(true)
+                .frame(height: GruxLayout.pinnedRailTailHeight)
+            }
             statusBar
         }
-        .background(Color.black.opacity(0.25))
+        .background(GruxTheme.base.opacity(0.25))
     }
 
+    /// The rail a person sees, recomputed when the brand roster or the
+    /// developer switch changes.
+    private var rail: [SidebarRow] {
+        SidebarIA.rail(developerUnlocked: state.config.developerSurfacesUnlocked,
+                       brands: BrandRoster.brands.map(\.label))
+    }
+
+    /// The row that is pinned below the scrolling rail rather than inside it.
+    private static let pinnedTailId = "settings"
+
+    /// The rail splits in two: everything above scrolls, the last row is
+    /// PINNED just above the status bar.
+    ///
+    /// WHY. `SidebarIA` defines Settings to be last and
+    /// `PanelReachabilityTests.test_settingsIsAlwaysLast` holds it there, which
+    /// makes Settings the row most likely to fall off the bottom of a
+    /// scrolling list. Measured 2026-09-24 in a 1040x732 window, which is what
+    /// this Mac opens: the rail ended visibly at the Developer door with the
+    /// Labs door AND Settings both below the fold, and a band of dead space
+    /// under the last visible row, which reads as the end of a list rather
+    /// than the middle of one. Nothing on screen said there was more. Proven
+    /// by resizing to 1083pt, where the Labs door appeared, and then scrolling,
+    /// where Settings appeared last exactly as the model says.
+    ///
+    /// Raising the window floor does not fix it. The floor is 560pt, far below
+    /// the 732pt that already failed, and on a small display any taller
+    /// default still clips. Pinning works at every height.
+    ///
+    /// This is the same move the status bar below already makes, and the same
+    /// one the onboarding footer makes for its primary button.
+    ///
+    /// IT NEVER DROPS A ROW. If Settings ever stops being last, the guard
+    /// below returns the whole rail as scrolling and pins nothing, so the
+    /// worst case is the old behaviour rather than a row that exists in the
+    /// model and renders nowhere. `SidebarRailSplitTests` proves the two
+    /// halves rebuild the model's rail exactly, for every combination of the
+    /// developer switch and the brand roster.
+    var railSplit: (scrolling: [SidebarRow], pinned: [SidebarRow]) {
+        Self.splitRail(rail)
+    }
+
+    /// Pure, so the partition is testable without a window.
+    static func splitRail(_ all: [SidebarRow]) -> (scrolling: [SidebarRow], pinned: [SidebarRow]) {
+        guard let last = all.last, last.id == pinnedTailId else { return (all, []) }
+        return (Array(all.dropLast()), [last])
+    }
+
+    /// A rail row rendered through the existing row view. The rail owns the
+    /// LABEL (Mailbox reads Mail, Design Studio reads Studio) while the key
+    /// and icon come from the locked table, so a relabel never moves a key.
+    private func railItem(for row: SidebarRow, key: String) -> SidebarItem? {
+        guard let base = SidebarIA.item(forKey: key) else { return nil }
+        return SidebarItem(key: base.key, label: row.label, icon: row.icon)
+    }
+
+    /// What a door opens onto, in registry order, skipping anything that is
+    /// not a tab of its own. `FeatureRegistry.tabKey` is what stops a door
+    /// listing a row that opens nothing.
+    private func doorContents(_ doorId: String) -> [SidebarItem] {
+        let disposition: FeatureRow.Disposition = doorId == "developer" ? .developer : .labs
+        var items = SidebarIA.behind(disposition).compactMap { row -> SidebarItem? in
+            guard let key = FeatureRegistry.tabKey(forRowId: row.id) else { return nil }
+            return SidebarIA.item(forKey: key)
+        }
+        if disposition == .labs {
+            items += SidebarIA.labsOnlyKeys.compactMap { SidebarIA.item(forKey: $0) }
+        }
+        return items
+    }
+
+    /// One sidebar row. It never carries a BETA pill: the Labs door is badged
+    /// once, and a labs feature outside that door is labelled beside its own
+    /// title (`LabsHeaderBadge`).
     @ViewBuilder
     private func sidebarRow(_ item: SidebarItem) -> some View {
         if let tab = Self.tab(forKey: item.key) {
@@ -288,14 +356,10 @@ struct LaunchRootView: View {
             Label {
                 HStack(spacing: 5) {
                     Text(item.label)
-                    // BETA sits before the needs-setup dot on purpose. They are
-                    // different claims and both can be true at once: labs says
-                    // "this is experimental", the dot says "this one is waiting
-                    // on you". Reading label, then maturity, then status keeps
-                    // the row parseable when a feature carries both.
-                    if FeatureRegistry.isLabs(forTab: item.key) {
-                        BetaBadge()
-                    }
+                    // NO PER-ROW BETA PILL, anywhere. The Labs door carries
+                    // one badge for the surfaces behind it, and a labs
+                    // feature that lives elsewhere says BETA once beside its
+                    // own title (`LabsHeaderBadge`). Decided 2026-09-22.
                     if FeatureRegistry.state(forTab: item.key) == .needsSetup {
                         Circle()
                             .fill(GruxTheme.accentPrimary)
@@ -306,8 +370,8 @@ struct LaunchRootView: View {
             } icon: {
                 Image(systemName: item.icon)
             }
-                .badge(item.key == "mailbox" ? mailStore.unreadCount() : 0)
-                .tag(tab)
+                .badge(railBadge(for: item.key))
+                .tag(litTag(for: tab))
                 .contextMenu {
                     if sidebarStore.isPinned(item.key) {
                         Button("Unpin from favorites") { sidebarStore.unpin(item.key) }
@@ -320,8 +384,8 @@ struct LaunchRootView: View {
 
     private func sidebarGroupHeader(_ title: String) -> some View {
         Text(title.uppercased())
-            .font(.caption2.weight(.heavy))
-            .kerning(1.2)
+            .font(GruxType.microCaps)
+            .kerning(GruxType.microCapsTracking)
             .foregroundStyle(.secondary)
     }
 
@@ -338,23 +402,32 @@ struct LaunchRootView: View {
             // Kept as .plain button style so OrbView's custom gradient renders
             // without SwiftUI's default button chrome.
             Button {
-                MicController.toggle()
+                MicController.toggle(source: "orb")
             } label: {
                 OrbView(state: orbState, level: speech.outputLevel)
                     .frame(width: 68, height: 68)
             }
             .buttonStyle(.plain)
             .gruxHoverable(lift: 1.06, rimOnHover: 0, fillOnHover: 0)
-            .help(state.micMuted ? "Mic muted, tap to resume" : "Tap to mute the mic")
+            .orbDecisionHelp(listeningTell.help)
+            // A click mutes; a right click tunes.
+            .contextMenu {
+                Button(TuningCopy.title) { selection = .tuning }
+                Button(TuningCopy.optimizeTitle) { OptimizeState.shared.isOpen = true }
+            }
             .padding(.top, 10)
 
             Text("GRUX OS")
                 .font(.headline.weight(.heavy))
                 .kerning(3)
-            OrbStatusPill(state: orbState)
-                .help(shellBus.current.detail.isEmpty
-                    ? shellBus.current.headline
-                    : "\(shellBus.current.headline): \(shellBus.current.detail)")
+            // Optimize Grux: the one front door for changing Grux, through
+            // the person's own coding agent. Not a rail row, so the first-run
+            // count does not move.
+            OptimizeGruxButton()
+            // NO LISTENING PILL HERE. It said ARMED directly above the same
+            // word in the rail's foot, which is two elements doing one job in
+            // one viewpoint. The foot keeps it because the foot is also where
+            // you tap to mute. The orb's glow still carries the state.
             // Foundry pending-proposal badge. Renders nothing when the
             // Foundry is quiet (pendingCount == 0), so it adds no chrome.
             FoundryStatusBadge { selection = .selfUpgrade }
@@ -406,12 +479,15 @@ struct LaunchRootView: View {
         case "contacts": return .contacts
         case "mailbox": return .mailbox
         case "roadmap": return .roadmap
+        // P-E-3: the Labs shelf, what the Labs door opens.
+        case "labs": return .labs
+        // P-E-2: Tuning, opened from the orb, Today, the palette and Settings.
+        case "tuning": return .tuning
         case "commands": return .commands
         case "workflows": return .workflows
         case "metaAds": return .metaAds
         case "social": return .social
         case "focus": return .focus
-        case "terminalFocus": return .terminalFocus
         case "selfUpgrade", "foundry": return .selfUpgrade
         case "design": return .designStudio
         case "integrations": return .integrations
@@ -454,9 +530,104 @@ struct LaunchRootView: View {
         case .metaAds: return "metaAds"
         case .social: return "social"
         case .focus: return "focus"
-        case .terminalFocus: return "terminalFocus"
         case .selfUpgrade: return "selfUpgrade"
         case .integrations: return "integrations"
+        case .labs: return "labs"
+        case .tuning: return "tuning"
+        }
+    }
+
+    // MARK: - Folded surfaces (Phase C)
+    //
+    // A folded surface keeps its Tab and its locked key, so `--open-tab` and
+    // `~/.grux/fire-open-tab` still reach it. What changes is WHERE it
+    // renders: its Tab draws the parent with the child showing, and the
+    // parent's rail row stays lit, so the person can see where they are.
+
+    /// Child tab to the tab of the rail row that hosts it.
+    static let hostedBy: [Tab: Tab] = [
+        .projects: .tasks,
+        .creative: .designStudio,
+        .research: .designStudio,
+        .skills: .chat,
+        .speakers: .meetings,
+        .workflows: .schedules,
+        // C11: the Focus log folds into Today, whose Watching card links to it.
+        .focus: .home,
+    ]
+
+    /// The tab whose rail row a tab lives behind. A tab nobody hosts is its
+    /// own host.
+    static func host(of tab: Tab) -> Tab {
+        hostedBy[tab] ?? tab
+    }
+
+    /// Tasks hosts Projects, which is the grouping Tasks already has.
+    static let tasksSurfaces: [HostedSurface] = [
+        HostedSurface(.tasks, "Tasks"),
+        HostedSurface(.projects, "Projects"),
+    ]
+
+    /// Meetings hosts Speakers: a voice is only ever learned from a meeting.
+    static let meetingsSurfaces: [HostedSurface] = [
+        HostedSurface(.meetings, "Meetings"),
+        HostedSurface(.speakers, "Speakers"),
+    ]
+
+    /// Schedules hosts Workflows: running one is what a schedule does.
+    static let schedulesSurfaces: [HostedSurface] = [
+        HostedSurface(.schedules, "Schedules"),
+        HostedSurface(.workflows, "Workflows"),
+    ]
+
+    /// The Studio rail row hosts three surfaces. Its own key is designStudio,
+    /// so Design Studio is the one it opens on.
+    static let studioSurfaces: [HostedSurface] = [
+        HostedSurface(.designStudio, "Design Studio"),
+        HostedSurface(.creative, "Media Studio"),
+        HostedSurface(.research, "Research"),
+    ]
+
+    /// The tag a rail row carries. A host row takes the selection while it
+    /// shows one of its folded surfaces, so the row stays highlighted instead
+    /// of the rail showing nothing selected at all.
+    private func litTag(for tab: Tab) -> Tab {
+        Self.host(of: selection) == tab ? selection : tab
+    }
+
+    /// The badge a rail row carries. Mail shows what NEEDS YOU rather than how
+    /// much mail exists, and Settings carries the setup count that used to be a
+    /// standing sentence in the foot.
+    private func railBadge(for key: String) -> Int {
+        switch key {
+        case "mailbox":  return mailStore.needsYouCount
+        case "settings": return FeatureRegistry.featuresNeedingSetup.count
+        default:         return 0
+        }
+    }
+
+    /// B18: listening and mute reachable without opening Settings, using the
+    /// shared tell so the words match every other surface.
+    private var listeningFoot: some View {
+        HStack(spacing: 6) {
+            Button {
+                MicController.toggle(source: "orb")
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: listeningTell == .muted ? "mic.slash.fill" : "mic.fill")
+                        .font(.system(size: 9, weight: .bold))
+                    Text(listeningTell.label)
+                        .font(.caption2)
+                }
+                .foregroundStyle(listeningTell == .muted || listeningTell == .off
+                                 ? GruxTheme.textTertiary : GruxTheme.successMint)
+            }
+            .buttonStyle(.borderless)
+            .help(listeningTell.help)
+            Spacer(minLength: 0)
+            // C10: the approvals tray, on every tab, drawn only while
+            // something waits. Its own view observes the queue.
+            ApprovalsTrayButton()
         }
     }
 
@@ -465,7 +636,7 @@ struct LaunchRootView: View {
             Divider()
             HStack(spacing: 6) {
                 Circle()
-                    .fill(state.watching ? Color.green : Color.secondary)
+                    .fill(state.watching ? GruxTheme.successMint : Color.secondary)
                     .frame(width: 8, height: 8)
                 Text(state.watching ? "Watching" : "Paused")
                     .font(.caption)
@@ -489,26 +660,12 @@ struct LaunchRootView: View {
             // The count is the honest version: it speaks for every capability,
             // it is a fact rather than an instruction, and it goes to the one
             // place that can act on all of them.
-            let waiting = FeatureRegistry.featuresNeedingSetup.count
-            if waiting > 0 {
-                Button {
-                    state.requestedSettingsTab = "capabilities"
-                    state.requestedTab = "settings"
-                } label: {
-                    HStack(spacing: 5) {
-                        Circle()
-                            .fill(GruxTheme.accentPrimary)
-                            .frame(width: 5, height: 5)
-                        Text(waiting == 1
-                             ? "1 feature needs setup"
-                             : "\(waiting) features need setup")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .buttonStyle(.borderless)
-                .help("Open the capabilities list in Settings")
-            }
+            // B15: the setup count is a BADGE ON SETTINGS now, not a line in
+            // the foot. A permanent sentence at the bottom of the rail reads as
+            // a nag: it is there on a fresh install, it is there six months
+            // later, and it says the same thing either way. A badge on the row
+            // that can act on it is the same fact without the pleading.
+            listeningFoot
         }
         .padding(10)
     }
@@ -556,6 +713,27 @@ struct TasksDetailView: View {
     private static let noProjectKey = ""
     private static let noProjectLabel = "No Project"
 
+    private var newTaskTitleField: some View {
+        TextField("New task…", text: $newTaskText)
+            .textFieldStyle(.roundedBorder)
+            .onSubmit(submit)
+    }
+
+    @ViewBuilder
+    private var newTaskControls: some View {
+        TextField("Project", text: $newTaskProject)
+            .textFieldStyle(.roundedBorder)
+            .frame(minWidth: GruxLayout.searchFieldMin, idealWidth: GruxLayout.taskProjectFieldWidth,
+                   maxWidth: GruxLayout.taskProjectFieldWidth)
+        Picker("", selection: $newTaskPriority) {
+            ForEach(TaskPriority.allCases) { p in Text(p.label).tag(p) }
+        }
+        .fixedSize()
+        Button("Add", action: submit)
+            .keyboardShortcut(.return, modifiers: .command)
+            .fixedSize()
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack {
@@ -571,19 +749,23 @@ struct TasksDetailView: View {
                 }
             }.padding()
 
-            HStack(spacing: 8) {
-                TextField("New task…", text: $newTaskText)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit(submit)
-                TextField("Project", text: $newTaskProject)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 140)
-                Picker("", selection: $newTaskPriority) {
-                    ForEach(TaskPriority.allCases) { p in Text(p.label).tag(p) }
-                }.frame(width: 100)
-                Button("Add", action: submit)
-                    .keyboardShortcut(.return, modifiers: .command)
-            }.padding(.horizontal)
+            // One row where the four controls fit at their widths; on a
+            // narrow pane the title field takes a row of its own and the
+            // three small controls share the next, so "Add" never truncates
+            // to "A...".
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: GruxSpacing.s) {
+                    newTaskTitleField
+                    newTaskControls
+                }
+                VStack(spacing: GruxSpacing.s) {
+                    newTaskTitleField
+                    HStack(spacing: GruxSpacing.s) {
+                        newTaskControls
+                    }
+                }
+            }
+            .padding(.horizontal)
 
             Picker("", selection: $groupMode) {
                 ForEach(TaskGroupMode.allCases) { mode in
@@ -1137,5 +1319,17 @@ struct FocusEventRow: View {
             .padding(.horizontal, 6).padding(.vertical, 1)
             .background(color.opacity(0.2)).foregroundStyle(color)
             .clipShape(Capsule())
+    }
+}
+
+/// `~/.grux/rendered-tab.txt`: the key of the tab whose pane last rendered.
+/// Written after the pane updates, so a script waiting on it (the Phase C gate
+/// fires all 35 locked keys through `fire-open-tab`) checks what the person
+/// would see rather than what was asked for.
+enum RenderedTab {
+    static var fileURL: URL { Persistence.gruxDir.appendingPathComponent("rendered-tab.txt") }
+    static func note(_ key: String) {
+        try? key.write(to: fileURL, atomically: true, encoding: .utf8)
+        Task { @MainActor in HeadlessWorkspace.noteRendered(key) }
     }
 }

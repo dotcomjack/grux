@@ -1,6 +1,6 @@
 name: GruxPhone
 options:
-  bundleIdPrefix: com.dcj
+  bundleIdPrefix: com.gruxai
   deploymentTarget:
     iOS: "17.0"
   createIntermediateGroups: true
@@ -91,7 +91,7 @@ targets:
       properties: {}
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.dcj.gruxphone
+        PRODUCT_BUNDLE_IDENTIFIER: com.gruxai.gruxphone
         PRODUCT_NAME: GruxPhone
         TARGETED_DEVICE_FAMILY: "1,2"
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: "YES"

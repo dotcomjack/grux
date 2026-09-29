@@ -52,7 +52,7 @@ struct ReactorPanel: View {
             }
         }
         .padding(11)
-        .frame(width: 196, alignment: .leading)
+        .frame(width: GruxLayout.reactorPanelWidth, alignment: .leading)
         .background(
             ZStack {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)

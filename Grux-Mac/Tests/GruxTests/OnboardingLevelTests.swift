@@ -274,7 +274,9 @@ final class OnboardingLevelTests: XCTestCase {
             stage: .connections,
             skippedFirstLook: true,
             level: .everything,
-            skipped: ["perm.contacts", "endpoint.imap"])
+            skipped: ["perm.contacts", "endpoint.imap"],
+            path: .question,
+            answer: "keep me on track")
 
         let data = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(OnboardingModel.State.self, from: data)
@@ -283,6 +285,8 @@ final class OnboardingLevelTests: XCTestCase {
         XCTAssertTrue(decoded.skippedFirstLook)
         XCTAssertEqual(decoded.level, .everything)
         XCTAssertEqual(decoded.skipped, ["perm.contacts", "endpoint.imap"])
+        XCTAssertEqual(decoded.path, .question)
+        XCTAssertEqual(decoded.answer, "keep me on track")
     }
 
     /// An install written before levels existed ran what is now Levels 1 and 2.
@@ -343,7 +347,9 @@ final class OnboardingLevelTests: XCTestCase {
         XCTAssertEqual(Stage.allCases.map(\.rawValue),
                        ["level", "modelKey", "identity", "howItWorks",
                         "permissions", "firstLook", "clone", "connections",
-                        "update", "done", "welcomeBack"])
+                        "update", "done", "welcomeBack",
+                        // P-F-1, appended: the question path.
+                        "prompt", "yourGrux", "setup"])
         XCTAssertEqual(Level.allCases.map(\.rawValue),
                        ["essentials", "plusPermissions", "everything"])
     }

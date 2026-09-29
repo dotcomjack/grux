@@ -50,8 +50,7 @@ final class AutonomyController: ObservableObject {
     @Published private(set) var killed = false
 
     private let url: URL = {
-        let dir = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux").appendingPathComponent("jax")
+        let dir = Persistence.gruxDir.appendingPathComponent("jax")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("autonomy.json")
     }()
@@ -121,8 +120,7 @@ final class GoalPursuitEngine: ObservableObject {
     private let maxRuns = 200
 
     private let storeURL: URL = {
-        let dir = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux").appendingPathComponent("jax")
+        let dir = Persistence.gruxDir.appendingPathComponent("jax")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("goal-runs.json")
     }()
@@ -202,11 +200,30 @@ final class GoalPursuitEngine: ObservableObject {
         let plan = await planNextMove(signals: signals)
 
         // 3. Record the run. In SIMULATE / OBSERVE we execute nothing; LIVE
-        //    dispatches the planned swarm (the only action mechanism).
+        //    dispatches the planned swarm (the only action mechanism), unless
+        //    the worth judgment holds it, which queues it exactly as OBSERVE
+        //    would (P-R-6, `agent.worthStarting`). A hold never starts anything.
         var executed = false
+        var held = false
         if mode == .live, let a = plan.action {
-            await dispatchSwarm(a)
-            executed = true
+            let heldRationale = Self.heldPrefix + plan.rationale
+            let verdict = await AgentWorthJudgment.judge(
+                state: AgentWorthJudgment.state(
+                    title: a.title, goal: a.goal, budgetUSD: a.budgetUSD, rationale: plan.rationale,
+                    signals: signals.map { "(\($0.domain)) \($0.line)" },
+                    running: AgentService.shared.jobs.filter { !$0.isTerminal }.map {
+                        AgentWorthJudgment.runningLine(title: $0.title, startedAt: $0.startedAt ?? $0.createdAt)
+                    }),
+                heldItem: Self.approvalItem(a, domain: plan.domain, rationale: heldRationale),
+                engine: DecisionEngine.shared,
+                threshold: AppState.shared.config.listeningThreshold)
+            if verdict.hold {
+                queueForApproval(a, domain: plan.domain, rationale: heldRationale, risk: verdict.risk)
+                held = true
+            } else {
+                await dispatchSwarm(a)
+                executed = true
+            }
         } else if mode == .observe, let a = plan.action {
             queueForApproval(a, domain: plan.domain, rationale: plan.rationale)
         }
@@ -235,13 +252,13 @@ final class GoalPursuitEngine: ObservableObject {
             trigger: trigger,
             heuristicsFired: [],
             memoriesRetrieved: signals.map { "(\($0.domain)) \($0.line)" },
-            gateVerdict: executed ? "dispatched" : ((mode == .observe && plan.action != nil) ? "queued" : nil),
+            gateVerdict: executed ? "dispatched" : (((mode == .observe || held) && plan.action != nil) ? "queued" : nil),
             confidence: nil,
             mode: mode.rawValue,
             outcome: plan.action == nil ? "No action this cycle: \(plan.rationale)" : "Planned: \(plan.action!.title)"
         )
 
-        WakeLog.shared.log("jax goal-pursuit: \(mode.rawValue) -> [\(plan.domain)] \(plan.chosenGoal) | \(plan.action == nil ? "no action" : "planned: \(plan.action!.title)")\(executed ? " (DISPATCHED)" : "")")
+        WakeLog.shared.log("jax goal-pursuit: \(mode.rawValue) -> [\(plan.domain)] \(plan.chosenGoal) | \(plan.action == nil ? "no action" : "planned: \(plan.action!.title)")\(executed ? " (DISPATCHED)" : "")\(held ? " (HELD for approval)" : "")")
         return run
     }
 
@@ -388,16 +405,34 @@ final class GoalPursuitEngine: ObservableObject {
 
     // MARK: Mode-specific effects (only reached in OBSERVE / LIVE)
 
-    private func queueForApproval(_ a: PlannedSwarmAction, domain: String, rationale: String) {
-        let action = ProposedAction(
-            kind: .other,
-            summary: "Run a Claude Code session: \(a.title)",
-            target: "claude-code-swarm",
-            detail: ["goal": a.goal, "template": a.template, "domain": domain, "rationale": rationale]
+    /// What a held LIVE plan's rationale opens with, so the card says why a
+    /// plan that would have run is waiting instead.
+    static let heldPrefix = "Held before starting: judged not worth running unattended. "
+
+    /// The approval item a plan becomes: what OBSERVE queues, and what LIVE
+    /// queues when the worth judgment holds it.
+    static func approvalItem(_ a: PlannedSwarmAction, domain: String, rationale: String) -> PendingApproval {
+        PendingApproval(
+            action: ProposedAction(
+                kind: .other,
+                summary: "Run a Claude Code session: \(a.title)",
+                target: "claude-code-swarm",
+                detail: ["goal": a.goal, "template": a.template, "domain": domain, "rationale": rationale]
+            ),
+            urgent: false,
+            reason: "\(UserIdentity.assistantName) goal-pursuit (\(domain)): \(rationale)"
         )
+    }
+
+    private func queueForApproval(_ a: PlannedSwarmAction, domain: String, rationale: String,
+                                  risk: ApprovalRisk? = nil) {
         // Route through the gate so even an OBSERVE-queued action obeys the
-        // guardrails; queue it for the user's one-tap yes.
-        ApprovalQueue.shared.enqueue(action, urgent: false, reason: "\(UserIdentity.assistantName) goal-pursuit (\(domain)): \(rationale)")
+        // guardrails; queue it for the user's one-tap yes. A held LIVE plan
+        // carries the risk its event already asked, so queueing it does not
+        // pay for a second call.
+        var item = Self.approvalItem(a, domain: domain, rationale: rationale)
+        item.risk = risk
+        ApprovalQueue.shared.enqueue(item)
     }
 
     private func dispatchSwarm(_ a: PlannedSwarmAction) async {

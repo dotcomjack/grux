@@ -22,20 +22,25 @@ struct MeetingsView: View {
     @State private var creatingFolder: Bool = false
     @State private var classifyingMeeting: UUID?
 
+    // Speakers lives beside this surface, in the Meetings row's switch
+    // (LaunchRootView.meetingsSurfaces), not inside it: one mechanism for every
+    // Phase C fold, so the speakers key opens Meetings on Speakers and the
+    // Meetings row stays lit.
     var body: some View {
-        HStack(spacing: 0) {
+        meetingsPane
+    }
+
+    /// The archive: every captured meeting on the left, the selected one on
+    /// the right.
+    private var meetingsPane: some View {
+        // The shared split: the list at its ask beside the detail while the
+        // detail keeps GruxLayout.detailContentMin, giving ground toward
+        // listColumnMin first, and stacked over the detail on a pane too
+        // narrow for both (a hard 340 once crushed the Summary, Transcript
+        // and Actions detail into vertical text at the window floor).
+        GruxSplit(listWidth: GruxLayout.archiveListIdeal) {
             listPane
-                // Flexible so the detail pane keeps enough room when the window
-                // narrows (a hard 340 left the Summary/Transcript/Actions detail
-                // crushed into vertical text at the window floor). The bounds are
-                // the shared ones rather than local numbers: a hand-picked 280
-                // floor leaves the detail 318pt at the 599pt pane floor, under
-                // GruxLayout.detailContentMin, which is the budget the column is
-                // supposed to protect. 340 stays the ask so nothing moves.
-                .frame(minWidth: GruxLayout.listColumnMin,
-                       idealWidth: 340,
-                       maxWidth: GruxLayout.listColumnMax)
-            Divider()
+        } detail: {
             detailPane
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
@@ -703,8 +708,7 @@ struct MeetingsView: View {
         Task {
             if let summary = await MeetingSummarizer.summarize(rec) {
                 var updated = rec
-                updated.summary = summary.tldr
-                updated.actionItems = summary.actionItems
+                summary.apply(to: &updated)
                 MeetingStore.shared.finalize(updated)
                 selectedRecord = updated
                 showToast("Summary generated")

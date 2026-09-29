@@ -323,6 +323,7 @@ public actor AgentBridgeRunner {
         var finalText = ""
         var assistantAcc: [String] = []
         var sawSuccessFinal = false
+        var sawFinal = false
         var limitDetected = false
         var ttlTerminated = false
 
@@ -335,6 +336,7 @@ public actor AgentBridgeRunner {
             case .finalResult(let text, let cost, let success, _):
                 finalText = text
                 if let c = cost { costUSD = max(costUSD ?? 0, c) }
+                sawFinal = true
                 if success { sawSuccessFinal = true }
             case .limitSignal:
                 limitDetected = true
@@ -389,10 +391,17 @@ public actor AgentBridgeRunner {
         let stderrTail = stderrRing.tailString().trimmingCharacters(in: .whitespacesAndNewlines)
 
         let okExit = exitCode == 0
-        var success = (sawSuccessFinal || okExit) && !limitDetected
+        // A result line is the CLI's verdict (an is_error result reads as a
+        // failure even on exit 0); the exit code decides only without one.
+        var success = (sawFinal ? sawSuccessFinal : okExit) && !limitDetected
         if watchdogKilled && !sawSuccessFinal { success = false }
 
         if finalText.isEmpty { finalText = assistantAcc.joined(separator: "\n") }
+        if !success && sawFinal && !limitDetected && !cancelled && SignInExpiry.detect(finalText) {
+            SignInExpiry.report(true)
+        } else if success {
+            SignInExpiry.report(false)
+        }
 
         let note: String? = {
             if cancelled { return "cancelled" }

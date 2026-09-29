@@ -87,6 +87,11 @@ struct MeetingRecord: Codable, Identifiable, Equatable {
     var remoteTranscript: String?
     var remoteTranscriptModel: String?
     var remoteTranscriptAt: Date?
+    // P-R-6: what kind of moment each action item is (decision, the person's
+    // commitment, someone else's action item, or not in the transcript), keyed
+    // by the item's text and judged once per summary (MeetingMomentJudgment).
+    // Optional so legacy records decode unchanged; nil on every keyless install.
+    var actionItemMoments: [String: MeetingMoment]?
 
     init(
         id: UUID = UUID(),

@@ -353,11 +353,26 @@ final class OnboardingLocalPathTests: XCTestCase {
     /// EVERY OTHER ROW BEHAVES EXACTLY AS IT DID. A group is a new relation in a
     /// frozen contract, so the thing to prove is not only that chat improved but
     /// that nothing else changed shape underneath it.
-    func testNoOtherRowUsesAGroupAndTheFlatRuleIsUnchanged() {
-        for row in FeatureRegistry.rows where row.id != "chat" {
-            XCTAssertTrue(row.anyOf.isEmpty,
-                          "\(row.id) grew an either-or group. That may well be right, but it "
-                          + "is a contract change and needs a dated amendment, not a quiet edit")
+    func testNoOtherRowUsesAGroupAndTheFlatRuleIsUnchanged() throws {
+        // The rows allowed to carry a group, each with the amendment that
+        // allowed it. The test reads the DOCUMENT for that amendment, so the
+        // list cannot be extended by editing this array alone: a new group
+        // still needs a dated CR in the contract before this goes green.
+        let grouped = ["chat": "CR-33", "design.studio": "CR-38"]
+        let registry = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+                .appendingPathComponent("docs/feature-registry.md"), encoding: .utf8)
+        for row in FeatureRegistry.rows {
+            guard let cr = grouped[row.id] else {
+                XCTAssertTrue(row.anyOf.isEmpty,
+                              "\(row.id) grew an either-or group. That may well be right, but it "
+                              + "is a contract change and needs a dated amendment, not a quiet edit")
+                continue
+            }
+            XCTAssertFalse(row.anyOf.isEmpty, "\(row.id) lost the group \(cr) gave it")
+            XCTAssertTrue(registry.contains("\(cr). `\(row.id)`"),
+                          "\(row.id) carries a group with no amendment naming it in docs/feature-registry.md")
         }
         var checked = 0
         for row in FeatureRegistry.rows where row.anyOf.isEmpty && !row.blocking.isEmpty {

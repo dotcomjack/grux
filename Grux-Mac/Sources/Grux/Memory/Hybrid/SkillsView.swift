@@ -3,10 +3,24 @@ import SwiftUI
 // Manage learned skills: the procedures Claude saved via save_skill.
 // The user can review, hand-edit, add, and delete them here. Tight scale,
 // GruxTheme tokens throughout.
+//
+// It renders inside the Chat composer now (Phase C fold), where `onUse` puts a
+// skill in front of the message being written.
 struct SkillsView: View {
-    @ObservedObject var store: SkillStore = .shared
+    @ObservedObject var store: SkillStore
+    /// What USE does. Nil hides the button, for a host with no draft to use it in.
+    let onUse: ((Skill) -> Void)?
     @State private var editorState: SkillEditorState? = nil
     @State private var expanded: Set<UUID> = []
+
+    /// A nil store means the shared one. It is resolved in here rather than as
+    /// a default argument, because a default argument is evaluated outside the
+    /// main actor that owns the shared store.
+    @MainActor
+    init(store: SkillStore? = nil, onUse: ((Skill) -> Void)? = nil) {
+        self.store = store ?? .shared
+        self.onUse = onUse
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -71,28 +85,56 @@ struct SkillsView: View {
         )
     }
 
+    private func skillTitle(_ skill: Skill, isExpanded: Bool) -> some View {
+        HStack(spacing: GruxSpacing.s) {
+            Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(GruxTheme.textTertiary)
+            Text(skill.name)
+                .font(GruxType.body)
+                .foregroundStyle(GruxTheme.textPrimary)
+            Text("\(skill.usageCount)x")
+                .font(GruxType.microCaps)
+                .foregroundStyle(GruxTheme.textTertiary)
+                .padding(.horizontal, GruxSpacing.xs + 2).padding(.vertical, 2)
+                .background(Capsule().fill(Color.white.opacity(0.06)))
+        }
+    }
+
+    private func skillActions(_ skill: Skill) -> some View {
+        HStack(spacing: GruxSpacing.s) {
+            if let onUse {
+                GruxChip(title: "USE", style: .primary) { onUse(skill) }
+                    .help("Put this skill in front of your message")
+            }
+            GruxChip(title: "EDIT", style: .secondary) {
+                editorState = SkillEditorState(skill: skill)
+            }
+            GruxChip(title: "DELETE", style: .destructive) {
+                store.remove(skill.id)
+            }
+        }
+    }
+
     private func skillRow(_ skill: Skill) -> some View {
         let isExpanded = expanded.contains(skill.id)
         return VStack(alignment: .leading, spacing: GruxSpacing.xs + 2) {
-            HStack(spacing: GruxSpacing.s) {
-                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(GruxTheme.textTertiary)
-                Text(skill.name)
-                    .font(GruxType.body)
-                    .foregroundStyle(GruxTheme.textPrimary)
-                Text("\(skill.usageCount)x")
-                    .font(GruxType.microCaps)
-                    .foregroundStyle(GruxTheme.textTertiary)
-                    .padding(.horizontal, GruxSpacing.xs + 2).padding(.vertical, 2)
-                    .background(Capsule().fill(Color.white.opacity(0.06)))
-                Spacer()
-                GruxChip(title: "EDIT", style: .secondary) {
-                    editorState = SkillEditorState(skill: skill)
+            // Measured in the Chat composer at the 840pt window floor, where
+            // the conversation column is about 390pt: one line wrapped the
+            // name onto three lines and cut DELETE to "DELE...". When the row
+            // does not fit on one line, the buttons drop under the name.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: GruxSpacing.s) {
+                    skillTitle(skill, isExpanded: isExpanded)
+                    Spacer()
+                    skillActions(skill)
                 }
-                GruxChip(title: "DELETE", style: .destructive) {
-                    store.remove(skill.id)
+                VStack(alignment: .leading, spacing: GruxSpacing.xs + 2) {
+                    skillTitle(skill, isExpanded: isExpanded)
+                    skillActions(skill)
+                        .padding(.leading, 17)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .contentShape(Rectangle())
             .onTapGesture {

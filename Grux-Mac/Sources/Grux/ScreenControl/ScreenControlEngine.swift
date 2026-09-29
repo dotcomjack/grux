@@ -36,7 +36,7 @@ enum ScreenControlEngine {
     /// Non-prompting trust check. Never pops the system dialog mid-command,
     /// same posture as MusicTool.accessibilityGranted().
     static func hasAccessibility() -> Bool {
-        AXIsProcessTrusted()
+        AccessibilityTrust.isGranted()
     }
 
     /// Prompting variant: asks macOS to surface the Accessibility pane the
@@ -44,8 +44,7 @@ enum ScreenControlEngine {
     /// explicit "enable / grant" path, never inside a routine action.
     @discardableResult
     static func promptAccessibility() -> Bool {
-        let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
-        return AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
+        AccessibilityTrust.requestWithPrompt()
     }
 
     /// Whether flipping the Screen control switch should raise that prompt.
@@ -246,6 +245,7 @@ enum ScreenControlEngine {
     /// off the main thread because `AXUIElement` reads are plain synchronous IPC
     /// with no run loop involvement (no `AXObserver` is used here).
     static func collectElements(pid: pid_t, maxCount: Int = 80) -> [UIElementInfo] {
+        guard AccessibilityTrust.isGranted() else { return [] }
         let axApp = AXUIElementCreateApplication(pid)
         // Fail fast on an unresponsive app rather than hanging the tool call.
         AXUIElementSetMessagingTimeout(axApp, 0.6)
@@ -277,6 +277,40 @@ enum ScreenControlEngine {
         "AXToggle",
     ]
 
+    /// A row scrolled out of view still has an Accessibility frame, and the
+    /// frame is where it WOULD be, not where it is: a long Finder list reports
+    /// centres thousands of points above the screen. Handing one of those to
+    /// the model as "click-ready" is handing it a click that lands nowhere.
+    /// Measured 2026-09-20 on a scrolled Finder window: 60 of 80 elements had
+    /// centres around y = -7,000 against displays spanning y = 0 to 2,557.
+    ///
+    /// FIXED 2026-09-21. The first version flipped the union of the screens
+    /// into a rectangle from y = -height to +height, so a row 2,000 points
+    /// above a 2,557 point display still counted as on it: measured on a
+    /// scrolled Finder "Recents" window, rows at y = -2,563 were handed out as
+    /// click-ready. Its test only tried a row 7,000 points up, which the wrong
+    /// flip also rejected, so it passed.
+    static func isOnADisplay(_ frame: CGRect) -> Bool {
+        isOnADisplay(frame, screens: NSScreen.screens.map(\.frame))
+    }
+
+    /// Pure, over Cocoa screen frames with the main display first (as
+    /// `NSScreen.screens` orders them). Each screen is judged on its own, so
+    /// the gap beside a shorter display is not "on a display".
+    static func isOnADisplay(_ frame: CGRect, screens: [CGRect]) -> Bool {
+        let displays = topLeftFrames(screens)
+        guard !displays.isEmpty else { return true }   // headless: nothing to judge against
+        return displays.contains { $0.intersects(frame) }
+    }
+
+    /// Cocoa puts (0,0) at the main display's BOTTOM-left with y growing up;
+    /// Accessibility puts it at the main display's TOP-left with y growing
+    /// down. So y flips around the main display's top edge.
+    static func topLeftFrames(_ cocoa: [CGRect]) -> [CGRect] {
+        guard let main = cocoa.first else { return [] }
+        return cocoa.map { CGRect(x: $0.minX, y: main.maxY - $0.maxY, width: $0.width, height: $0.height) }
+    }
+
     private static func collect(_ el: AXUIElement, depth: Int,
                                 scanned: inout Int, scanCap: Int,
                                 out: inout [UIElementInfo], limit: Int) {
@@ -284,7 +318,8 @@ enum ScreenControlEngine {
         scanned += 1
 
         let role = axString(el, kAXRoleAttribute) ?? ""
-        if actionableRoles.contains(role), let frame = axFrame(el), frame.width > 1, frame.height > 1 {
+        if actionableRoles.contains(role), let frame = axFrame(el), frame.width > 1, frame.height > 1,
+           isOnADisplay(frame) {
             let title = bestTitle(el)
             let value = axString(el, kAXValueAttribute) ?? ""
             out.append(UIElementInfo(role: role, title: title, value: value, frame: frame))

@@ -39,7 +39,7 @@ final class MicConsentTests: XCTestCase {
         XCTAssertTrue(text.contains("mute"), "never says how to stop it")
         // WAS: an assertion that "on this mac" appears, which LOCKED IN a false
         // claim. The wake word sets requiresOnDeviceRecognition = false
-        // (WakeWord.swift:179) on purpose, so its audio can reach Apple. The
+        // (WakeWord.swift:224) on purpose, so its audio can reach Apple. The
         // copy is per-feature now and each must be accurate about its own path.
         let ambient = MicConsent.body(for: .ambient).lowercased()
         XCTAssertTrue(ambient.contains("on this mac"),
@@ -49,15 +49,30 @@ final class MicConsentTests: XCTestCase {
                       "the wake word can send audio to Apple and the dialog must say so")
         XCTAssertFalse(wake.contains("does not leave"),
                        "the wake word dialog claims the audio stays local, which is false")
-        // THE CONSEQUENCE PEOPLE ACTUALLY NOTICE. Apple's voice processing takes
-        // over while anything listens and macOS drops system output to a
-        // narrow-band call codec, so music and video go tinny. The Voice pane
-        // documented this already; the dialog that turns listening ON did not,
-        // which is the wrong way round.
-        XCTAssertTrue(text.contains("music") || text.contains("audio"),
-                      "never warns that listening degrades system audio output")
-        XCTAssertTrue(text.contains("codec") || text.contains("tinny"),
-                      "names no concrete effect on playback")
+        // WHAT THIS ASSERTION USED TO BE, AND WHY IT IS INVERTED NOW.
+        //
+        // It required the dialog to contain "codec" or "tinny", because the
+        // dialog was supposed to warn that Apple's voice processing drops
+        // system output to a narrow-band call codec. That claim was never
+        // measured. It WAS measured on 2026-09-23 and it is false: a 12 kHz
+        // tone survived 73 dB above the noise floor while voice processing
+        // ran, the output device stayed 48000 Hz 2ch 32bit lpcm, and a
+        // playback-only process saw zero disruption. Background listening no
+        // longer enables voice processing at all, so the warning was wrong
+        // twice over.
+        //
+        // The assertion itself was the trap: it made correcting the dialog
+        // turn the suite red, which is the exact failure mode MicConsent.swift
+        // already documented from the first time consent copy was wrong. So it
+        // now guards the OTHER direction. A dialog that promises to degrade
+        // audio it does not degrade is still a dialog that lies to someone
+        // deciding whether to hand over their microphone.
+        XCTAssertFalse(text.lowercased().contains("tinny"),
+                       "the disproven 'goes tinny' claim is back in the consent dialog")
+        XCTAssertFalse(text.lowercased().contains("call codec"),
+                       "the disproven 'call codec' claim is back in the consent dialog")
+        XCTAssertTrue(text.contains("microphone"),
+                      "the dialog must still name the real cost: Grux holds the microphone while this is on")
 
         // An earlier draft claimed other apps could not record while Grux
         // listened. Measured on this machine that is FALSE: macOS shares the
@@ -137,11 +152,18 @@ final class MicConsentTests: XCTestCase {
 
     /// The cost stays visible while it runs, rather than being explained once
     /// and forgotten. First run happens once; the microphone is open for months.
+    /// One Listening control now covers both listening features, so the note is
+    /// shown once, and it has to be shown whenever the control is not Off.
     func testTheCostIsRestatedWhileRunning() throws {
-        let src = try String(contentsOf: sourcesRoot().appendingPathComponent("SettingsView.swift"),
+        let src = try String(contentsOf: sourcesRoot().appendingPathComponent("Settings/ListeningSection.swift"),
                              encoding: .utf8)
         let shown = src.components(separatedBy: "MicConsent.runningNote").count - 1
-        XCTAssertGreaterThanOrEqual(shown, 2,
-                                    "only \(shown) of the two listening features restate the cost while on")
+        XCTAssertGreaterThanOrEqual(shown, 1, "the Listening control no longer restates the cost while on")
+        let gate = src.range(of: "listeningMode != .off")
+        let note = src.range(of: "MicConsent.runningNote")
+        XCTAssertNotNil(gate, "the running note must be gated on the control not being Off")
+        if let gate, let note {
+            XCTAssertLessThan(gate.lowerBound, note.lowerBound, "the note is shown outside the not-Off branch")
+        }
     }
 }

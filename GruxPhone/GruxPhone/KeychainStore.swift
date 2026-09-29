@@ -10,7 +10,14 @@ import Security
 // entitlement keeps the app alive, but Keychain reads would otherwise fail
 // until the user unlocks).
 enum PhoneKeychain {
-    static let service = "com.dcj.gruxphone"
+    // RENAMED 2026-09-22 with the bundle id, for the open source release: the
+    // old prefix carried the original author's initials. On iOS this is not a
+    // migration and cannot be one. A bundle id change moves the app into a
+    // different keychain access group, so items written by the old app are
+    // unreachable to the new one whatever this string says. The pairing is
+    // therefore redone once, from the Mac: delete the old app, install this
+    // one, and pair again.
+    static let service = "com.gruxai.gruxphone"
 
     enum Key: String {
         case pairingSecretB64

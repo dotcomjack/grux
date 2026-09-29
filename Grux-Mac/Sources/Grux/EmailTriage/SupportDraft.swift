@@ -167,8 +167,7 @@ final class SupportDraftStore: ObservableObject {
     @Published private(set) var drafts: [SupportDraft] = []
 
     static var rootDir: URL {
-        URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux")
+        Persistence.gruxDir
             .appendingPathComponent("support")
     }
     private static var fileURL: URL { rootDir.appendingPathComponent("drafts.json") }

@@ -52,6 +52,34 @@ final class PermissionDeadEndTests: XCTestCase {
                        "onboarding offers a permission this test does not pin a path for")
     }
 
+    /// EVERY BUTTON LANDS ON ITS OWN PANE. Notifications was built as a Privacy anchor,
+    /// `com.apple.preference.security?Notifications`, which measured on macOS 26.6.2 landing
+    /// on Privacy & Security, a page with no Notifications switch, so the card that promised
+    /// the switch sent the person somewhere else. The Notifications settings extension is
+    /// its own URL. Each Privacy anchor here was measured landing on its pane.
+    func testEveryPermissionOpensThePaneItNames() {
+        let privacy = "x-apple.systempreferences:com.apple.preference.security?"
+        let expected: [SetupRequirement: String] = [
+            .permNotifications:   "x-apple.systempreferences:com.apple.Notifications-Settings.extension",
+            .permMicrophone:      privacy + "Privacy_Microphone",
+            .permCalendar:        privacy + "Privacy_Calendars",
+            .permContacts:        privacy + "Privacy_Contacts",
+            .permScreenRecording: privacy + "Privacy_ScreenCapture",
+            .permSystemAudio:     privacy + "Privacy_ScreenCapture",
+            .permAccessibility:   privacy + "Privacy_Accessibility",
+            .permAutomation:      privacy + "Privacy_Automation",
+            .permFullDiskAccess:  privacy + "Privacy_AllFiles",
+        ]
+        for (req, url) in expected {
+            XCTAssertEqual(CapabilityRequest.settingsURL(for: req).absoluteString, url, req.rawValue)
+        }
+        XCTAssertTrue(Set(expected.keys).isSuperset(of: CapabilityRequest.onboardingOrder),
+                      "onboarding offers a permission this test does not pin a pane for")
+        XCTAssertFalse(CapabilityRequest.settingsURL(for: .permNotifications).absoluteString
+                        .contains("preference.security"),
+                       "Notifications opens Privacy & Security, which has no Notifications switch")
+    }
+
     /// Notifications gets the switch it actually has; the Privacy panes get the list they
     /// actually have. "Turn it on" for a list you must find yourself is the almost-right
     /// instruction that costs more than silence.

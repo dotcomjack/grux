@@ -300,11 +300,13 @@ final class UserCronScheduler {
             // The user explicitly opted in to a fire notification on this
             // job, so it must interrupt regardless of the triage matrix
             // (sendInfo lands in the .system bucket and gets batched).
+            let notice = Self.fireNotice(jobTitle: job.title, action: job.action,
+                                         workflowName: Self.workflowName(of: job.action))
             NotificationManager.shared.sendCategorized(
                 .commandPhases,
                 actionRequired: true,
-                title: "Schedule: \(job.title)",
-                body: "Running \(job.action.summary)"
+                title: notice.title,
+                body: notice.body
             )
         }
 
@@ -318,10 +320,9 @@ final class UserCronScheduler {
                     WakeLog.shared.log("user cron: '\(job.title)' started run \(runId.uuidString.prefix(8))")
                 case .failure(let err):
                     WakeLog.shared.log("user cron: '\(job.title)' failed to start workflow: \(err)")
-                    NotificationManager.shared.sendInfo(
-                        title: "Schedule failed: \(job.title)",
-                        body: "Could not start workflow '\(definitionId)'."
-                    )
+                    let notice = Self.startFailedNotice(jobTitle: job.title,
+                                                        workflowName: Self.workflowName(of: job.action))
+                    NotificationManager.shared.sendInfo(title: notice.title, body: notice.body)
                 }
             }
 
@@ -334,13 +335,49 @@ final class UserCronScheduler {
                     cwd: home,
                     runId: UUID()
                 )
-                let outcome = result.success ? "done" : "had trouble"
-                NotificationManager.shared.sendInfo(
-                    title: "Schedule \(outcome): \(title)",
-                    body: String(result.text.prefix(180))
-                )
+                let notice = Self.agentNotice(title: title, result: result)
+                NotificationManager.shared.sendInfo(title: notice.title, body: notice.body)
                 WakeLog.shared.log("user cron: '\(title)' agent finished success=\(result.success) cost=$\(String(format: "%.4f", result.costUSD))")
             }
         }
+    }
+
+    /// The display name of the workflow a job runs, nil for an agent prompt
+    /// or a workflow this Mac does not have.
+    static func workflowName(of action: UserCronAction) -> String? {
+        guard case .runCommand(let id) = action else { return nil }
+        return CommandV2Engine.shared.definition(id: id)?.displayName
+    }
+
+    /// What a job that asked to be told when it fires says.
+    static func fireNotice(jobTitle: String, action: UserCronAction,
+                           workflowName: String?) -> (title: String, body: String) {
+        switch action {
+        case .runCommand:
+            return ("Schedule: \(jobTitle)", "Starting \(Self.plainName(workflowName)).")
+        case .agentPrompt:
+            return ("Schedule: \(jobTitle)", "Starting your scheduled prompt.")
+        }
+    }
+
+    /// A workflow's name as a sentence reads it: its placeholders filled as
+    /// "your project", and "that workflow" when this Mac does not have it.
+    private static func plainName(_ workflowName: String?) -> String {
+        workflowName.map { CommandV2Engine.runName($0, params: [:]) } ?? "that workflow"
+    }
+
+    /// What a job whose workflow would not start says.
+    static func startFailedNotice(jobTitle: String, workflowName: String?) -> (title: String, body: String) {
+        ("Schedule failed: \(jobTitle)", "I could not start \(plainName(workflowName)).")
+    }
+
+    /// What a scheduled agent prompt's notification says when it ends.
+    static func agentNotice(title: String,
+                            result: CommandV2AgentBridge.AgentResult) -> (title: String, body: String) {
+        let outcome = result.success ? "done" : "had trouble"
+        let body = result.signInExpired
+            ? "Claude sign-in expired. Open Grux to sign in again."
+            : String(result.text.prefix(180))
+        return ("Schedule \(outcome): \(title)", body)
     }
 }

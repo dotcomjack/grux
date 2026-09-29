@@ -35,6 +35,7 @@ struct SocialView: View {
                 Text("Social")
                     .font(GruxType.title)
                     .foregroundStyle(GruxTheme.textPrimary)
+                LabsHeaderBadge(feature: "social")
                 // Says what the tab DOES, for someone who has never seen it.
                 // "Threads orchestrator tuning" named one operator's own
                 // posting pipeline: three words, none of which tell a stranger
@@ -83,6 +84,8 @@ private struct SocialDashboardWebView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> WKWebView {
         let w = WKWebView()
+        w.navigationDelegate = context.coordinator
+        context.coordinator.url = url
         w.load(URLRequest(url: url))
         context.coordinator.lastToken = reloadToken
         return w
@@ -93,12 +96,22 @@ private struct SocialDashboardWebView: NSViewRepresentable {
         // re-renders do not thrash the page or lose scroll position.
         guard context.coordinator.lastToken != reloadToken else { return }
         context.coordinator.lastToken = reloadToken
+        context.coordinator.url = url
         view.load(URLRequest(url: url))
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
-    final class Coordinator {
+    final class Coordinator: NSObject, WKNavigationDelegate {
         var lastToken = -1
+        var url: URL?
+        let recovery = WebContentRecovery(surface: "Social dashboard")
+
+        // A lost content process: log it and load the dashboard once more.
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            recovery.contentProcessEnded {
+                if let url { webView.load(URLRequest(url: url)) }
+            }
+        }
     }
 }

@@ -28,28 +28,44 @@ struct CalendarView: View {
             if checkedAccess && !hasAccess {
                 noAccessState
             } else {
-                HStack(alignment: .top, spacing: 0) {
-                    monthGrid
-                        // Was 420 which, with the 260 day agenda, forced a 680
-                        // detail min and clipped the nav sidebar when the window
-                        // narrowed. 340 keeps the 7-column grid usable while
-                        // letting Calendar reflow down to the window floor.
-                        .frame(minWidth: 340)
-                        // Serve the grid FIRST, and this is load-bearing rather
-                        // than cosmetic. HStack offers space in order of
-                        // increasing flexibility, so without this the agenda
-                        // (200...320, flexibility 120) is served before the grid
-                        // (340 floor, no ceiling, flexibility infinite): at the
-                        // 599pt pane floor the agenda is proposed 299, accepts
-                        // it because 299 is inside its range, and the grid is
-                        // then handed 299 but returns its 340 floor. The stack
-                        // reports 640 into 599 and clips 41pt off the right.
-                        // With priority the grid is offered 599 less the
-                        // agenda's 200 floor and both fit.
-                        .layoutPriority(1)
-                    Divider().opacity(0.3)
-                    dayAgenda
-                        .frame(minWidth: 200, maxWidth: 320)
+                // The grid beside the day's agenda where both fit at their
+                // floors; on a narrower pane (the Command Panel's starts at
+                // 360pt) the agenda goes under the grid and the two scroll.
+                GruxWidthSwitch(threshold: GruxLayout.calendarGridMin + GruxLayout.divider
+                                    + GruxLayout.calendarAgendaMin) {
+                    HStack(alignment: .top, spacing: 0) {
+                        monthGrid
+                            // Was 420 which, with the 260 day agenda, forced a 680
+                            // detail min and clipped the nav sidebar when the window
+                            // narrowed. 340 keeps the 7-column grid usable while
+                            // letting Calendar reflow down to the window floor.
+                            .frame(minWidth: GruxLayout.calendarGridMin)
+                            // Serve the grid FIRST, and this is load-bearing rather
+                            // than cosmetic. HStack offers space in order of
+                            // increasing flexibility, so without this the agenda
+                            // (200...320, flexibility 120) is served before the grid
+                            // (340 floor, no ceiling, flexibility infinite): at the
+                            // 599pt pane floor the agenda is proposed 299, accepts
+                            // it because 299 is inside its range, and the grid is
+                            // then handed 299 but returns its 340 floor. The stack
+                            // reports 640 into 599 and clips 41pt off the right.
+                            // With priority the grid is offered 599 less the
+                            // agenda's 200 floor and both fit.
+                            .layoutPriority(1)
+                        Divider().opacity(0.3)
+                        dayAgenda
+                            .frame(minWidth: GruxLayout.calendarAgendaMin, maxWidth: GruxLayout.calendarAgendaMax)
+                    }
+                } narrow: {
+                    ScrollView {
+                        VStack(spacing: 0) {
+                            monthGrid
+                                .frame(minHeight: GruxLayout.calendarStackedGridHeight)
+                            Divider().opacity(0.3)
+                            dayAgenda
+                                .frame(minHeight: GruxLayout.stackedListHeight)
+                        }
+                    }
                 }
             }
             if let status = statusMessage {
@@ -444,7 +460,8 @@ struct CalendarView: View {
 
 // MARK: - New event sheet
 
-private struct NewEventSheet: View {
+// Internal, not private: PaneFitSweepTests hosts it.
+struct NewEventSheet: View {
     let defaultDay: Date
     let onDone: (Bool) -> Void
 

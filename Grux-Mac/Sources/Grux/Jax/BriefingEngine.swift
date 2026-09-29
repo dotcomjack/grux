@@ -32,6 +32,7 @@ struct BriefingItem: Codable, Identifiable, Hashable {
         case task               // a NOW / NEXT task to hit
         case approvalPending    // something parked in the Jax HQ approval queue
         case proposalPending    // a Foundry self-upgrade proposal awaiting review
+        case decisions          // the day's decisions: how many, how fast, what they cost
 
         var label: String {
             switch self {
@@ -42,6 +43,7 @@ struct BriefingItem: Codable, Identifiable, Hashable {
             case .task:            return "On deck"
             case .approvalPending: return "Awaiting your tap"
             case .proposalPending: return "Self-upgrade"
+            case .decisions:       return "Decisions"
             }
         }
 
@@ -56,6 +58,7 @@ struct BriefingItem: Codable, Identifiable, Hashable {
             case .task:            return "bolt"
             case .approvalPending: return "hand.tap"
             case .proposalPending: return "wand.and.stars"
+            case .decisions:       return "gauge.with.dots.needle.33percent"
             }
         }
     }
@@ -132,8 +135,7 @@ struct Briefing: Codable, Identifiable, Hashable {
 // (briefings touch private mail + ops).
 enum BriefingPaths {
     static var dir: URL {
-        let d = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux", isDirectory: true)
+        let d = Persistence.gruxDir
             .appendingPathComponent("jax", isDirectory: true)
             .appendingPathComponent("briefings", isDirectory: true)
         try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
@@ -512,21 +514,11 @@ final class BriefingEngine: ObservableObject {
     private func assembleItems(slot: Briefing.Slot) -> [BriefingItem] {
         var items: [BriefingItem] = []
 
-        // 1. Emails needing the user: unread messages across synced inboxes. These
-        //    are the "needs a reply" rows. Cap so a flooded inbox does not
-        //    drown the briefing.
-        let unread = MailStore.shared.messages
-            .filter { $0.isUnread }
-            .prefix(5)
-        for msg in unread {
-            let from = msg.fromName.isEmpty ? msg.fromEmail : msg.fromName
-            let subject = msg.subject.isEmpty ? "(no subject)" : msg.subject
-            items.append(BriefingItem(
-                kind: .emailNeedsYou,
-                title: subject,
-                detail: "from \(from)"
-            ))
-        }
+        // 1. Emails needing the user. The same rule as the rail's Mail badge and
+        //    Today's card (`MailNeedsYou.counts`), so the three never disagree;
+        //    this used to take every UNREAD message, newsletters included,
+        //    while the badge said 17 of 53 actually needed a reply.
+        items += Self.mailItems(MailStore.shared.messages)
 
         // 2. Ops signal: the autonomous Meta ads engine snapshot, if present.
         //    Read-only from the on-disk snapshot the MetaAds tab already reads
@@ -603,7 +595,32 @@ final class BriefingEngine: ObservableObject {
             ))
         }
 
+        // 7. The day's decisions, one line, and only when there were some: a
+        //    briefing that says "no decisions yet" at 7 AM every morning is
+        //    noise (Phase D, D4).
+        if let decisions = Self.decisionItem(DecisionUsageSummary.today(DecisionLedger.shared.recent)) {
+            items.append(decisions)
+        }
+
         return items
+    }
+
+    /// Mail that needs the person, newest first, five at most.
+    nonisolated static func mailItems(_ messages: [EmailMessage], limit: Int = 5) -> [BriefingItem] {
+        messages.filter(MailNeedsYou.counts)
+            .sorted { $0.date > $1.date }
+            .prefix(limit)
+            .map { msg in
+                let from = msg.fromName.isEmpty ? msg.fromEmail : msg.fromName
+                let subject = msg.subject.isEmpty ? "(no subject)" : msg.subject
+                return BriefingItem(kind: .emailNeedsYou, title: subject, detail: "from \(from)")
+            }
+    }
+
+    /// "24 decisions today, 512 ms average, under $0.01", or nothing at all.
+    nonisolated static func decisionItem(_ summary: DecisionUsageSummary) -> BriefingItem? {
+        guard !summary.isEmpty else { return nil }
+        return BriefingItem(kind: .decisions, title: summary.line, detail: summary.providerPhrase)
     }
 
     // The window for "goals advanced". Night brief: since 04:00 today (the day's
@@ -625,8 +642,7 @@ final class BriefingEngine: ObservableObject {
     // pacing into one ops line. Soft by design: any missing file / parse miss
     // returns nil so the briefing simply omits ops rather than failing.
     private func readMetaAdsOpsSignal() -> BriefingItem? {
-        let url = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux", isDirectory: true)
+        let url = Persistence.gruxDir
             .appendingPathComponent("meta-ads-snapshot.json")
         guard let data = try? Data(contentsOf: url),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]

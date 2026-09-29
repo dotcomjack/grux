@@ -201,9 +201,24 @@ private struct BrandedEmailWebView: NSViewRepresentable {
     func makeNSView(context: Context) -> WKWebView {
         let w = WKWebView()
         w.setValue(false, forKey: "drawsBackground")   // transparent so the dark card shows through margins
+        w.navigationDelegate = context.coordinator
         return w
     }
     func updateNSView(_ view: WKWebView, context: Context) {
+        context.coordinator.html = html
         view.loadHTMLString(html, baseURL: nil)
+    }
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator: NSObject, WKNavigationDelegate {
+        var html: String?
+        let recovery = WebContentRecovery(surface: "Draft reply preview")
+
+        // A lost content process: log it and draw the draft once more.
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            recovery.contentProcessEnded {
+                if let html { webView.loadHTMLString(html, baseURL: nil) }
+            }
+        }
     }
 }

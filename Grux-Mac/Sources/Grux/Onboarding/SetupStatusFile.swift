@@ -47,7 +47,7 @@ enum SetupStatusFile {
     static let schemaVersion = 3
 
     nonisolated static var url: URL {
-        URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".grux/setup-status.json")
+        Persistence.gruxDir.appendingPathComponent("setup-status.json")
     }
 
     // MARK: - Shape

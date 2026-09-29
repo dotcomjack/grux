@@ -28,6 +28,8 @@ enum CommandV2AgentBridge {
         let durationSec: Double
         let workerCount: Int
         let pausedForAuth: Bool
+        /// The run failed because the Claude CLI's sign-in expired.
+        var signInExpired: Bool = false
     }
 
     // MARK: - Single agent
@@ -67,7 +69,8 @@ enum CommandV2AgentBridge {
             costUSD: result.costUSD,
             durationSec: dur,
             workerCount: 1,
-            pausedForAuth: pausedForAuth
+            pausedForAuth: pausedForAuth,
+            signInExpired: result.interruption?.kind == .signInExpired
         )
     }
 

@@ -49,8 +49,7 @@ final class BrandsPosterStore: ObservableObject {
 
     private var jsonURL: URL { Persistence.supportDir.appendingPathComponent("brands-poster-status.json") }
     private var mdURL: URL {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let dir = home.appendingPathComponent(".grux", isDirectory: true)
+        let dir = Persistence.gruxDir
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("brands-poster-status.md")
     }
@@ -147,7 +146,7 @@ final class BrandsPosterStore: ObservableObject {
         let content = UNMutableNotificationContent()
         content.title = "Brands Poster: \(rec.brand) down"
         content.body = reason
-        content.sound = .default
+        content.sound = AudioOutput.notificationSound(source: "BrandsPosterStore", text: content.title)
         content.userInfo = ["kind": "brandsPosterRed", "brand": rec.brand]
         let req = UNNotificationRequest(
             identifier: "grux.brandsposter.red.\(rec.brand)",

@@ -266,49 +266,39 @@ struct ChatThreadsSidebar: View {
 
     // MARK: - Footer
 
+    // WAS a full-width gradient button pinned under the thread list, which
+    // gave an occasional maintenance action the most prominent affordance in
+    // the column. It is a menu item now. The menu is also where a thread's
+    // other housekeeping belongs, so there is one place to look.
     private var footer: some View {
         HStack(spacing: 8) {
             let hasActive = state.activeThreadId != nil
             let hasEnough = state.chat.count >= 8
-            Button {
-                runCompact()
+            Menu {
+                Button(compacting ? "Compacting..." : "Compact thread") { runCompact() }
+                    .disabled(!hasActive || !hasEnough || compacting)
+                if !hasEnough {
+                    Text("Compacting needs at least 8 messages")
+                }
             } label: {
                 HStack(spacing: 6) {
                     if compacting {
-                        ProgressView().controlSize(.small)
-                            .scaleEffect(0.65)
-                            .frame(width: 14, height: 14)
+                        ProgressView().controlSize(.small).scaleEffect(0.65)
+                            .frame(width: 12, height: 12)
                     } else {
-                        Image(systemName: "sparkles.rectangle.stack.fill")
-                            .font(.caption2)
+                        Image(systemName: "ellipsis.circle").font(.caption2)
                     }
-                    Text(compacting ? "Compacting…" : "Compact thread")
-                        .font(.caption.weight(.semibold))
-                        .kerning(0.4)
+                    Text("Thread").font(.caption.weight(.semibold)).kerning(0.4)
                 }
-                .foregroundStyle(hasEnough ? Color.white : GruxTheme.textSecondary)
-                .padding(.horizontal, 10).padding(.vertical, 7)
-                .frame(maxWidth: .infinity)
-                .background(
-                    Capsule().fill(
-                        hasEnough
-                            ? AnyShapeStyle(GruxTheme.iridescent)
-                            : AnyShapeStyle(Color.white.opacity(0.05))
-                    )
-                )
-                .overlay(
-                    Capsule().strokeBorder(
-                        hasEnough ? Color.white.opacity(0.25) : Color.white.opacity(0.10),
-                        lineWidth: 0.6
-                    )
-                )
-                .shadow(color: hasEnough ? GruxTheme.violetGlow() : .clear, radius: 6)
+                .foregroundStyle(GruxTheme.textSecondary)
+                .padding(.horizontal, 10).padding(.vertical, 6)
+                .background(Capsule().fill(Color.white.opacity(0.05)))
+                .overlay(Capsule().strokeBorder(Color.white.opacity(0.10), lineWidth: 0.6))
             }
-            .buttonStyle(.plain)
-            .disabled(!hasActive || !hasEnough || compacting)
-            .help(hasEnough
-                  ? "Fold older messages into a rolling summary and keep the last 10 in view"
-                  : "Needs at least 8 messages before compacting is useful")
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, 12).padding(.vertical, 10)
     }

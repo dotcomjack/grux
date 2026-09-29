@@ -10,8 +10,13 @@ struct AmbientHUDRoot: View {
     @ObservedObject var ambient = AmbientState.shared
     @ObservedObject var appState = AppState.shared
     @ObservedObject var speech = SpeechEngine.shared
+    /// Changes only when hearing starts or stops, never at audio rate.
+    @ObservedObject private var micHealth = MicHealth.shared
     // Item 24: shell bus fills the idle gap with canonical moments.
     @ObservedObject private var shellBus = ShellStateBus.shared
+    // The live decision stream. Every chunk the router judged carries its
+    // verdict back to the line that produced it.
+    @ObservedObject private var voice = VoiceCommandRouter.shared
 
     @State private var editingMemoryId: UUID?
     @State private var editingText: String = ""
@@ -62,15 +67,22 @@ struct AmbientHUDRoot: View {
 
     // MARK: - Header (orb + title + capture pill)
 
+    /// Same resolver as the sidebar orb and the menu bar. The HUD adds its
+    /// own two thinking signals (extracting, transcribing) because they are
+    /// real work the person can otherwise not see.
+    private var listeningTell: ListeningTell {
+        ListeningTell.resolve(
+            mode: appState.config.listeningModeInEffect,
+            micMuted: appState.micMuted,
+            isSpeaking: ambient.coachIsSpeaking || speech.isSpeaking || speech.isBuffering,
+            isThinking: ambient.isExtracting || ambient.isTranscribing || appState.isThinking,
+            notHearing: micHealth.notHearing)
+    }
+
     private var orbState: GruxOrbState {
-        // Muted wins - keeps the ambient HUD orb in sync with the sidebar orb.
-        if appState.micMuted { return .muted }
-        if ambient.coachIsSpeaking || speech.isSpeaking || speech.isBuffering { return .speaking }
-        if ambient.isExtracting { return .thinking }
-        if ambient.isTranscribing { return .thinking }
-        if ambient.isCapturing { return .listening }
-        // Item 24: shell bus fills the idle gap with canonical moments.
-        return shellBus.current.mode.orbState
+        if shellBus.current.mode == .alert { return ShellMode.alert.orbState }
+        if listeningTell == .off { return shellBus.current.mode.orbState }
+        return listeningTell.orbState
     }
 
     private var header: some View {
@@ -80,13 +92,13 @@ struct AmbientHUDRoot: View {
                 // main-window sidebar orb. Both observe `AppState.micMuted`
                 // so they stay visually in sync across surfaces.
                 Button {
-                    MicController.toggle()
+                    MicController.toggle(source: "ambient HUD")
                 } label: {
                     OrbView(state: orbState, level: ambient.liveLevel)
                         .frame(width: 44, height: 44)
                 }
                 .buttonStyle(.plain)
-                .help(appState.micMuted ? "Mic muted, tap to resume" : "Tap to mute the mic")
+                .help(listeningTell.help)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text("GRUX OS")
@@ -228,8 +240,13 @@ struct AmbientHUDRoot: View {
     }
 
     private var capturePillLabel: String {
-        if appState.micMuted { return "MUTED" }
-        return ambient.isEnabled ? "ON" : "OFF"
+        // The pill reports what the microphone is actually doing, so it can
+        // honestly read OFF while the saved mode is still always on and a
+        // listener is starting. Once capture is live it mirrors the orb
+        // word for word.
+        if appState.micMuted { return ListeningTell.muted.label }
+        guard ambient.isEnabled else { return ListeningTell.off.label }
+        return listeningTell.label
     }
 
     private var capturePillFill: AnyShapeStyle {
@@ -391,20 +408,46 @@ struct AmbientHUDRoot: View {
         }
     }
 
+    /// The router's verdict on this exact line, if it reached the router.
+    /// Matched on the trimmed text the router itself recorded, so nothing is
+    /// guessed. A chunk the cheap gates dropped has no verdict and stays as
+    /// plain hearing.
+    private func verdict(for chunk: AmbientChunk) -> VoiceDecisionEvent? {
+        let text = chunk.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return voice.events.last { $0.heard == text }
+    }
+
     private func chunkRow(chunk: AmbientChunk, index: Int) -> some View {
         let age = Int(Date().timeIntervalSince(chunk.timestamp))
         let ageStr: String = age < 60 ? "\(age)s" : "\(age/60)m"
         let opacity = index == 0 ? 1.0 : (index == 1 ? 0.72 : 0.45)
+        let event = verdict(for: chunk)
+        let tone = event?.tone ?? .chatter
         return HStack(alignment: .top, spacing: 8) {
             Text(ageStr)
                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
                 .foregroundStyle(.secondary)
                 .frame(width: 30, alignment: .trailing)
-            Text(chunk.text)
-                .font(.system(size: 12))
-                .foregroundStyle(.primary)
-                .lineLimit(3)
-                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(chunk.text)
+                    .font(.system(size: 12))
+                    .foregroundStyle(tone == .chatter ? Color.secondary : Color.primary)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                // Chatter stays grey and says nothing more. A decision names
+                // what Grux did and how long it took to decide it.
+                if let event, tone != .chatter {
+                    HStack(spacing: 6) {
+                        Circle().fill(tone.color).frame(width: 5, height: 5)
+                        Text(event.actionLine)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(tone.color)
+                        Text(event.latencyLine)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+            }
         }
         .opacity(opacity)
         .padding(.horizontal, 12).padding(.vertical, 8)

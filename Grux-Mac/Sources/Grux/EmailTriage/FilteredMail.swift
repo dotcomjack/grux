@@ -37,8 +37,7 @@ final class FilteredMailStore: ObservableObject {
     private let maxItems = 100
 
     static var rootDir: URL {
-        URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux")
+        Persistence.gruxDir
             .appendingPathComponent("support")
     }
     private static var fileURL: URL { rootDir.appendingPathComponent("filtered-mail.json") }

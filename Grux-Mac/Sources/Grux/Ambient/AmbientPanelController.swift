@@ -29,7 +29,7 @@ final class AmbientPanelController {
 
     func show() {
         if let existing = panel {
-            existing.orderFrontRegardless()
+            WindowFacade.orderFrontRegardless(existing)
             return
         }
         build()
@@ -47,16 +47,15 @@ final class AmbientPanelController {
         let initialSize = NSSize(width: 380, height: 520)
         let frame = restoredFrame(defaultSize: initialSize)
 
-        // Minimal style mask - matches TerminalFocusOverlayController's working
-        // setup. Adding .titled / .fullSizeContentView / .resizable breaks
-        // SwiftUI button click delivery on .nonactivatingPanel.
+        // Minimal style mask. Adding .titled / .fullSizeContentView / .resizable
+        // breaks SwiftUI button click delivery on .nonactivatingPanel.
         let panel = InteractiveHUDPanel(
             contentRect: frame,
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
-        panel.level = .floating
+        WindowFacade.setLevel(.floating, of: panel)
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
@@ -102,7 +101,7 @@ final class AmbientPanelController {
 
         self.panel = panel
         self.hostingController = hc
-        panel.orderFrontRegardless()
+        WindowFacade.orderFrontRegardless(panel)
         AmbientState.shared.hudVisible = true
     }
 

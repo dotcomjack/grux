@@ -102,7 +102,7 @@ public enum ShellSafety {
             )
         }
 
-        let destructive = looksDestructive(command: trimmed)
+        let destructive = looksDestructive(command: trimmed, cwd: currentCwd)
         return ShellSafetyVerdict(decision: .allow, looksDestructive: destructive, detectedCdTarget: nil)
     }
 
@@ -201,13 +201,202 @@ public enum ShellSafety {
 
     // MARK: - Destructive heuristic (triggers hybrid snapshot)
 
-    static func looksDestructive(command: String) -> Bool {
+    /// `cwd` is where the command runs, when the caller knows it: `sort -o`
+    /// destroys something only when the file it writes is already there.
+    public static func looksDestructive(command: String, cwd: String? = nil) -> Bool {
         let lc = command.lowercased()
         let hits = ["rm ", "rm -", "rmdir ", "git reset --hard", "git checkout .",
                     "git clean -f", "truncate ", "dd if=", "> ", ">|", "mv ",
                     "drop table", "drop database", "npm uninstall", "yarn remove",
                     "cargo rm"]
-        return hits.contains(where: { lc.contains($0) })
+        if hits.contains(where: { lc.contains($0) }) { return true }
+        return pipelineSegments(command).contains { destroysByArgument(tokenize($0), cwd: cwd) }
+    }
+
+    /// Commands a listed read-only binary turns into a delete or an overwrite
+    /// with one argument, which no text pattern above can see. Keyless there
+    /// is no provider opinion to raise them, so they belong on the floor
+    /// (ledger A23b). Writing a NEW file is not on it: nothing is lost.
+    static func destroysByArgument(_ tokens: [String], cwd: String?) -> Bool {
+        let tokens = unwrapped(tokens)
+        guard let first = tokens.first else { return false }
+        let args = Array(tokens.dropFirst())
+        switch (first as NSString).lastPathComponent {
+        case "find":
+            return args.contains("-delete")
+        case "sort":
+            guard let (target, at) = sortOutputTarget(args) else { return false }
+            // Sorting a file onto itself: the operand named again after the flag.
+            let inputs = args.enumerated().filter { $0.offset != at && !$0.element.hasPrefix("-") }
+            if inputs.contains(where: { $0.element == target }) { return true }
+            guard let cwd else { return false }
+            return FileManager.default.fileExists(atPath: resolveRelative(target: target, cwd: cwd))
+        case "git":
+            let sub = gitSubcommand(args)
+            guard sub.first == "branch" else { return false }
+            let deleting: Set<String> = ["-d", "-D", "--delete", "-M", "-C"]
+            return sub.dropFirst().contains(where: deleting.contains)
+        default:
+            return false
+        }
+    }
+
+    /// Wrappers that run the command after them, each with the flags of its
+    /// own that take a separate value. `sudo find . -delete` is a find
+    /// command, and a floor that read only the first word let it through
+    /// (review RV5).
+    static let wrapperValueFlags: [String: Set<String>] = [
+        "sudo": ["-u", "-g", "-h", "-p", "-C", "-U", "-r", "-t", "-T", "-D", "-R"],
+        "env": ["-u", "-P", "-S", "-C"],
+        "nice": ["-n"],
+        "time": [], "command": [], "nohup": [], "exec": ["-a"],
+        "xargs": ["-n", "-I", "-J", "-L", "-P", "-R", "-S", "-s", "-E", "-d", "-a"],
+    ]
+
+    /// `tokens` with leading `VAR=value` pairs and every wrapper (with its
+    /// flags and their values) peeled off, so the program that actually runs
+    /// is first.
+    static func unwrapped(_ tokens: [String]) -> [String] {
+        var rest = tokens[...]
+        while let first = rest.first {
+            if isAssignment(first) { rest = rest.dropFirst(); continue }
+            guard let valued = wrapperValueFlags[(first as NSString).lastPathComponent] else { break }
+            rest = rest.dropFirst()
+            while let flag = rest.first, flag.hasPrefix("-") {
+                rest = rest.dropFirst()
+                if flag == "--" { break }
+                if valued.contains(flag) { rest = rest.dropFirst() }
+            }
+        }
+        return Array(rest)
+    }
+
+    static func isAssignment(_ token: String) -> Bool {
+        token.range(of: #"^[A-Za-z_][A-Za-z0-9_]*="#, options: .regularExpression) != nil
+    }
+
+    /// git's arguments from the subcommand on: `git -C repo branch -D x` is
+    /// `branch -D x`.
+    static func gitSubcommand(_ args: [String]) -> [String] {
+        let valued: Set<String> = ["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path",
+                                   "--super-prefix", "--config-env"]
+        var rest = args[...]
+        while let flag = rest.first, flag.hasPrefix("-") {
+            rest = rest.dropFirst()
+            if flag == "--" { break }
+            if valued.contains(flag) { rest = rest.dropFirst() }
+        }
+        return Array(rest)
+    }
+
+    /// The file `sort` writes (`-o X`, `-oX`, `-uo X`, `--output X`, `--output=X`)
+    /// and the index of the argument that names it.
+    static func sortOutputTarget(_ args: [String]) -> (String, Int)? {
+        for (i, arg) in args.enumerated() {
+            let next = i + 1 < args.count ? (args[i + 1], i + 1) : nil
+            if arg.hasPrefix("--output=") { return (String(arg.dropFirst("--output=".count)), i) }
+            if arg == "--output" { return next }
+            guard arg.hasPrefix("-"), !arg.hasPrefix("--"), let o = arg.firstIndex(of: "o") else { continue }
+            let rest = arg[arg.index(after: o)...]
+            return rest.isEmpty ? next : (String(rest), i)
+        }
+        return nil
+    }
+
+    /// Statements, and the commands piped together inside each, outside quotes.
+    static func pipelineSegments(_ command: String) -> [String] {
+        splitStatements(command).flatMap { statement -> [String] in
+            var out: [String] = [], current = ""
+            var inSingle = false, inDouble = false
+            for c in statement {
+                if c == "'" && !inDouble { inSingle.toggle() }
+                if c == "\"" && !inSingle { inDouble.toggle() }
+                if c == "|" && !inSingle && !inDouble { out.append(current); current = ""; continue }
+                current.append(c)
+            }
+            out.append(current)
+            return out
+        }
+    }
+
+    // MARK: - Plainly read-only
+    //
+    // A command that cannot write cannot be destructive, so there is nothing
+    // for a second opinion to raise and no reason to pay for one. This is the
+    // cheap pre-filter in front of the engine, and it is deliberately narrow:
+    // a binary is read-only here only if it is read-only with EVERY flag. `git`
+    // is not on the list because `git reset --hard` is a git command; the three
+    // read-only git subcommands are matched as whole phrases instead.
+
+    static let plainlyReadOnlyBinaries: Set<String> = [
+        "ls", "cat", "head", "tail", "wc", "pwd", "echo", "stat", "file",
+        "which", "whoami", "date", "uname", "df", "du", "env", "printenv",
+        "grep", "rg", "find", "diff", "tree", "sort", "uniq", "basename", "dirname"
+    ]
+
+    static let plainlyReadOnlyPhrases: [String] = [
+        "git status", "git log", "git diff", "git show", "git branch"
+    ]
+
+    /// True when the command reads and cannot write. A redirect, a pipe into
+    /// anything, a chain or a subshell all disqualify it, because the second
+    /// half of `ls > /etc/passwd` is the half that matters.
+    public static func isPlainlyReadOnly(command: String) -> Bool {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return true }
+        let lc = trimmed.lowercased()
+        // Anything that can chain, redirect or substitute is out of scope for
+        // a one-token judgement.
+        for marker in [">", "|", ";", "&", "`", "$(", "\n"] where lc.contains(marker) {
+            return false
+        }
+        let tokens = tokenize(trimmed)
+        if let phrase = plainlyReadOnlyPhrases.first(where: { lc == $0 || lc.hasPrefix($0 + " ") }) {
+            return !writes(gitPhrase: phrase, args: Array(tokens.dropFirst(2)))
+        }
+        guard let first = tokens.first else { return true }
+        let base = (first as NSString).lastPathComponent.lowercased()
+        guard plainlyReadOnlyBinaries.contains(base) else { return false }
+        return !writes(binary: base, args: Array(tokens.dropFirst()))
+    }
+
+    /// The arguments that make a listed binary write, delete or run another
+    /// command. `find . -delete` is a find command, so the list above holds
+    /// only while none of these is present.
+    static func writes(binary: String, args: [String]) -> Bool {
+        let operands = args.filter { !$0.hasPrefix("-") }
+        switch binary {
+        case "find":
+            let acting: Set<String> = ["-delete", "-exec", "-execdir", "-ok", "-okdir",
+                                       "-fprint", "-fprint0", "-fprintf", "-fls"]
+            return args.contains(where: acting.contains)
+        case "sort":
+            // `-o file`, also inside a cluster like `-uo`.
+            return args.contains { $0.hasPrefix("--output") || ($0.hasPrefix("-") && !$0.hasPrefix("--") && $0.contains("o")) }
+        case "tree":
+            return args.contains { $0 == "-o" || $0 == "-R" }
+        case "env":
+            // Anything after `env` is a command it runs, or a setting for one.
+            return !args.isEmpty
+        case "rg":
+            return args.contains { $0 == "--pre" || $0.hasPrefix("--pre=") }
+        case "uniq":
+            // `uniq in out` writes out.
+            return operands.count > 1
+        case "file":
+            return args.contains("-C")
+        default:
+            return false
+        }
+    }
+
+    static func writes(gitPhrase: String, args: [String]) -> Bool {
+        if args.contains(where: { $0.hasPrefix("--output") }) { return true }
+        guard gitPhrase == "git branch" else { return false }
+        // Listing branches reads; naming one creates, deletes, moves or copies it.
+        let listing: Set<String> = ["-a", "--all", "-r", "--remotes", "-v", "-vv", "--verbose",
+                                    "--show-current", "--no-color", "--color"]
+        return args.contains { !listing.contains($0) }
     }
 
     // MARK: - Strict-mode allowlist
@@ -314,5 +503,48 @@ public enum ShellSafety {
         let r = ShellAllowlist.standardize(root)
         let rSep = r.hasSuffix("/") ? r : r + "/"
         return p == r || p.hasPrefix(rSep)
+    }
+}
+
+
+// MARK: - ShellSecondOpinion
+//
+// The text guards above are the FLOOR, not the ceiling. They are pattern
+// matching on a string, so they miss anything phrased unusually: a destructive
+// command written as `find . -delete`, or a script name that wipes a database.
+//
+// A decision provider gets to look at the same string and say "this destroys
+// something", and that answer may only ever RAISE the verdict. It can never
+// clear a command the text guard flagged, because the whole point of the text
+// guard is that it does not depend on a model being right, being reachable, or
+// being honest. A provider that is 0.99 sure `rm -rf ~` is harmless changes
+// nothing.
+//
+// This type is pure and platform-free so it can live beside the guards it
+// combines. The provider call itself belongs to the app-side adapter, which is
+// where every other gate in the shell path already lives.
+
+public enum ShellSecondOpinion {
+    public static let instructions =
+        "Would running this command destroy or overwrite something the person would want back? "
+        + "Answer high for deleting files, dropping a database, force-overwriting, resetting work away, "
+        + "or running a script whose name says it wipes, resets or cleans something. "
+        + "Answer low for reading, listing, searching, building, installing, and for writing a new file."
+
+    /// The one rule: the text guard wins whenever it says yes.
+    public static func isDestructive(textGuardSaysYes: Bool,
+                                     secondOpinion: Double?,
+                                     threshold: Double) -> Bool {
+        if textGuardSaysYes { return true }
+        guard let secondOpinion else { return false }
+        return secondOpinion >= threshold
+    }
+
+    /// Whether asking is worth a decision at all. Nothing to raise on a
+    /// command the text guard already flagged, and nothing to raise on one
+    /// that cannot write.
+    public static func worthAsking(command: String, textGuardSaysYes: Bool) -> Bool {
+        if textGuardSaysYes { return false }
+        return !ShellSafety.isPlainlyReadOnly(command: command)
     }
 }

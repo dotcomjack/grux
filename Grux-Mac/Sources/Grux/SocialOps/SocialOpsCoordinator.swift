@@ -91,7 +91,7 @@ final class SocialOpsCoordinator {
         content.body = rec.lastError.isEmpty
             ? "This account needs attention. Open the cockpit to retry or reauth."
             : rec.lastError
-        content.sound = .default
+        content.sound = AudioOutput.notificationSound(source: "SocialOpsCoordinator", text: content.title)
         content.userInfo = ["kind": "socialOpsRed", "cell": rec.id]
         let req = UNNotificationRequest(
             identifier: "grux.socialops.red.\(rec.id)",
@@ -300,7 +300,7 @@ final class SocialOpsCoordinator {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
-        content.sound = .default
+        content.sound = AudioOutput.notificationSound(source: "SocialOpsCoordinator", text: content.title)
         content.userInfo = ["kind": "socialOpsDigest"]
         let req = UNNotificationRequest(
             identifier: "grux.socialops.digest.\(UUID().uuidString)",
@@ -380,7 +380,7 @@ final class SocialOpsCoordinator {
         let content = UNMutableNotificationContent()
         content.title = "Social Ops alerts stop at this Mac"
         content.body = SetupRequirement.keyTelegram.remediation
-        content.sound = .default
+        content.sound = AudioOutput.notificationSound(source: "SocialOpsCoordinator", text: content.title)
         content.userInfo = ["kind": "socialOpsTelegramOff"]
         let req = UNNotificationRequest(
             identifier: "grux.socialops.telegram.off",
@@ -460,7 +460,7 @@ final class SocialOpsCoordinator {
             summary = "Social Ops cockpit test FAIL: \(error.localizedDescription)"
         }
 
-        let outPath = NSHomeDirectory() + "/.grux/social-ops-cockpit-test-result.txt"
+        let outPath = Persistence.gruxDir.appendingPathComponent("social-ops-cockpit-test-result.txt").path
         try? lines.joined(separator: "\n").write(toFile: outPath, atomically: true, encoding: .utf8)
         return summary
     }

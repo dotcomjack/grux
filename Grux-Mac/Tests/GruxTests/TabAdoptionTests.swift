@@ -42,6 +42,35 @@ final class TabAdoptionTests: XCTestCase {
             encoding: .utf8)) ?? ""
     }
 
+    /// The one switch that renders every tab, hosted by both shells. The gates
+    /// live here; the `Tab` enum stays in `LaunchRootView`.
+    private var surfacePaneSource: String {
+        (try? String(contentsOf: URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/Grux/Shell/SurfacePane.swift"),
+            encoding: .utf8)) ?? ""
+    }
+
+    /// A folded tab's gate moves WITH the surface, into the parent that now
+    /// renders it. Skills renders inside the Chat composer (Phase C), so its
+    /// gate is in ChatView, and looking for it only in SurfacePane would
+    /// either fail a correct fold or push the gate back to where the surface
+    /// no longer is.
+    private let gateMovedWithAFold: [String: String] = [
+        "skills": "Sources/Grux/ChatView.swift",
+    ]
+
+    /// The source a tab's gate has to appear in.
+    private func gateSource(for tab: String) -> String {
+        guard let file = gateMovedWithAFold[tab] else { return surfacePaneSource }
+        return (try? String(contentsOf: URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent(file),
+            encoding: .utf8)) ?? ""
+    }
+
     /// The tab keys declared in `LaunchRootView.Tab`, read from source so the
     /// test cannot drift from the enum.
     private func declaredTabs() -> [String] {
@@ -55,18 +84,25 @@ final class TabAdoptionTests: XCTestCase {
 
     func testTheScanFindsTheTabEnum() {
         let tabs = declaredTabs()
-        XCTAssertEqual(tabs.count, 35, "expected 35 tabs, parsed \(tabs.count): \(tabs)")
+        // 36 since P-E-3 (2026-09-22): `labs` is the Labs door's shelf. It is
+        // the door's own page, not a feature, so it has no registry row and
+        // nothing to gate, the same as Roadmap.
+        // 37 since P-E-2: `tuning`, a surface of dials over config, with no
+        // registry row either.
+        // 36 since 2026-09-27: `terminalFocus` left with the overlay it opened.
+        XCTAssertEqual(tabs.count, 36, "expected 36 tabs, parsed \(tabs.count): \(tabs)")
+        XCTAssertNil(FeatureRegistry.row(forTab: "labs"), "the Labs shelf grew a registry row; it would need a gate")
+        XCTAssertNil(FeatureRegistry.row(forTab: "tuning"), "Tuning grew a registry row; it would need a gate")
     }
 
     /// The invariant: a tab with a registry row is gated, unless it is one of the
     /// two documented exceptions.
     func testEveryTabWithARegistryRowIsGated() {
-        let source = launchRootSource
         var unadopted: [String] = []
 
         for tab in declaredTabs() where !deliberatelyUngated.contains(tab) {
             guard FeatureRegistry.row(forTab: tab) != nil else { continue }
-            if !source.contains("capabilityGated(\"\(tab)\")") {
+            if !gateSource(for: tab).contains("capabilityGated(\"\(tab)\")") {
                 let blocking = FeatureRegistry.missing(forTab: tab).map(\.rawValue)
                 unadopted.append("\(tab) has a registry row but no gate"
                                  + (blocking.isEmpty ? "" : ", and is currently missing \(blocking)"))
@@ -82,11 +118,10 @@ final class TabAdoptionTests: XCTestCase {
     /// A tab with BLOCKING capabilities and no gate is the severe form of the
     /// same bug, so it gets its own assertion with a sharper message.
     func testNoTabWithBlockingCapabilitiesIsUngated() {
-        let source = launchRootSource
         var bad: [String] = []
         for tab in declaredTabs() where !deliberatelyUngated.contains(tab) {
             guard let row = FeatureRegistry.row(forTab: tab), !row.blocking.isEmpty else { continue }
-            if !source.contains("capabilityGated(\"\(tab)\")") {
+            if !gateSource(for: tab).contains("capabilityGated(\"\(tab)\")") {
                 bad.append("\(tab) blocks on \(row.blocking.map(\.rawValue))")
             }
         }
@@ -98,7 +133,7 @@ final class TabAdoptionTests: XCTestCase {
     /// `settings` must never gain a gate. Stated as a test because the invariant
     /// above would happily be "satisfied" by adding one.
     func testSettingsIsNeverGated() {
-        XCTAssertFalse(launchRootSource.contains("capabilityGated(\"settings\")"),
+        XCTAssertFalse(surfacePaneSource.contains("capabilityGated(\"settings\")"),
                        "gating Settings deadlocks setup: the card sends the user to the very "
                        + "screen it is covering")
     }

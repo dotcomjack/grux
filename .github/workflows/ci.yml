@@ -328,6 +328,10 @@ jobs:
         working-directory: Grux-Mac
         run: python3 scripts/check-contract.py
 
+      - name: Design token ratchet
+        working-directory: Grux-Mac
+        run: python3 scripts/design-ratchet.py --check
+
       # THE OSS GUARANTEE NO LONGER RUNS IN CI, and this comment is here so
       # nobody restores it without reading why.
       #

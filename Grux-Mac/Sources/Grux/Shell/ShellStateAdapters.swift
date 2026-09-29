@@ -40,6 +40,12 @@ final class ShellStateAdapters {
 
     private init() {}
 
+    /// How a workflow ended and its name, from the run-finished note
+    /// (CommandV2Engine.runFacts).
+    nonisolated static func workflowEnd(_ info: [AnyHashable: Any]) -> (failed: Bool, name: String) {
+        ((info["status"] as? String) == CommandV2Run.Status.failed.rawValue, info["runName"] as? String ?? "")
+    }
+
     func start() {
         guard !started else { return }
         started = true
@@ -186,9 +192,10 @@ final class ShellStateAdapters {
         // the run UUID as the notification object.
         NotificationCenter.default.publisher(for: .gruxCommandV2RunStarted)
             .sink { note in
+                let posted = note.userInfo?["runName"] as? String
                 let runId = note.object as? UUID
                 Task { @MainActor in
-                    let name = runId.flatMap { CommandV2Engine.shared.run(id: $0)?.displayName }
+                    let name = posted ?? runId.flatMap { CommandV2Engine.shared.run(id: $0)?.displayName }
                     ShellStateBus.shared.publish(
                         mode: .thinking,
                         headline: "Workflow running",
@@ -201,14 +208,15 @@ final class ShellStateAdapters {
 
         NotificationCenter.default.publisher(for: .gruxCommandV2RunFinished)
             .sink { note in
-                let runId = note.object as? UUID
+                // How it ended, as the engine posted it: the run has already
+                // left activeRuns here, so a lookup never found it and every
+                // failure read "Workflow finished" (found in REVIEW-2's sweep).
+                let (failed, name) = Self.workflowEnd(note.userInfo ?? [:])
                 Task { @MainActor in
-                    let run = runId.flatMap { CommandV2Engine.shared.run(id: $0) }
-                    let failed = run?.status == .failed
                     ShellStateBus.shared.publish(
                         mode: failed ? .alert : .onTask,
                         headline: failed ? "Workflow failed" : "Workflow finished",
-                        detail: run?.displayName ?? "",
+                        detail: name,
                         source: Source.workflow, hold: failed ? 8 : 5
                     )
                 }

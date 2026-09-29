@@ -23,7 +23,7 @@ final class CapabilityResolverTests: XCTestCase {
         }
         // 42 until 2026-08-23, when `step.terminal_sessions_explained` was added
         // as the consent gate for Grux driving headless terminal sessions.
-        XCTAssertEqual(SetupRequirement.allCases.count, 41)
+        XCTAssertEqual(SetupRequirement.allCases.count, 40)  // 41 until CR-37; 2026-09-27 the hook step left and key.typesafe joined
     }
 
     /// Every `key.` capability needs somewhere to read from. A nil slot means
@@ -53,11 +53,12 @@ final class CapabilityResolverTests: XCTestCase {
         XCTAssertEqual(SetupRequirement.stepPhonePaired.kind, .step)
         let counts = Dictionary(grouping: SetupRequirement.allCases, by: \.kind).mapValues(\.count)
         // 14 until CR-34 deleted the two scalar provider key capabilities.
-        XCTAssertEqual(counts[.key], 12)
+        XCTAssertEqual(counts[.key], 12)  // 11 until key.typesafe, 2026-09-27
         XCTAssertEqual(counts[.perm], 9)
         XCTAssertEqual(counts[.endpoint], 10)
-        // 9 until `step.terminal_sessions_explained` landed on 2026-08-23.
-        XCTAssertEqual(counts[.step], 10)
+        // 9 until `step.terminal_sessions_explained` landed on 2026-08-23, 10 until the
+        // terminal hook step left with Terminal Focus on 2026-09-27.
+        XCTAssertEqual(counts[.step], 9)
     }
 
     // MARK: Absence
@@ -155,7 +156,7 @@ final class CapabilityResolverTests: XCTestCase {
         switch req {
         case .permScreenRecording, .permSystemAudio: return CGPreflightScreenCaptureAccess()
         case .permMicrophone: return AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-        case .permAccessibility: return AXIsProcessTrusted()
+        case .permAccessibility: return AccessibilityTrust.isGranted()
         case .permContacts: return CNContactStore.authorizationStatus(for: .contacts) == .authorized
         case .permCalendar:
             let s = EKEventStore.authorizationStatus(for: .event)

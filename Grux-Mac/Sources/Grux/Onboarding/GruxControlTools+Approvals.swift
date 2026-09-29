@@ -69,11 +69,12 @@ extension GruxControlTools {
             "total": queue.items.count,
             "showing": shown.count,
             "items": rows,
+            "workflows_waiting": waitingWorkflowRows(),
         ]))
     }
 
     /// One item, oldest first, with the flags that say why it is not routine.
-    private static func approvalsRow(_ item: PendingApproval,
+    static func approvalsRow(_ item: PendingApproval,
                                      stamp: ISO8601DateFormatter) -> [String: Any] {
         var row: [String: Any] = [
             "id": item.id.uuidString,
@@ -87,6 +88,8 @@ extension GruxControlTools {
         // approvable and performs nothing, which the caller has to be able to tell apart from
         // one that starts a subprocess.
         if let tool = item.action.detail["__replay_tool"], !tool.isEmpty { row["runs"] = tool }
+        // Approved before and failed: why, so a second approve is not a blind retry.
+        if let failure = item.lastFailure { row["last_failure"] = failure }
 
         var why: [String] = []
         if item.action.isSpend { why.append("spends money") }
@@ -218,5 +221,32 @@ extension GruxControlTools {
                 + "refused."))
         }
         return .found(item)
+    }
+}
+
+// MARK: - Workflows waiting at a gate
+
+extension GruxControlTools {
+
+    /// Workflow runs waiting on an answer. They are not in the Jax queue and
+    /// approve/skip do not reach them: a gate is answered with its own words,
+    /// in Chat or on the run's card, so each row says where.
+    static func waitingWorkflowRows(engine: CommandV2Engine = .shared) -> [[String: Any]] {
+        let stamp = ISO8601DateFormatter()
+        return engine.activeRuns
+            .filter { $0.status == .waitingForApproval }
+            .map { run -> [String: Any] in
+                var row: [String: Any] = [
+                    "id": run.id.uuidString,
+                    "workflow": run.definitionId,
+                    "name": run.displayName,
+                    "question": engine.gateQuestion(for: run),
+                    "dry_run": run.isDryRun,
+                    "answer_in": "Chat, or the run's card in the Workflows tab",
+                ]
+                if let replies = engine.acceptedReplies(for: run) { row["replies"] = replies }
+                if let asked = run.phaseHistory.last?.startedAt { row["since"] = stamp.string(from: asked) }
+                return row
+            }
     }
 }

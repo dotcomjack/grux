@@ -65,9 +65,9 @@ final class OffByDefaultDiscoverabilityTests: XCTestCase {
         "ascMonitorEnabled": OffFeature(
             introducedAtFirstRun: nil,
             reason: "App Store Connect monitoring, meaningful only to somebody shipping an iOS app from this Mac. It surfaces in context on the iOS surfaces rather than to every new user."),
-        "domainMonitorEnabled": OffFeature(
+        "listeningBannerExplained": OffFeature(
             introducedAtFirstRun: nil,
-            reason: "Needs a registrar API key, which first run does not ask for. Same argument as its sibling ascMonitorEnabled, which it now sits beside in Settings. It was ON and ungated until the first-run audit: it adopted a credential left in ~/.grux/godaddy-creds.json by anything at all and called the registrar on the strength of it."),
+            reason: "Not a feature. A once-per-device latch that records whether the explanatory banner preceding the first spoken-command banner has been shown. There is nothing for a user to discover or turn on; the banner itself is the introduction."),
         "musicDuckingEnabled": OffFeature(
             introducedAtFirstRun: nil,
             reason: "A refinement of how Grux speaks, and it lives directly under the spoken-replies toggles that ARE the introduction. Off because turning it on is what sends the first Apple event to Music, which macOS answers with a consent dialog; nothing in the app had ever said Grux touches Music."),
@@ -86,6 +86,12 @@ final class OffByDefaultDiscoverabilityTests: XCTestCase {
         "decisionLogEnabled": OffFeature(
             introducedAtFirstRun: nil,
             reason: "The same nightly pass over the same transcript an hour earlier, in the same Settings block under the same paragraph, for the same reason."),
+        "legacyShell": OffFeature(
+            introducedAtFirstRun: nil,
+            reason: "Not a capability that ships off. False IS the shipped shell, the Command Panel; true is a one-release way back to the old 240pt sidebar. A new user has never seen that sidebar, so naming a route back to it at first run describes nothing they can weigh. Its home is the Classic sidebar switch in Settings, under General."),
+        "keepOnTop": OffFeature(
+            introducedAtFirstRun: nil,
+            reason: "A window preference, not a capability. Off is how every Mac window behaves, so nothing is missing until somebody wants the panel to stay put, and first run has not shown them the panel yet. Its home is the Keep Grux on top switch in Settings, under General, beside Classic sidebar."),
     ]
 
     // MARK: - Sources

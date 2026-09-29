@@ -228,17 +228,18 @@ struct CapabilitySetupCard: View {
     @ViewBuilder
     private func requirementBody(_ requirement: SetupRequirement) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: GruxSpacing.s) {
-                Image(systemName: icon(for: requirement))
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(GruxTheme.accentPrimary)
-                Text(requirement.label)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(GruxTheme.textPrimary)
-                Spacer(minLength: 0)
-                if let title = actionTitle(for: requirement) {
-                    Button(title) { open(requirement) }
-                        .font(.system(size: 12, weight: .semibold))
+            // The label and its button on one row where both read whole, and
+            // the button under the label on a narrow pane, where sharing the
+            // row wrapped "Screen Recording" a word per line.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: GruxSpacing.s) {
+                    requirementLabel(requirement).lineLimit(1)
+                    Spacer(minLength: GruxSpacing.s)
+                    requirementButton(requirement)
+                }
+                VStack(alignment: .leading, spacing: GruxSpacing.xs) {
+                    requirementLabel(requirement)
+                    requirementButton(requirement)
                 }
             }
             // The contract's own sentence, verbatim. It is written for exactly
@@ -268,6 +269,25 @@ struct CapabilitySetupCard: View {
         }
     }
 
+    private func requirementLabel(_ requirement: SetupRequirement) -> some View {
+        HStack(spacing: GruxSpacing.s) {
+            Image(systemName: icon(for: requirement))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(GruxTheme.accentPrimary)
+            Text(requirement.label)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(GruxTheme.textPrimary)
+        }
+    }
+
+    @ViewBuilder
+    private func requirementButton(_ requirement: SetupRequirement) -> some View {
+        if let title = actionTitle(for: requirement) {
+            Button(title) { open(requirement) }
+                .font(.system(size: 12, weight: .semibold))
+        }
+    }
+
     private var footer: some View {
         Text("Nothing here is required to use the rest of Grux.")
             .font(GruxTheme.Font.caption)
@@ -279,7 +299,13 @@ struct CapabilitySetupCard: View {
         case .key:      return "key.fill"
         case .perm:     return "lock.shield"
         case .endpoint: return "link"
-        case .step:     return "checkmark.circle"
+        // NOT a checkmark. Every row on this card is a thing that is MISSING,
+        // and `checkmark.circle` is the universal symbol for done, so the one
+        // item a person still has to deal with wore the icon that says it is
+        // already dealt with. Seen on a real screen 2026-09-24: "Jax Command
+        // needs one more thing" directly above a tick. A dashed circle is the
+        // same visual family and the opposite claim.
+        case .step:     return "circle.dashed"
         }
     }
 
@@ -300,7 +326,11 @@ struct CapabilitySetupCard: View {
             // original rule and still right. A step completed in Settings gets
             // a route, because otherwise its own remediation sends the user
             // somewhere the card cannot take them.
-            return SettingsTabAliases.stepDestination(requirement) == nil ? nil : "Open Settings"
+            guard SettingsTabAliases.stepDestination(requirement) != nil else { return nil }
+            // A consent step is answered by walking first-run again, so the
+            // button says that. "Open Settings" would land someone on a pane
+            // and leave them looking for the choice.
+            return SettingsTabAliases.stepNeedsFirstRun(requirement) ? "Run setup again" : "Open Settings"
         }
     }
 
@@ -313,32 +343,11 @@ struct CapabilitySetupCard: View {
             state.requestedSettingsTab = requirement.rawValue
             state.requestedTab = "settings"
         case .perm:
-            openSystemSettings(for: requirement)
+            CapabilityRequest.openSystemSettings(for: requirement)
         case .step:
             guard let tag = SettingsTabAliases.stepDestination(requirement) else { break }
             state.requestedSettingsTab = tag
             state.requestedTab = "settings"
-        }
-    }
-
-    private func openSystemSettings(for requirement: SetupRequirement) {
-        // The exact Privacy pane, so the user is not left hunting a long list.
-        // system_audio deliberately points at Screen Recording, which is where
-        // macOS actually grants it and what the contract's own remediation says.
-        let anchor: String
-        switch requirement {
-        case .permScreenRecording, .permSystemAudio: anchor = "Privacy_ScreenCapture"
-        case .permMicrophone:                        anchor = "Privacy_Microphone"
-        case .permAccessibility:                     anchor = "Privacy_Accessibility"
-        case .permCalendar:                          anchor = "Privacy_Calendars"
-        case .permContacts:                          anchor = "Privacy_Contacts"
-        case .permAutomation:                        anchor = "Privacy_Automation"
-        case .permFullDiskAccess:                    anchor = "Privacy_AllFiles"
-        case .permNotifications:                     anchor = "Notifications"
-        default:                                     anchor = "Privacy"
-        }
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(anchor)") {
-            NSWorkspace.shared.open(url)
         }
     }
 }

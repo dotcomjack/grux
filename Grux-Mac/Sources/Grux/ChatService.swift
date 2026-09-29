@@ -1,5 +1,34 @@
 import Foundation
 
+/// The workflow gates a Chat turn will ask again when it ends, after its reply
+/// (`ChatService.send`). Each is kept with the gate it was at and when that gate
+/// last asked, and is skipped at the end if either changed during the turn: the
+/// person answered on the card and the run moved on to a gate that already asked
+/// its own question, so asking again would ask twice.
+@MainActor
+final class GateReaskQueue {
+    private var queued: [(id: UUID, phase: String, askedAt: Date?)] = []
+
+    func add(_ ids: [UUID], engine: CommandV2Engine) {
+        for id in ids {
+            guard let run = engine.run(id: id) else { continue }
+            queued.append((id, run.currentPhaseId, run.gateAskedAt))
+        }
+    }
+
+    func flush(_ engine: CommandV2Engine) {
+        let due = queued
+        queued = []
+        for q in due {
+            guard let run = engine.run(id: q.id), run.currentPhaseId == q.phase, run.gateAskedAt == q.askedAt else {
+                WakeLog.shared.log("chat: \(q.id.uuidString.prefix(8)) moved on or asked again during the turn; not asking again")
+                continue
+            }
+            engine.reask(q.id)
+        }
+    }
+}
+
 // Tool-using chat service. Claude can:
 //   - Manage the user's task stack (add / remove / complete / focus / promote
 //     proposed actions from ambient).
@@ -15,7 +44,119 @@ final class ChatService {
     static let shared = ChatService()
     private let maxToolHops = 5
 
-    func send(userText: String, imageData: Data? = nil, imageMediaType: String? = nil) async {
+    /// The reply for a message that answers a workflow waiting at a gate, or
+    /// nil when it answers none. The run continues in the background, so the
+    /// reply lands now rather than after the rest of the workflow.
+    ///
+    /// This is the one place a Chat message can move a workflow past a gate,
+    /// and only the person's own turn may: words from an agent (a swarm's
+    /// inject-chat line, MCP `grux_ask`, a card an agent raised) go on as
+    /// ordinary chat. A gate that asked too long ago, or a free-text gate whose
+    /// question is no longer Grux's latest line in Chat, is asked again instead
+    /// of taking the words, and the message goes on as ordinary chat.
+    ///
+    /// A dry-run turn changes no live run: it neither answers a live run's gate
+    /// nor asks a lapsed one again (asking re-arms the gate). A run that is
+    /// itself a dry run only records what it would do, so it may be answered.
+    ///
+    /// `askAgainLater`: when given, the gates to ask again are handed to it
+    /// instead of asked now. `send` passes it and asks them after the turn's
+    /// reply, so the question is Grux's latest line and the person's next
+    /// message answers it (asked now, the reply would land after it).
+    func answerWaitingWorkflow(_ text: String, from initiator: Initiator, sentAt: Date = Date(),
+                               engine: CommandV2Engine = .shared,
+                               askAgainLater: (([UUID]) -> Void)? = nil) -> String? {
+        guard initiator == .person else {
+            if engine.activeRuns.contains(where: { $0.status == .waitingForApproval }) {
+                WakeLog.shared.log("chat: an agent's message is never a workflow gate answer; passed on as chat")
+            }
+            return nil
+        }
+        let lastSaid = AppState.shared.chat.last { $0.role == .assistant }?.content
+        switch engine.gateAnswer(for: text, sentAt: sentAt, lastSaid: lastSaid) {
+        case .none:
+            return nil
+        case .stale(let runIds):
+            if JaxToolGate.dryRun {
+                WakeLog.shared.log("chat: dry run, would ask \(runIds.count) lapsed gate(s) again; asked nothing, message passed on as chat")
+                return nil
+            }
+            if let askAgainLater {
+                askAgainLater(runIds)
+                WakeLog.shared.log("chat: \(runIds.count) gate(s) asked too long ago or talked past; asking again after this turn's reply, message passed on as chat")
+                return nil
+            }
+            let asked = runIds.filter { engine.reask($0) }.count
+            WakeLog.shared.log("chat: \(runIds.count) gate(s) asked too long ago or talked past; asked \(asked) again, message passed on as chat")
+            return nil
+        case .resume(let runId, let reply):
+            let name = engine.run(id: runId)?.displayName ?? "The workflow"
+            if JaxToolGate.dryRun, engine.run(id: runId)?.isDryRun != true {
+                WakeLog.shared.log("chat: dry run, held the answer '\(reply)' to waiting run \(runId.uuidString.prefix(8))")
+                return "Nothing was done, because this is a dry run. \(name) would carry on with \"\(reply)\"."
+            }
+            WakeLog.shared.log("chat: answered waiting run \(runId.uuidString.prefix(8)) with '\(reply)'")
+            Task { @MainActor in await engine.resume(runId, userReply: reply) }
+            return "Got it. \(name) carries on with \"\(reply)\"."
+        case .ambiguous(let runIds):
+            let names = runIds.compactMap { engine.run(id: $0)?.displayName }
+            return "More than one workflow is waiting on that answer: \(names.joined(separator: ", ")). "
+                + "I did not pick one. Answer the one you mean in the Workflows tab."
+        }
+    }
+
+    /// Puts a waiting workflow's question in Chat as Grux's line. The app calls
+    /// this for every `.gruxCommandV2GateWaiting`.
+    static func postGateQuestion(_ question: String) {
+        AppState.shared.appendChat(ChatMessage(role: .assistant, content: DashSanitizer.stripDashesOnly(question)))
+    }
+
+    /// The Chat reply for a workflow a message started, or nil when it would
+    /// not start (the failure is already in Chat). It names the run, whose
+    /// `{project}` is filled in (the definition's name is not), and says when
+    /// the run is a dry run, so a rehearsal never reads as a real submission.
+    func startWorkflow(_ def: CommandV2Definition, params: [String: JSONValue],
+                       engine: CommandV2Engine = .shared) async -> String? {
+        // The same tool the model would call to start one, so the same rule.
+        if JaxToolGate.dryRun, JaxToolGate.dryRunHolds("start_workflow_v2") {
+            let name = CommandV2Engine.runName(def.displayName, params: params)
+            WakeLog.shared.log("chat: dry run, held starting \(def.id) params=\(params)")
+            return "Nothing was done, because this is a dry run. It would have started \(name)."
+        }
+        switch await engine.start(definitionId: def.id, params: params, displayName: nil) {
+        case .success(let runId):
+            // A short dry run can finish before this line reads it.
+            let run = engine.run(id: runId) ?? engine.recentRuns.first { $0.id == runId }
+            let name = run?.displayName ?? CommandV2Engine.runName(def.displayName, params: params)
+            let rehearsal = run?.isDryRun == true ? " as a dry run: it only records what it would do" : ""
+            return "Started \(name)\(rehearsal). Track it in the Workflows tab."
+        case .failure(let err):
+            // Already running says the run's name itself; anything else is
+            // said once, after the name.
+            let msg: String
+            if case .alreadyRunning = err {
+                msg = err.localizedDescription
+            } else {
+                msg = "I couldn't start \(CommandV2Engine.runName(def.displayName, params: params)). \(err.localizedDescription)"
+            }
+            AppState.shared.appendChat(ChatMessage(role: .assistant, content: DashSanitizer.stripDashesOnly(msg)))
+            WakeLog.shared.log("chat: V2 fast-path failed: \(err)")
+            return nil
+        }
+    }
+
+    /// Who put these words in Chat. A person typed, spoke or sent them from
+    /// the phone; an agent (MCP `grux_ask`, a swarm's inject-chat line) did
+    /// not, and what it starts keeps every approval a person would give.
+    enum Initiator: Sendable { case person, agent }
+
+    /// `preDecidedPIM`: the PIM gate's verdict when a batched event already
+    /// asked it (a spoken request, P-R-1). Nil for a typed turn, which asks
+    /// on its own.
+    func send(userText: String, imageData: Data? = nil, imageMediaType: String? = nil,
+              preDecidedPIM: ChatIntentClassifier.PreDecidedPIM? = nil,
+              initiator: Initiator = .person,
+              workflows: CommandV2Engine = .shared) async {
         let state = AppState.shared
         // INPUT-ARTIFACT GUARD (debug 2026-06-19): a voice/transcription glitch
         // could fire the SAME user text two+ times back to back. Left unchecked,
@@ -54,6 +195,23 @@ final class ChatService {
         // image still be processed).
 
         let trimmed = userText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // A workflow waiting at a gate asks its question in Chat ("reply
+        // 'fix', 'ship' or 'hold'"), so the answer arrives here. It goes to
+        // that run, before any trigger or the model sees it.
+        //
+        // A gate this message could not answer is asked again once the turn
+        // is over, after its reply (or none), so the question is the last thing
+        // Grux said and the person's next message is its answer.
+        let askAgainAfterTurn = GateReaskQueue()
+        defer { askAgainAfterTurn.flush(workflows) }
+        if imageData == nil,
+           let answer = answerWaitingWorkflow(trimmed, from: initiator, sentAt: userMsg.timestamp, engine: workflows,
+                                              askAgainLater: { askAgainAfterTurn.add($0, engine: workflows) }) {
+            state.appendChat(ChatMessage(role: .assistant, content: DashSanitizer.stripDashesOnly(answer)))
+            return
+        }
+
         if imageData == nil, !trimmed.isEmpty,
            let (def, params) = CommandV2Engine.shared.matchTrigger(trimmed) {
             WakeLog.shared.log("chat: V2 fast-path match → \(def.id) params=\(params)")
@@ -93,25 +251,15 @@ final class ChatService {
                 WakeLog.shared.log("chat: ship-ios-app gate fired (no project) - asked the user to pick")
                 return
             }
-            let result = await CommandV2Engine.shared.start(definitionId: def.id, params: params, displayName: nil)
-            switch result {
-            case .success(let runId):
-                let confirmation = "Started \(def.displayName). Track it in the Workflows tab."
-                state.appendChat(ChatMessage(role: .assistant, content: DashSanitizer.stripDashesOnly(confirmation)))
-                if state.config.memoryEnabled {
-                    SemanticMemory.shared.store(kind: .chatAssistant, text: confirmation)
-                }
-                if state.config.speakRepliesAloud && !state.voiceMuted {
-                    SpeechEngine.shared.speak(confirmation)
-                }
-                _ = runId
-                return
-            case .failure(let err):
-                let msg = "Couldn't start \(def.id): \(err)"
-                state.appendChat(ChatMessage(role: .assistant, content: DashSanitizer.stripDashesOnly(msg)))
-                WakeLog.shared.log("chat: V2 fast-path failed: \(err)")
-                return
+            guard let confirmation = await startWorkflow(def, params: params) else { return }
+            state.appendChat(ChatMessage(role: .assistant, content: DashSanitizer.stripDashesOnly(confirmation)))
+            if state.config.memoryEnabled {
+                SemanticMemory.shared.store(kind: .chatAssistant, text: confirmation)
             }
+            if state.config.speakRepliesAloud && !state.voiceMuted {
+                SpeechEngine.shared.speak(confirmation)
+            }
+            return
         }
 
         // PIM fast-path: confident calendar / note / email-draft / doc-search
@@ -119,11 +267,35 @@ final class ChatService {
         // ack + 5s undo, then execution through dispatchTool (one
         // implementation per action). Ordering matters: V2 triggers first
         // (more specific), PIM second, Claude fallback for fuzzy phrasings.
+        // The engine gets a veto here and nothing more: it may send a matched
+        // utterance to the model instead of acting on it, and it can never
+        // create a fast path the pattern matcher did not find. On device it
+        // cannot judge, so a person with no key gets exactly the old path.
+        //
+        // The MATCH is synchronous and the suspension only happens once there
+        // is a plan to ask about. An `await` on ordinary prose would be a
+        // suspension point above the readiness guard below, and that guard's
+        // whole job is to refuse before anything can be spent.
         if imageData == nil, !trimmed.isEmpty,
            let plan = ChatIntentClassifier.pimRoute(utterance: trimmed) {
-            WakeLog.shared.log("chat: PIM fast-path -> \(plan.kind.rawValue)")
-            PIMConfirmationController.shared.present(plan: plan)
-            return
+            // A spoken request arrives with this gate's answer already in hand
+            // from the voice event's one call; asking again would be a second
+            // round trip on the same words.
+            let decision = await ChatIntentClassifier.resolvePIM(
+                plan: plan,
+                utterance: trimmed,
+                preDecided: preDecidedPIM,
+                engine: DecisionEngine.shared,
+                threshold: AppState.shared.config.listeningThreshold)
+            if decision.confirmed {
+                WakeLog.shared.log("chat: PIM fast-path -> \(plan.kind.rawValue) "
+                    + "(\(decision.provider.rawValue), \(decision.latencyMs) ms)")
+                PIMConfirmationController.shared.present(plan: plan, personAsked: initiator == .person)
+                return
+            }
+            WakeLog.shared.log("chat: PIM fast-path held back for \(plan.kind.rawValue), "
+                + "confidence \(String(format: "%.2f", decision.confidence)) "
+                + "(\(decision.provider.rawValue), \(decision.latencyMs) ms)")
         }
 
         // NOTHING ATTACHED, SO NOTHING GOES OUT.
@@ -205,7 +377,11 @@ final class ChatService {
             SemanticMemory.shared.store(kind: .chatUser, text: userText)
         }
 
-        WakeLog.shared.log("chat: sending \(userText.count) chars to \(state.config.model) (keylen=\(state.anthropicKey.count))\(imageData != nil ? " +image(\(imageMediaType ?? "?"), \(imageData?.count ?? 0) bytes)" : "")")
+        let turnClock = Date()
+        // The route is named below, once it is resolved. This line used to
+        // print `config.model` and the Anthropic key's length whatever the
+        // route was, so a turn going to OpenRouter read as a Claude turn.
+        WakeLog.shared.log("chat: sending \(userText.count) chars\(imageData != nil ? " +image(\(imageMediaType ?? "?"), \(imageData?.count ?? 0) bytes)" : "")")
 
         // Preset seam (Item 22) + routing, assembled once per turn by
         // assemblePendingContext from the exact values the wire will carry
@@ -214,6 +390,7 @@ final class ChatService {
         // set, the message window, and the resolved backend/model/key). The
         // same factory feeds the pre-run CostMeter estimate below.
         let pending = assemblePendingContext(state: state)
+        WakeLog.shared.log(String(format: "chat stage: context assembled at +%.2fs, routed to %@", Date().timeIntervalSince(turnClock), pending.modelId))
         let presetApp = pending.presetApp
         let systemBlocks = pending.systemBlocks
         let tools = pending.tools
@@ -223,6 +400,10 @@ final class ChatService {
         // text bubbles still render normally. The global
         // config.speakRepliesAloud is the persistent default.
         let speakAloud = state.config.speakRepliesAloud && !state.voiceMuted
+        // A local reply is checked for made-up actions once it is whole
+        // (ActionClaimGuard), so its sentences are not streamed to speech
+        // first: the person would hear the claim the check then removes.
+        let holdSpeechForClaimCheck = pending.provider == "local"
 
         // Streaming sentence segmenter: accumulate deltas, flush complete
         // sentences to SpeechEngine as soon as they're ready.
@@ -230,7 +411,7 @@ final class ChatService {
         var streamSpeechActive = false
         var pendingForSpeech = ""
         func flushPendingSentences(force: Bool = false) {
-            guard speakAloud else { return }
+            guard speakAloud, !holdSpeechForClaimCheck else { return }
             // Find complete sentences at the head of `pendingForSpeech`.
             while true {
                 let range = NSRange(pendingForSpeech.startIndex..<pendingForSpeech.endIndex, in: pendingForSpeech)
@@ -280,6 +461,9 @@ final class ChatService {
         do {
             var hops = 0
             var finalTextFromAllHops = ""
+            // Each result as the model saw it, so a reply that only echoes one
+            // reaches the person translated (D-replycopy).
+            var toolResultsThisTurn: [(tool: String, input: [String: Any], result: String)] = []
             hopLoop: while hops < maxToolHops {
                 hops += 1
 
@@ -288,6 +472,8 @@ final class ChatService {
                 var assistantBlocksForRecord: [[String: Any]] = []
                 var currentTextBlockStartIdx: Int? = nil
 
+                var loggedFirstEvent = false
+                WakeLog.shared.log(String(format: "chat stage: request opening at +%.2fs", Date().timeIntervalSince(turnClock)))
                 let stream = await backend.streamCompleteWithTools(
                     apiKey: apiKey,
                     model: modelId,
@@ -301,6 +487,7 @@ final class ChatService {
                 )
 
                 for try await event in stream {
+                    if !loggedFirstEvent { loggedFirstEvent = true; WakeLog.shared.log(String(format: "chat stage: first stream event at +%.2fs", Date().timeIntervalSince(turnClock))) }
                     switch event {
                     case .textBlockStart:
                         currentTextBlockStartIdx = hopText.count
@@ -339,6 +526,7 @@ final class ChatService {
                 let u = await backend.usageSnapshot()
                 WakeLog.shared.log(String(format: "chat hop %d: in=%d out=%d cacheRead=%d cacheCreate=%d",
                                           hops, u.input, u.output, u.cacheRead, u.cacheCreate))
+                WakeLog.shared.log(String(format: "chat stage: hop %d closed at +%.2fs", hops, Date().timeIntervalSince(turnClock)))
 
                 // Reconcile the pre-send estimate against real usage, first hop
                 // only: later hops append tool_result content the pre-send
@@ -371,6 +559,7 @@ final class ChatService {
                     // before it goes back to the model as a tool_result.
                     let result = PromptSecurity.sanitizeToolResult(toolName: use.name, result: raw)
                     WakeLog.shared.log("tool: \(use.name) \(use.input) → \(result)")
+                    toolResultsThisTurn.append((use.name, use.input, result))
                     resultBlocks.append([
                         "type": "tool_result",
                         "tool_use_id": use.id,
@@ -397,6 +586,17 @@ final class ChatService {
             if !replyVerdict.surfaceable {
                 WakeLog.shared.log("chat: reply POST-vet blocked an ungrounded product fact -> surfacing refusal instead")
                 finalText = replyVerdict.refusalLine
+            }
+            let person = ToolReplyCopy.replacingEcho(reply: finalText, results: toolResultsThisTurn)
+            if person != finalText {
+                WakeLog.shared.log("chat: reply echoed a tool result -> person's line: '\(finalText.prefix(160))'")
+                finalText = person
+            }
+            let claimCheck = ActionClaimGuard.vet(reply: finalText, route: pending.provider,
+                                                  results: toolResultsThisTurn)
+            if claimCheck.replaced {
+                WakeLog.shared.log("chat: local reply claimed an action no tool result this turn backs -> '\(claimCheck.text)' instead of '\(finalText.prefix(160))'")
+                finalText = claimCheck.text
             }
             // HARD dash guard (house zero em/en dash rule). The persona prompt asks
             // the model to avoid em/en dashes, but models slip: a live reply once
@@ -485,7 +685,7 @@ final class ChatService {
             )
             state.chatRecovery = recovery
             let msg = "⚠️ \(recovery.message)"
-            state.appendChat(ChatMessage(role: .assistant, content: msg))
+            state.appendChat(ChatMessage(role: .assistant, content: msg, isNotice: true))
             WakeLog.shared.log("reply FAILED: \(error.localizedDescription) [recovery=\(recovery.kind)]")
             if streamSpeechActive { SpeechEngine.shared.endStreaming() }
             // SPEAKING COSTS MONEY TOO. The same failure was announced 190
@@ -532,9 +732,12 @@ final class ChatService {
         if let presetApp {
             tools = tools.filter { presetApp.allows(toolName: $0.name) }
         }
-        let messages: [[String: Any]] = state.chat.suffix(30).map { m in
-            Self.claudeMessagePayload(for: m)
-        }
+        let lastUser = state.chat.last(where: { $0.role == .user })
+        tools = ToolRelevance.filter(tools, signals: .init(
+            utterance: lastUser?.content ?? "",
+            recentToolNames: RecentToolUse.shared.names(),
+            hasImage: lastUser?.imageData != nil))
+        let messages = Self.modelFacingMessages(Array(state.chat.suffix(30)))
         let routing = ModelRegistry.shared.resolvedRouting(
             provider: presetApp?.providerOverride, modelOverride: presetApp?.modelIdOverride)
         return PendingTurnContext(
@@ -632,21 +835,21 @@ final class ChatService {
             // not the same thing as quoting the payload, but the actionable half
             // has to survive either way.
             if let provider = Self.providerMessage(from: body) {
-                return "\(provider) (HTTP 400) Retry once that is resolved."
+                return "\(provider) Retry once that is resolved."
             }
-            return "That turn was rejected (HTTP 400). Retry, and start a new chat if it keeps happening."
+            return "That turn was rejected. Retry, and start a new chat if it keeps happening."
         case 401, 403:
-            return "The API key was rejected (HTTP \(code)). Check the key in Settings, then retry."
+            return "The API key was rejected. Check the key in Settings, then retry."
         case 404:
-            return "That model is not available on this account (HTTP 404). Pick another model in Settings."
+            return "That model is not available on this account. Pick another model in Settings."
         case 413:
-            return "That turn was too large to send (HTTP 413). Remove an attachment or shorten it, then retry."
+            return "That turn was too large to send. Remove an attachment or shorten it, then retry."
         case 429:
-            return "Rate limited (HTTP 429). Wait a moment, then retry."
+            return "Too many requests just now. Wait a moment, then retry."
         case 500...599:
-            return "The model provider is having trouble (HTTP \(code)). Retry in a moment."
+            return "The model provider is having trouble. Retry in a moment."
         default:
-            return "The model call failed (HTTP \(code)). Retry."
+            return "The model call failed. Retry."
         }
     }
 
@@ -705,7 +908,22 @@ final class ChatService {
             }
         }
 
-        // 2. Network failure. If offline mode is already on but no local model
+        // 2. A model on this Mac failed at the URL layer. That request never
+        // crossed the network, so "Network unreachable" sent the person to
+        // check Wi-Fi while Ollama was busy with two earlier turns (measured:
+        // three turns within 10 s, the third timed out). Continue offline is
+        // no help either: the offline model is the one that failed.
+        if let local = Self.localModelFailure(error) {
+            return ChatRecovery(
+                kind: .generic,
+                message: local,
+                retryText: userText,
+                retryImageData: imageData,
+                retryImageMediaType: imageMediaType
+            )
+        }
+
+        // 3. Network failure. If offline mode is already on but no local model
         // was discovered, name THAT as the cause (two silent steps collapse
         // into one honest message). Otherwise offer Continue offline when a
         // local model exists, else a plain retry.
@@ -730,7 +948,7 @@ final class ChatService {
             )
         }
 
-        // 3. Anything else: plain retry with a message a person can act on.
+        // 4. Anything else: plain retry with a message a person can act on.
         //
         // Do NOT put error.localizedDescription here. For ClaudeError.http that
         // renders as "Anthropic HTTP 400: " plus 200 characters of raw JSON
@@ -748,6 +966,25 @@ final class ChatService {
             retryImageData: imageData,
             retryImageMediaType: imageMediaType
         )
+    }
+
+    /// The sentence for a URL-layer failure of a request to this Mac
+    /// (localhost, 127.0.0.1, ::1), or nil when the request went elsewhere.
+    nonisolated static func localModelFailure(_ error: Error) -> String? {
+        let ns = error as NSError
+        guard ns.domain == NSURLErrorDomain else { return nil }
+        let url = (ns.userInfo[NSURLErrorFailingURLErrorKey] as? URL)
+            ?? (ns.userInfo[NSURLErrorFailingURLStringErrorKey] as? String).flatMap(URL.init(string:))
+        guard let host = url?.host?.lowercased(),
+              ["localhost", "127.0.0.1", "::1"].contains(host) else { return nil }
+        switch ns.code {
+        case NSURLErrorTimedOut:
+            return "The local model did not answer in time. It may be busy with another request. Retry in a moment."
+        case NSURLErrorCannotConnectToHost, NSURLErrorNetworkConnectionLost:
+            return "The local model server is not running. Start it (for example Ollama), then retry."
+        default:
+            return "The local model call failed. Retry, and restart the local model server if it keeps happening."
+        }
     }
 
     static func isNetworkError(_ error: Error) -> Bool {
@@ -773,7 +1010,12 @@ final class ChatService {
     // emit a content-block array with the image first, then any text. Keeping
     // the string form for plain text preserves prompt-cache hits on historical
     // turns that never had attachments.
-    private static func claudeMessagePayload(for m: ChatMessage) -> [String: Any] {
+    /// The turns the model sees: the window minus Grux's own notices.
+    nonisolated static func modelFacingMessages(_ window: [ChatMessage]) -> [[String: Any]] {
+        window.filter { !$0.isNotice }.map { claudeMessagePayload(for: $0) }
+    }
+
+    nonisolated private static func claudeMessagePayload(for m: ChatMessage) -> [String: Any] {
         let role = m.role == .assistant ? "assistant" : "user"
         if let data = m.imageData, let mediaType = m.imageMediaType, !data.isEmpty {
             var blocks: [[String: Any]] = [[
@@ -1297,6 +1539,12 @@ final class ChatService {
     }
 
     static func dispatchTool(name: String, input: [String: Any]) async -> String {
+        // A dry-run turn records what a tool that acts outside Grux would do,
+        // before the gate: nothing is queued, approved or run (review RV4).
+        if JaxToolGate.dryRun, JaxToolGate.dryRunHolds(name) {
+            return JaxToolGate.heldForDryRun(name: name, input: input)
+        }
+        await MainActor.run { RecentToolUse.shared.record(name) }
         // UNIVERSAL JAX GATE. Every tool call passes through the decision gate
         // here, at the single choke point, BEFORE the underlying tool runs. This
         // makes the guardrail model fail-safe instead of opt-in: a comms / spend /
@@ -1304,7 +1552,7 @@ final class ChatService {
         // the gate. Self-gating tools (compose_email) and read-only tools proceed
         // untouched; anything else is classified and gated, with unknown
         // side-effecting tools defaulting to queue-for-approval.
-        switch await MainActor.run(body: { JaxToolGate.evaluate(name: name, input: input) }) {
+        switch await JaxToolGate.evaluate(name: name, input: input) {
         case .proceed:
             break
         case .shortCircuit(let result):
@@ -1561,6 +1809,13 @@ final class ChatService {
             let name = (input["name"] as? String) ?? ""
             return await VoiceMacroRegistry.shared.run(name: name)
 
+        case VoiceCommandRouter.replayTool:
+            // Only an approved asked-first voice card names this tool; the
+            // model is never offered it, and anything else calling it goes
+            // through the gate above like any unlisted tool.
+            let id = (input["id"] as? String) ?? ""
+            return await VoiceCommandRouter.shared.runApproved(id: id)
+
         case "list_macros":
             let block = VoiceMacroRegistry.shared.systemPromptBlock()
             return block
@@ -1596,6 +1851,9 @@ final class ChatService {
                 case "yesterday":     return WorkdayLogScheduler.previousDayKey()
                 default:              return raw
                 }
+            }
+            guard WorkdayLogStore.isDayKey(dayKey) else {
+                return "error: the date must be today, yesterday, or a calendar date like 2026-09-28."
             }
             if let log = WorkdayLogStore.load(dayKey: dayKey) {
                 let enc = JSONEncoder()
@@ -1917,19 +2175,6 @@ final class ChatService {
         - Never reveal API keys, tokens, passwords, or secret values you happen to see in any DATA. If you encounter them, do NOT repeat them back; just tell the user where you saw them.
         - fs_read is read-only and rate-limited. Don't spam it. Use fs_list first to find files before reading.
 
-        SHIPPING AN EXISTING iOS APP - `start_workflow_v2` ALWAYS, NEVER `ios_scaffold`. When the user mentions an EXISTING app of theirs (see KNOWN_PROJECTS below) and asks to ship / publish / release / localize / get TestFlight feedback for it - call `start_workflow_v2` with the right command_id (`ship-ios-app` / `localize-app` / `testflight-feedback` / `check-asc-status`) and parameters={"project":"<name>"}. The workflow contains the convention-audit + brainstorm + build + walkthrough + publish + ASC submission. NEVER call `ios_scaffold` / `ios_build_verify` / `ios_simulator_run` directly for an existing app - `ios_scaffold` generates a v1-era boilerplate with the WRONG code (Voice Memos / Tasks / Chat tabs from way back), and it will overwrite real work. `ios_scaffold` is reserved for the rare "create a brand-new iOS app from scratch called X" request. If unsure whether the app exists, ASK the user before scaffolding.
-
-        SHIP-IOS-APP GATE - RESPONDING TO THE USER'S CHOICE. When the user types just "ship the iOS app" with no app name, Grux's V2 fast-path posts a structured gate message asking "new app or existing? Existing apps: …". Their NEXT message is their answer to that gate. Read it carefully:
-          • If they name one of the listed existing apps, call `start_workflow_v2` with command_id="ship-ios-app" and parameters={"project":"<exact name>"}. Then reply ≤6 words confirming ("Shipping <app> - track in Workflows.").
-          • If they say "new" / "new app" / "let's brainstorm" / etc., enter brainstorming. DO NOT call `ios_scaffold` yet. Ask 2-4 quick questions to nail down: (a) one-line pitch, (b) primary user, (c) 3-5 core flows, (d) any specific Apple frameworks (HealthKit, Core ML, etc.). Stay in chat. When they signal "ship it" / "go" / "build it", THEN call `ios_scaffold` with project_name=<alphanumeric>, root_dir="~/Projects/GruxApps", and a sensible features subset. Immediately after scaffold succeeds, call `start_workflow_v2` ship-ios-app project="<name>" so the workflow takes over.
-          • If their reply is ambiguous (a feature, not a name), ask one short clarifying question - don't guess and don't fall back to a previously-mentioned app from earlier turns.
-
-        GRUXAPPS DIRECTORY - every Grux-built iOS app lands at `~/Projects/GruxApps/<Name>/`. That's the default `root_dir` for `ios_scaffold`. Don't put new apps under an iCloud Drive path (iCloud injects xattrs that break codesign). When listing or searching for the user's apps, look in GruxApps/ FIRST, then any folders they have aliased in ~/.grux/project-aliases.json, then `~/Projects/<Name>/`.
-
-        AGENT SWARMS - DEFAULT TO YES. Grux ships an `agent_swarm_start` tool that spins up autonomous Claude Code workers with full tool access (Bash/Write/Edit/Read/Grep/WebFetch/WebSearch) to deliver multi-step work. NEVER reply "I don't have a tool for that" if the user asks you to write content, draft posts, do research, build a project, polish a brand, or anything that would take more than 1-2 turns AND isn't a ship-an-existing-iOS-app request (those go through `start_workflow_v2`). INSTEAD: call agent_swarm_start with a clear `goal` and let the swarm deliver. Pick the template by intent - `singleWorker` for short content/research, `architectImplement` for substantial deliverables, `iosAppFull` only for genuinely-new-from-scratch iOS app builds. Don't ask for a `root_dir` unless the user explicitly mentioned a location - Grux auto-generates one under ~/Documents/Grux/swarms/. Exception: design and web-artifact requests go to the design_* tools, not swarms.
-
-        DESIGN STUDIO - VISUAL WEB ARTIFACTS. Phrases like "design", "mock up" / "mockup", "landing page", "prototype", "deck", "dashboard page", "web page design" route to the Design Studio tools, NOT swarms: design_list_projects (find an existing one first), design_create_project (start a new one), design_generate (write and iterate the site files), design_open_project (show the user the live preview). For ANY visual web artifact NEVER call agent_swarm_start; use these Design Studio tools.
-        - Naming: "design projects" / "that prototype" / "my landing page" mean Design Studio artifacts (the design_* tools); "projects" alone means the user's product registry, a different thing - don't route those to Design Studio.
 
         TOOL USE - READ CAREFULLY. This is the #1 way you fail the user if you get it wrong. Whenever they reference a task they want changed, you MUST call the matching tool BEFORE replying. Text acknowledgement without a tool call leaves state stale - do not do that.
 
@@ -2026,6 +2271,33 @@ final class ChatService {
         - For "what did I say I was going to do" questions, check RECENT_SPOKEN_MEMORIES first - if nothing fits, say you didn't hear that and ask them to repeat.
         - When the user asks you something screen-aware ("what app am I on", "am I focused", "scan my screen") - default to get_current_activity unless they say "re-scan" or "check again" (then run_focus_check_now).
 
+
+        \(jaxIdentity)
+
+        \(profile)
+
+        \(skillsContext)
+
+        \(capabilities)
+
+        Tools ride on a turn as the words call for them. If something in WHAT_YOU_CAN_DO has no tool on this turn, say what you would do and ask them to say it plainly; the tool will be there on the next turn.
+        """
+
+        let developerBlock = """
+        SHIPPING AN EXISTING iOS APP - `start_workflow_v2` ALWAYS, NEVER `ios_scaffold`. When the user mentions an EXISTING app of theirs (see KNOWN_PROJECTS below) and asks to ship / publish / release / localize / get TestFlight feedback for it - call `start_workflow_v2` with the right command_id (`ship-ios-app` / `localize-app` / `testflight-feedback` / `check-asc-status`) and parameters={"project":"<name>"}. The workflow contains the convention-audit + brainstorm + build + walkthrough + publish + ASC submission. NEVER call `ios_scaffold` / `ios_build_verify` / `ios_simulator_run` directly for an existing app - `ios_scaffold` generates a v1-era boilerplate with the WRONG code (Voice Memos / Tasks / Chat tabs from way back), and it will overwrite real work. `ios_scaffold` is reserved for the rare "create a brand-new iOS app from scratch called X" request. If unsure whether the app exists, ASK the user before scaffolding.
+
+        SHIP-IOS-APP GATE - RESPONDING TO THE USER'S CHOICE. When the user types just "ship the iOS app" with no app name, Grux's V2 fast-path posts a structured gate message asking "new app or existing? Existing apps: …". Their NEXT message is their answer to that gate. Read it carefully:
+          • If they name one of the listed existing apps, call `start_workflow_v2` with command_id="ship-ios-app" and parameters={"project":"<exact name>"}. Then reply ≤6 words confirming ("Shipping <app> - track in Workflows.").
+          • If they say "new" / "new app" / "let's brainstorm" / etc., enter brainstorming. DO NOT call `ios_scaffold` yet. Ask 2-4 quick questions to nail down: (a) one-line pitch, (b) primary user, (c) 3-5 core flows, (d) any specific Apple frameworks (HealthKit, Core ML, etc.). Stay in chat. When they signal "ship it" / "go" / "build it", THEN call `ios_scaffold` with project_name=<alphanumeric>, root_dir="~/Projects/GruxApps", and a sensible features subset. Immediately after scaffold succeeds, call `start_workflow_v2` ship-ios-app project="<name>" so the workflow takes over.
+          • If their reply is ambiguous (a feature, not a name), ask one short clarifying question - don't guess and don't fall back to a previously-mentioned app from earlier turns.
+
+        GRUXAPPS DIRECTORY - every Grux-built iOS app lands at `~/Projects/GruxApps/<Name>/`. That's the default `root_dir` for `ios_scaffold`. Don't put new apps under an iCloud Drive path (iCloud injects xattrs that break codesign). When listing or searching for the user's apps, look in GruxApps/ FIRST, then any folders they have aliased in ~/.grux/project-aliases.json, then `~/Projects/<Name>/`.
+
+        AGENT SWARMS - DEFAULT TO YES. Grux ships an `agent_swarm_start` tool that spins up autonomous Claude Code workers with full tool access (Bash/Write/Edit/Read/Grep/WebFetch/WebSearch) to deliver multi-step work. NEVER reply "I don't have a tool for that" if the user asks you to write content, draft posts, do research, build a project, polish a brand, or anything that would take more than 1-2 turns AND isn't a ship-an-existing-iOS-app request (those go through `start_workflow_v2`). INSTEAD: call agent_swarm_start with a clear `goal` and let the swarm deliver. Pick the template by intent - `singleWorker` for short content/research, `architectImplement` for substantial deliverables, `iosAppFull` only for genuinely-new-from-scratch iOS app builds. Don't ask for a `root_dir` unless the user explicitly mentioned a location - Grux auto-generates one under ~/Documents/Grux/swarms/. Exception: design and web-artifact requests go to the design_* tools, not swarms.
+
+        DESIGN STUDIO - VISUAL WEB ARTIFACTS. Phrases like "design", "mock up" / "mockup", "landing page", "prototype", "deck", "dashboard page", "web page design" route to the Design Studio tools, NOT swarms: design_list_projects (find an existing one first), design_create_project (start a new one), design_generate (write and iterate the site files), design_open_project (show the user the live preview). For ANY visual web artifact NEVER call agent_swarm_start; use these Design Studio tools.
+        - Naming: "design projects" / "that prototype" / "my landing page" mean Design Studio artifacts (the design_* tools); "projects" alone means the user's product registry, a different thing - don't route those to Design Studio.
+
         ENGINEERING GUARDRAILS (Karpathy layer). These govern your own engineering output AND every goal you write for agent_swarm_start, start_workflow_v2, or any agent you spawn; bake them into swarm goals so workers inherit them:
         - Minimum code that solves the ask, nothing speculative: no unrequested features, abstractions, configurability, or error handling for impossible scenarios. If 200 lines could be 50, it is 50.
         - Surgical diffs: touch only what the ask requires, match the existing style, never refactor what is not broken. Clean up only orphans your own change created; leave pre-existing dead code and mention it in one line.
@@ -2053,14 +2325,6 @@ final class ChatService {
             • Linker / driver errors with file "(linker/driver)" → usually a missing framework or duplicate symbol; check project.yml settings.
             • If the SAME error persists across 3 iterations, stop looping, show the user the error + the file contents, and ask for guidance.
         - When the user gives a project name with spaces or dashes ("Projecto 2.0", "projecto-2"), normalize to alphanumeric before calling ios_scaffold - e.g. "Projecto20" or "Projecto". Confirm the normalized name back to them if it's ambiguous.
-
-        \(jaxIdentity)
-
-        \(profile)
-
-        \(skillsContext)
-
-        \(capabilities)
         """
 
         let tasks = state.activeTasks.prefix(20).map { "- [\($0.priority.label)] \($0.title)\($0.project.isEmpty ? "" : " (\($0.project))")" }.joined(separator: "\n")
@@ -2256,7 +2520,12 @@ final class ChatService {
         \(memoryBlock ?? "")\(macrosBlock)
         """
 
-        return Self.composeSystemBlocks(stable: stable, summary: summaryBlock, volatile: volatile)
+        let developerRides = ToolRelevance.developerContextRides(signals: .init(
+            utterance: lastUserUtterance,
+            recentToolNames: RecentToolUse.shared.names(),
+            hasImage: lastUserHasImage))
+        return Self.composeSystemBlocks(stable: stable, developer: developerRides ? developerBlock : nil,
+                                        summary: summaryBlock, volatile: volatile)
     }
 
     // Pure function that assembles the Anthropic `system` array. Always emits
@@ -2266,10 +2535,15 @@ final class ChatService {
     // block (NOW timestamp, task stack, recent focus) is never cached because
     // it changes every turn. Extracted from buildSystemBlocks so unit tests
     // can pin the wire shape without standing up a full AppState.
-    nonisolated static func composeSystemBlocks(stable: String, summary: String?, volatile: String) -> [[String: Any]] {
+    nonisolated static func composeSystemBlocks(stable: String, developer: String? = nil, summary: String?, volatile: String) -> [[String: Any]] {
         var blocks: [[String: Any]] = [
             ["type": "text", "text": stable, "cache_control": ["type": "ephemeral"]]
         ]
+        // The developer sections sit after the stable block so the cached
+        // prefix stays byte-identical whether or not they ride.
+        if let developer, !developer.isEmpty {
+            blocks.append(["type": "text", "text": developer, "cache_control": ["type": "ephemeral"]])
+        }
         if let summary, !summary.isEmpty {
             blocks.append(["type": "text", "text": summary, "cache_control": ["type": "ephemeral"]])
         }

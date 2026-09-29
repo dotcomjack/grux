@@ -395,7 +395,8 @@ struct ContactsView: View {
 // Create / edit sheet. Tight inputs per the app's scale: small controls, compact
 // paddings, no chunky chrome. Editing applies name and organization in
 // place and appends a new email or phone if one is typed.
-private struct ContactEditorSheet: View {
+// Internal, not private: PaneFitSweepTests hosts it.
+struct ContactEditorSheet: View {
     @Environment(\.dismiss) private var dismiss
     let contact: GruxContact?
     let onDone: (String) -> Void

@@ -355,8 +355,7 @@ enum EnergyRecapBuilder {
     // One file per day under ~/.grux/energy-recaps/. JSON, not NDJSON, since
     // we only ever keep the latest build per dayKey (re-firing overwrites).
     private static func persist(_ recap: EnergyRecap) {
-        let dir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".grux/energy-recaps", isDirectory: true)
+        let dir = Persistence.gruxDir.appendingPathComponent("energy-recaps", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let file = dir.appendingPathComponent("energy-recap-\(recap.dayKey).json")
         let enc = JSONEncoder()

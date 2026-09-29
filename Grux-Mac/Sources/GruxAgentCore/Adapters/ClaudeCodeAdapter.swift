@@ -18,18 +18,12 @@ public struct ClaudeCodeAdapter: AgentAdapter {
     }
 
     public var detectionCandidates: AdapterDetectionCandidates {
-        // Mirrors SwarmWorker.resolveClaudeBinary: $CLAUDE_BIN, then the same
-        // fixed candidate list, in the same priority order.
+        // Same answer as SwarmWorker.resolveClaudeBinary: $CLAUDE_BIN, then
+        // ClaudeBinaryLocator's candidates, in the same priority order.
         AdapterDetectionCandidates(
             toolName: "claude",
             envVar: "CLAUDE_BIN",
-            candidatePaths: [
-                "~/.local/bin/claude",
-                "~/.claude/local/claude",
-                "/opt/homebrew/bin/claude",
-                "/usr/local/bin/claude",
-                "/usr/bin/claude"
-            ],
+            candidatePaths: ClaudeBinaryLocator.candidatePaths(home: NSHomeDirectory()),
             versionArgs: ["--version"]
         )
     }

@@ -58,8 +58,7 @@ final class ReplyPolicyStore: ObservableObject {
     @Published private(set) var policies: [String: BrandReplyPolicy] = [:]
 
     private static var rootDir: URL {
-        URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux")
+        Persistence.gruxDir
             .appendingPathComponent("support")
     }
     private let url: URL = {

@@ -1062,7 +1062,7 @@ enum SmokeTest {
             lines.append("RESULT: \(pass) passed, \(fail) failed")
             lines.append("")
             let out = lines.joined(separator: "\n")
-            let resultPath = NSHomeDirectory() + "/.grux/smoke-test-results.txt"
+            let resultPath = Persistence.gruxDir.appendingPathComponent("smoke-test-results.txt").path
             let resultDir = (resultPath as NSString).deletingLastPathComponent
             try? FileManager.default.createDirectory(atPath: resultDir, withIntermediateDirectories: true)
             try? out.write(toFile: resultPath, atomically: true, encoding: .utf8)
@@ -1298,7 +1298,7 @@ enum SmokeTest {
         }
         let didPause = pausedRun != nil
         // Resume.
-        if let id = gateRunId { await CommandV2Engine.shared.resume(id, userReply: "go (smoke)") }
+        if let id = gateRunId { await CommandV2Engine.shared.resume(id, userReply: "go") }
         // Wait for completion.
         var waited3 = 0
         while waited3 < 5000 {
@@ -1353,7 +1353,7 @@ enum SmokeTest {
         lines.append("")
 
         let out = lines.joined(separator: "\n")
-        let resultPath = NSHomeDirectory() + "/.grux/smoke-test-results.txt"
+        let resultPath = Persistence.gruxDir.appendingPathComponent("smoke-test-results.txt").path
         // Ensure the directory exists. `~/.grux` is created by the app at
         // runtime normally; for CLI --smoke-test we can't assume it.
         let resultDir = (resultPath as NSString).deletingLastPathComponent

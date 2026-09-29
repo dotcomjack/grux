@@ -120,7 +120,18 @@ final class AmbientMemoryExtractor {
                 spanName: "claude.complete",
                 feature: "uncategorized"
             )
-            parseAndApply(raw)
+            let heard = parseAndApply(raw)
+            // P-R-6, project.attribution for memories: file the untagged ones
+            // under a project the person already has, in one decision call for
+            // the whole pass, before they are stored. A memory already stored
+            // is dropped first rather than paid for.
+            let fresh = heard.filter { m in
+                !ambient.memories.contains { $0.text.caseInsensitiveCompare(m.text) == .orderedSame }
+            }
+            let filed = await Self.attributeProjects(fresh, options: ProjectAttribution.liveOptions(),
+                                                     engine: DecisionEngine.shared,
+                                                     threshold: AppState.shared.config.listeningThreshold)
+            for m in filed { ambient.addMemory(m) }
             ambient.lastExtractionAt = Date()
             WakeLog.shared.log("ambient extractor: applied result")
         } catch {
@@ -128,8 +139,26 @@ final class AmbientMemoryExtractor {
         }
     }
 
-    private func parseAndApply(_ raw: String) {
-        guard let obj = Self.extractJSONObject(raw) else { return }
+    static let memoryAttributionState = "Things the person said, heard in the room: commitments, intentions and facts."
+
+    /// The memories of one pass with their blanks filled by one decision call
+    /// (`ProjectAttribution.fill`). The extractor's own tag is never replaced.
+    static func attributeProjects(_ memories: [AmbientMemory], options: [ProjectAttribution.Option],
+                                  engine: DecisionEngine, threshold: Double) async -> [AmbientMemory] {
+        let projects = await ProjectAttribution.fill(
+            projects: memories.map(\.project),
+            prefixes: memories.map { "The \($0.kind.rawValue): \($0.text)." },
+            noun: "memory", state: memoryAttributionState, options: options, engine: engine, threshold: threshold)
+        var out = memories
+        for i in out.indices { out[i].project = projects[i] }
+        return out
+    }
+
+    /// Applies the actions at once and returns the memories, which are stored
+    /// only after their projects are filled.
+    private func parseAndApply(_ raw: String) -> [AmbientMemory] {
+        guard let obj = Self.extractJSONObject(raw) else { return [] }
+        var memories: [AmbientMemory] = []
         let ambient = AmbientState.shared
         let autoPromote = AppState.shared.config.ambientAutoPromoteActions
 
@@ -157,22 +186,23 @@ final class AmbientMemoryExtractor {
             for c in commits {
                 guard let text = (c["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { continue }
                 let project = (c["project"] as? String)?.nilIfEmpty
-                ambient.addMemory(AmbientMemory(kind: .commitment, text: text, project: project))
+                memories.append(AmbientMemory(kind: .commitment, text: text, project: project))
             }
         }
         if let intents = obj["intents"] as? [[String: Any]] {
             for i in intents {
                 guard let text = (i["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { continue }
                 let project = (i["project"] as? String)?.nilIfEmpty
-                ambient.addMemory(AmbientMemory(kind: .intent, text: text, project: project))
+                memories.append(AmbientMemory(kind: .intent, text: text, project: project))
             }
         }
         if let facts = obj["facts"] as? [[String: Any]] {
             for f in facts {
                 guard let text = (f["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { continue }
-                ambient.addMemory(AmbientMemory(kind: .fact, text: text))
+                memories.append(AmbientMemory(kind: .fact, text: text))
             }
         }
+        return memories
     }
 
     static func extractJSONObject(_ s: String) -> [String: Any]? {

@@ -535,10 +535,15 @@ struct ConversationDetailView: View {
                                 Image(systemName: "circle")
                                     .font(.callout).foregroundStyle(.secondary)
                                     .padding(.top, 3)
-                                Text(item)
-                                    .font(.callout)
-                                    .textSelection(.enabled)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(item)
+                                        .font(.callout)
+                                        .textSelection(.enabled)
+                                    if let moment = record.actionItemMoments?[item] {
+                                        MeetingMomentChip(moment: moment)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
                                 Button { onImportSingle(item) } label: {
                                     Label("Import", systemImage: "plus.circle.fill")
                                         .font(.caption.weight(.bold))
@@ -670,6 +675,32 @@ struct ConversationDetailView: View {
             return String(format: "%dh %dm %ds", secs / 3600, (secs % 3600) / 60, secs % 60)
         }
         return String(format: "%dm %ds", secs / 60, secs % 60)
+    }
+}
+
+// P-R-6: the kind of moment an action item is, judged once when the summary
+// landed. Only items a provider could place are labelled; an unlabelled item
+// is shown exactly as it always was. "Not in transcript" is a flag to check
+// the item, never a reason it was removed.
+struct MeetingMomentChip: View {
+    let moment: MeetingMoment
+
+    var body: some View {
+        Text(moment.label.uppercased())
+            .font(.system(size: 9, weight: .bold))
+            .kerning(0.6)
+            .foregroundStyle(tint)
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background(Capsule().fill(tint.opacity(0.14)))
+    }
+
+    private var tint: Color {
+        switch moment {
+        case .decision: return .indigo
+        case .commitment: return .purple
+        case .actionItem: return .secondary
+        case .notSaid: return .orange
+        }
     }
 }
 

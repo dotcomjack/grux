@@ -184,11 +184,12 @@ final class FirstRunChatTests: XCTestCase {
     /// being wrong, which is the more expensive failure.
     func testEveryFeatureIsEitherATabOrSaysWhereItLives() throws {
         let lrv = try String(contentsOf: launchRootSource, encoding: .utf8)
-        guard let range = lrv.range(of: #"enum Tab: Hashable \{ case [^}]+\}"#, options: .regularExpression) else {
+        // The conformance list may grow (Hashable, CaseIterable); the anchor is the enum's name.
+        guard let range = lrv.range(of: #"enum Tab: [^{]*\{ case [^}]+\}"#, options: .regularExpression) else {
             return XCTFail("could not find the Tab enum; the scan anchor moved")
         }
         let tabs = Set(lrv[range]
-            .replacingOccurrences(of: "enum Tab: Hashable { case ", with: "")
+            .replacingOccurrences(of: #"^enum Tab: [^{]*\{ case "#, with: "", options: .regularExpression)
             .replacingOccurrences(of: "}", with: "")
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespaces) })

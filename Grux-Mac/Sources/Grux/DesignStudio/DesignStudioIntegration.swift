@@ -15,7 +15,11 @@ enum DesignStudioIntegration {
         DesignStudioEngine.agentDelegate = StudioAgentDelegate()
         // Let the store consult the engine so restore/delete no-op on a project
         // that is mid-generation.
-        DesignProjectStore.shared.isProjectRunning = { projectId in
+        // TYPE LEVEL, so wiring the seam does not BUILD the store. Touching
+        // `.shared` here read the design library out of `~/Documents` on the
+        // main thread at launch, and on a Mac without that permission the app
+        // hung with no window at all.
+        DesignProjectStore.isProjectRunning = { projectId in
             DesignStudioEngine.shared.isRunning(projectId: projectId)
         }
         InspectorScriptProvider.script = InspectorScript.script

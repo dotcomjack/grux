@@ -114,9 +114,19 @@ struct MailboxView: View {
             GruxChip(title: "Sync", systemImage: "arrow.triangle.2.circlepath", style: .secondary) {
                 Task { await InboxSyncEngine.shared.syncAll() }
             }
-            GruxChip(title: "Compose", systemImage: "square.and.pencil", style: .primary) {
+            // Sending has its own credential, separate from reading, so the
+            // door says so before anyone writes: a key on the chip, and the
+            // sheet opens onto the setup card rather than a form. See
+            // ComposeDoor below. The title stays "Compose" because this
+            // toolbar has already wrapped a longer label at the 840pt floor.
+            GruxChip(title: "Compose",
+                     systemImage: ComposeDoor.isReady ? "square.and.pencil" : "key.fill",
+                     style: .primary) {
                 showCompose = true
             }
+            .help(ComposeDoor.isReady
+                  ? "Write and send an email"
+                  : "Sending needs its own key, separate from reading mail. Click to see what to add.")
             GruxChip(title: "Accounts", systemImage: "person.crop.circle.badge.plus", style: .secondary) {
                 showAccounts = true
             }
@@ -313,18 +323,57 @@ struct MailboxView: View {
 
     // MARK: - Date formatting
 
-    private static func shortDate(_ d: Date) -> String {
+    // Times go through the one clock, `TodayModel.clock`: `8:54 AM`, never
+    // `08:54`. The list printed a 24 hour time for every message received
+    // today until 2026-09-21.
+    static func shortDate(_ d: Date, calendar: Calendar = .current) -> String {
+        if calendar.isDateInToday(d) { return TodayModel.clock(d, calendar: calendar) }
         let f = DateFormatter()
-        f.dateFormat = Calendar.current.isDateInToday(d) ? "HH:mm" : "MMM d"
-        f.timeZone = TimeZone.current
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "MMM d"
+        f.timeZone = calendar.timeZone
         return f.string(from: d)
     }
 
-    private static func longDate(_ d: Date) -> String {
+    static func longDate(_ d: Date, calendar: Calendar = .current) -> String {
         let f = DateFormatter()
-        f.dateFormat = "EEE, MMM d yyyy HH:mm"
-        f.timeZone = TimeZone.current
-        return f.string(from: d)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "EEE, MMM d yyyy"
+        f.timeZone = calendar.timeZone
+        return "\(f.string(from: d)) at \(TodayModel.clock(d, calendar: calendar))"
+    }
+}
+
+// MARK: - Compose door
+
+/// COMPOSE HAS ITS OWN CREDENTIAL, and the door into it says so before a word
+/// is written.
+///
+/// Reading mail and sending it are separate registry rows (`mailbox` and
+/// `mailbox.compose`) because they need different things: reading needs a mail
+/// server, sending needs that and an email sending key, since Grux has no SMTP
+/// client. Before this, Compose opened the full form whatever the state, and a
+/// missing key surfaced only at Send, after the whole message was written, as a
+/// red provider error naming a keychain account. The setup card's rule is that
+/// a missing capability never surfaces as an error, so the sheet shows the card
+/// instead of the form until sending is set up.
+@MainActor
+enum ComposeDoor {
+    /// The registry row this door answers for. It folds into Mail.
+    static let featureId = "mailbox.compose"
+
+    /// What sending still needs, asked against a predicate so the rule is
+    /// checkable on a Mac that already holds every key.
+    static func missing(satisfied: (SetupRequirement) -> Bool) -> [SetupRequirement] {
+        guard let row = FeatureRegistry.row(id: featureId) else { return [] }
+        return FeatureRegistry.unmetBlocking(of: row, satisfied: satisfied)
+    }
+
+    /// The same question against this Mac now. Recomputed on every render, as
+    /// `CapabilityGate` is, so adding the key in Settings opens the door
+    /// without a relaunch.
+    static var isReady: Bool {
+        missing(satisfied: { CapabilityResolver.isSatisfied($0) }).isEmpty
     }
 }
 
@@ -332,7 +381,8 @@ struct MailboxView: View {
 
 // Sends through ResendClient with the selected account's verified From
 // address. Plain text, DashSanitizer scrubs dashes at the client layer.
-private struct ComposeEmailSheet: View {
+// Internal, not private: PaneFitSweepTests hosts it.
+struct ComposeEmailSheet: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var accountStore = EmailAccountStore.shared
 
@@ -344,10 +394,46 @@ private struct ComposeEmailSheet: View {
     @State private var errorText = ""
 
     var body: some View {
+        if ComposeDoor.isReady {
+            form
+        } else {
+            credentialDoor
+        }
+    }
+
+    /// Shown instead of the form while sending is missing its own credential.
+    /// The shared setup card names what is missing in the contract's own words
+    /// and offers the button that goes to it, which is the one setup surface
+    /// every credential-gated feature uses rather than inventing its own.
+    private var credentialDoor: some View {
         VStack(alignment: .leading, spacing: GruxSpacing.m - 2) {
-            Text("Compose")
-                .font(GruxTheme.Font.title)
-                .foregroundStyle(GruxTheme.textPrimary)
+            HStack(spacing: 6) {
+                Text("Compose")
+                    .font(GruxTheme.Font.title)
+                    .foregroundStyle(GruxTheme.textPrimary)
+                LabsHeaderBadge(feature: ComposeDoor.featureId)
+            }
+            CapabilitySetupCard(featureKey: ComposeDoor.featureId)
+            HStack {
+                Spacer()
+                GruxChip(title: "Close", style: .secondary) { dismiss() }
+            }
+        }
+        .padding(GruxSpacing.l)
+        .frame(minWidth: GruxLayout.sheetMin,
+               idealWidth: GruxLayout.sheetIdeal,
+               maxWidth: GruxLayout.sheetMax)
+        .background(GruxTheme.base)
+    }
+
+    private var form: some View {
+        VStack(alignment: .leading, spacing: GruxSpacing.m - 2) {
+            HStack(spacing: 6) {
+                Text("Compose")
+                    .font(GruxTheme.Font.title)
+                    .foregroundStyle(GruxTheme.textPrimary)
+                LabsHeaderBadge(feature: ComposeDoor.featureId)
+            }
 
             Picker("From", selection: $fromAccountId) {
                 ForEach(accountStore.accounts) { account in
@@ -442,7 +528,8 @@ private struct ComposeEmailSheet: View {
 
 // Lists configured accounts and adds new ones. The password field writes to
 // the keychain only (never to accounts.json).
-private struct MailAccountsSheet: View {
+// Internal, not private: PaneFitSweepTests hosts it.
+struct MailAccountsSheet: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var accountStore = EmailAccountStore.shared
 

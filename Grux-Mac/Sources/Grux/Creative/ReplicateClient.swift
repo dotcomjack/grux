@@ -146,6 +146,14 @@ actor ReplicateClient {
         submitReq.setValue("application/json", forHTTPHeaderField: "Content-Type")
         submitReq.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (submitData, submitResp) = try await session.data(for: submitReq)
+        // P-R-3: the submit is the call Replicate refuses when the balance is
+        // zero, so it is the one read for the credit. Replicate documents no
+        // out of credit response, so `CreditSignature.replicate` answers false
+        // and only successes are recorded until it does. Polls are not
+        // reported: a poll spends nothing new.
+        if let http = submitResp as? HTTPURLResponse {
+            await CreditMonitor.observe(.replicate, status: http.statusCode, body: submitData)
+        }
         try Self.ensureOK(submitResp, submitData)
         let submitted = try Self.parsePrediction(submitData)
 

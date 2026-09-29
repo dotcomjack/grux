@@ -57,6 +57,37 @@ final class StudioContentRules {
 
 // MARK: - DesignPreviewView
 //
+/// The preview with a plain loading state over it until its first page has
+/// drawn. SWEEP-13: the first open after launch showed a blank area for up to
+/// about 8 s (the no-network rule list compiles before the first load), with
+/// nothing to say it was coming.
+struct DesignPreviewPane: View {
+    let indexURL: URL?
+    let siteRoot: URL?
+    let revision: Int
+    let engine: DesignStudioEngine
+    @State private var firstPageDrawn = false
+
+    static let loadingLine = "Loading the preview"
+
+    var body: some View {
+        ZStack {
+            DesignPreviewView(indexURL: indexURL, siteRoot: siteRoot, revision: revision, engine: engine,
+                              onFirstNavigationEnded: { firstPageDrawn = true })
+            if !firstPageDrawn {
+                VStack(spacing: GruxSpacing.s) {
+                    ProgressView().controlSize(.small)
+                    Text(Self.loadingLine)
+                        .font(GruxType.caption)
+                        .foregroundStyle(GruxTheme.textSecondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityElement(children: .combine)
+            }
+        }
+    }
+}
+
 // Sandboxed WKWebView that renders the project's site/ tree. Every layer of the
 // UI contract's section 4 hardening is present: non-persistent data store,
 // compiled no-network rule list, a navigation-delegate allowlist, fenced
@@ -69,8 +100,14 @@ struct DesignPreviewView: NSViewRepresentable {
     // updateNSView call (same revision) never reloads.
     let revision: Int
     let engine: DesignStudioEngine
+    /// Called once, when the first navigation finishes or fails.
+    var onFirstNavigationEnded: (() -> Void)? = nil
 
-    func makeCoordinator() -> Coordinator { Coordinator(engine: engine) }
+    func makeCoordinator() -> Coordinator {
+        let coordinator = Coordinator(engine: engine)
+        coordinator.onFirstNavigationEnded = onFirstNavigationEnded
+        return coordinator
+    }
 
     func makeNSView(context: Context) -> WKWebView {
         let controller = WKUserContentController()
@@ -142,6 +179,33 @@ struct DesignPreviewView: NSViewRepresentable {
         // of the session can never reach the network before the fence exists.
         private var rulesAttached = false
         private var pendingLoad: (indexURL: URL?, siteRoot: URL?, revision: Int)?
+        // The last load handed to WebKit, so a lost content process reloads it.
+        private var lastLoad: (indexURL: URL, siteRoot: URL, revision: Int)?
+        /// How many loads went to WebKit (tests read it).
+        private(set) var loadCount = 0
+        let recovery = WebContentRecovery(surface: "Design Studio preview")
+        /// Called once, when the first navigation finishes or fails, so the
+        /// pane can take its loading state down.
+        var onFirstNavigationEnded: (() -> Void)?
+        private(set) var firstNavigationEnded = false
+
+        private func endFirstNavigation() {
+            guard !firstNavigationEnded else { return }
+            firstNavigationEnded = true
+            onFirstNavigationEnded?()
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            endFirstNavigation()
+        }
+
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            endFirstNavigation()
+        }
+
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            endFirstNavigation()
+        }
 
         init(engine: DesignStudioEngine) {
             self.engine = engine
@@ -174,7 +238,20 @@ struct DesignPreviewView: NSViewRepresentable {
             if !force && revision == loadedRevision && indexURL.path == loadedPath { return }
             loadedRevision = revision
             loadedPath = indexURL.path
+            lastLoad = (indexURL, siteRoot, revision)
+            loadCount += 1
             web.loadFileURL(indexURL, allowingReadAccessTo: siteRoot)
+        }
+
+        // WebKit's content process for the preview ended: say so in wake.log
+        // and reload the same fenced page once, rather than stay blank.
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            MainActor.assumeIsolated {
+                recovery.contentProcessEnded {
+                    guard let last = lastLoad else { return }
+                    load(indexURL: last.indexURL, siteRoot: last.siteRoot, revision: last.revision, force: true)
+                }
+            }
         }
 
         // Belt-and-suspenders allowlist. about: and file: (already fenced to the

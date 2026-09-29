@@ -39,7 +39,14 @@ final class MotionGateTests: XCTestCase {
     /// `motionOff`      HomeHeroView's local alias for exactly that expression.
     /// `MotionTokens.gated`  the helper form, which returns nil under the gate.
     /// `paused:`        the `TimelineView` form, which stops the ticks.
-    private static let gateTokens = ["reduceMotion", "motionOff", "MotionTokens.gated", "paused:"]
+    /// `userWantsStill` the Core Animation form (`OrbLayers.swift`). It honours
+    ///                  the user's preference and deliberately NOT suspension:
+    ///                  a CA loop is interpolated by the render server, costs
+    ///                  this process nothing per frame, and is not composited
+    ///                  while its window is occluded. That is the whole reason
+    ///                  the orbs moved there.
+    private static let gateTokens = ["reduceMotion", "motionOff", "MotionTokens.gated", "paused:",
+                                     "userWantsStill"]
 
     /// What we are looking for: every form that loops until something stops it.
     ///
@@ -57,6 +64,10 @@ final class MotionGateTests: XCTestCase {
         "TimelineView(.animation",
         "options: .repeating",
         ".variableColor.iterative",
+        // Core Animation's spelling of forever. Added 2026-09-21 when the orbs
+        // moved onto the render server: a scanner that only knew the SwiftUI
+        // forms would have reported the new loops as absent, not as gated.
+        "repeatCount = .infinity",
     ]
 
     /// Spellings that bound a loop to a finite number of cycles. A site wearing
@@ -127,6 +138,22 @@ final class MotionGateTests: XCTestCase {
             "        }",
         ]
         XCTAssertEqual(Self.gate(for: 2, in: guarded), "reduceMotion")
+
+        // The Core Animation form: the factory refuses to build the loop.
+        let caGated = [
+            "    @MainActor static func turn(seconds: Double) -> CABasicAnimation? {",
+            "        guard !userWantsStill else { return nil }",
+            "        let a = CABasicAnimation(keyPath: \"transform.rotation.z\")",
+            "        a.repeatCount = .infinity",
+        ]
+        XCTAssertEqual(Self.gate(for: 3, in: caGated), "userWantsStill")
+        let caUngated = [
+            "    static func turn(seconds: Double) -> CABasicAnimation {",
+            "        let a = CABasicAnimation(keyPath: \"transform.rotation.z\")",
+            "        a.repeatCount = .infinity",
+        ]
+        XCTAssertNil(Self.gate(for: 2, in: caUngated),
+                     "an ungated Core Animation loop was reported as gated")
 
         let timeline = [
             "    var body: some View {",

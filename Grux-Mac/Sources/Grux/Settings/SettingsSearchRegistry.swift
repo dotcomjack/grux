@@ -56,19 +56,23 @@ enum SettingsTabAliases {
         "general":    SettingsLocation(pane: .general),
         "about":      SettingsLocation(pane: .general, anchor: "general.about"),
         "voice":      SettingsLocation(pane: .voiceAmbient, sub: "voice"),
+        "listening":  SettingsLocation(pane: .voiceAmbient, sub: "voice", anchor: "voice.wake"),
         "ambient":    SettingsLocation(pane: .voiceAmbient, sub: "ambient"),
         "focus":      SettingsLocation(pane: .voiceAmbient, sub: "focus"),
-        "terminal":   SettingsLocation(pane: .voiceAmbient, sub: "terminal"),
-        // The session engine, distinct from Terminal Focus above. Focus is an
-        // overlay watching sessions somebody else started; this one spawns them
-        // and spends a credential, so it is separately addressable.
+        // The session engine: it spawns sessions and spends a credential, so
+        // it is separately addressable.
         "sessions":   SettingsLocation(pane: .voiceAmbient, sub: "sessions"),
         "api":        SettingsLocation(pane: .models, sub: "models", anchor: "models.api"),
         "upgrades":   SettingsLocation(pane: .models, sub: "models", anchor: "models.tier"),
+        "tuning":     SettingsLocation(pane: .general, anchor: "general.tuning"),
         "presets":    SettingsLocation(pane: .models, sub: "presets"),
         "appearance": SettingsLocation(pane: .appearance),
         "backup":     SettingsLocation(pane: .dataSecurity, sub: "backup"),
         "security":   SettingsLocation(pane: .dataSecurity, sub: "security"),
+        // Phase C fold: Folders left the rail and became the files allowlist
+        // inside Data and Security. The old name still addresses it, because a
+        // fold changes where a surface LIVES and never whether its name works.
+        "folders":    SettingsLocation(pane: .dataSecurity, sub: "folders"),
         // Convenience tags for new structure
         "voice-ambient": SettingsLocation(pane: .voiceAmbient),
         "models":        SettingsLocation(pane: .models),
@@ -77,6 +81,7 @@ enum SettingsTabAliases {
         "offline":       SettingsLocation(pane: .models, sub: "models", anchor: "models.offline"),
         "endpoints":     SettingsLocation(pane: .models, sub: "models", anchor: "models.endpoints"),
         "mcp":           SettingsLocation(pane: .models, sub: "models", anchor: "models.mcp"),
+        "usage":         SettingsLocation(pane: .models, sub: "models", anchor: "models.usage"),
         // Where the sidebar's needs-setup count goes, and the words somebody
         // would search for to find the same list.
         "capabilities":  SettingsLocation(pane: .dataSecurity, sub: "capabilities", anchor: "data.credentials"),
@@ -85,12 +90,20 @@ enum SettingsTabAliases {
         "keys":          SettingsLocation(pane: .dataSecurity, sub: "capabilities", anchor: "data.credentials"),
         "needs setup":   SettingsLocation(pane: .dataSecurity, sub: "capabilities", anchor: "data.credentials"),
         "memory":        SettingsLocation(pane: .dataSecurity, sub: "capabilities", anchor: "data.memory"),
-        "fal":           SettingsLocation(pane: .dataSecurity, sub: "capabilities", anchor: "data.fal"),
+        // C12: the door to the brand-scoped rows, reachable by deep link.
+        "brands":        SettingsLocation(pane: .dataSecurity, sub: "capabilities", anchor: "data.brands"),
         // The first-run flow's only door back in. It had a search entry and a
         // scroll anchor but no tag here, so `--open-settings-tab=first-run`
         // landed at the top of General and the row stayed below the fold,
         // which is the same "technically present, practically unreachable"
         // shape as having no row at all.
+        // P-F-1: the Developer door's switch, by the words somebody would use.
+        "developer":     SettingsLocation(pane: .general, anchor: "general.doors"),
+        "doors":         SettingsLocation(pane: .general, anchor: "general.doors"),
+        // The Classic sidebar switch, by the words for the pre-3.0 frame.
+        "classic":       SettingsLocation(pane: .general, anchor: "general.shell"),
+        "sidebar":       SettingsLocation(pane: .general, anchor: "general.shell"),
+        "legacy":        SettingsLocation(pane: .general, anchor: "general.shell"),
         "first-run":     SettingsLocation(pane: .general, anchor: "general.firstRun"),
         "onboarding":    SettingsLocation(pane: .general, anchor: "general.firstRun"),
         "restart":       SettingsLocation(pane: .general, anchor: "general.firstRun"),
@@ -111,11 +124,57 @@ enum SettingsTabAliases {
     /// Returns a tag `resolve(_:)` understands, or nil for steps the feature
     /// completes. Deliberately sparse. A step earns an entry here only when
     /// Settings genuinely is where it gets done.
+    /// Where a person goes to satisfy a step, or nil when the FEATURE
+    /// completes it and there is nowhere to send them.
+    ///
+    /// THE DEAD END THIS CLOSES, found on a real screen 2026-09-24. Jax
+    /// Command reported "needs one more thing", the thing was "Choose what
+    /// gets indexed", and the card offered no button, because every step
+    /// except one returned nil here. Its own remediation said "Pick which of
+    /// your messages, notes and sent mail Grux may index", which is an
+    /// instruction to do something with nowhere to do it. A stranger reads
+    /// that and hunts for a control that does not exist.
+    ///
+    /// The reason there was no button is real and worth keeping: these are
+    /// CONSENT steps. `CapabilityResolver.selfAttestedSteps` holds them and
+    /// the CLI refuses to answer them, deliberately, because nobody may
+    /// consent on your behalf. But "no agent may answer this" was implemented
+    /// as "nothing may offer it", and those are different. The person is
+    /// allowed to answer it; they just had exactly one chance, during
+    /// first-run, and no way back.
+    ///
+    /// So a self-attested step routes to the first-run door, which is a real
+    /// destination that already exists (`general.firstRun`, "the only door
+    /// back into the first-run flow"), and which keeps the key, the name and
+    /// the settings rather than erasing anything.
     static func stepDestination(_ requirement: SetupRequirement) -> String? {
         switch requirement {
         case .stepTerminalSessionsExplained: return "sessions"
-        default: return nil
+        // The three steps whose ONLY home is the first-run walk. Named
+        // explicitly rather than derived from `selfAttestedSteps`, and that
+        // distinction cost a wrong route before it was caught:
+        // `selfAttestedSteps` also holds `stepYoutubeTranscriptsEnabled`,
+        // whose remediation says "Turn it on in Settings, and off there
+        // whenever you want", so pointing it at first-run would send somebody
+        // to re-walk setup for a toggle. It also holds
+        // `stepFirstFrameReviewed`, which you complete by USING the feature.
+        // Being self-attested says who may answer; it does not say where.
+        case .stepRecordingConsentAcknowledged,
+             .stepCaptureExclusionsConfirmed,
+             .stepCorpusSourcesConfirmed:
+            return "first-run"
+        default:
+            // A step the FEATURE completes still gets no button: opening
+            // Meetings is what fetches the speech model, and sending someone
+            // to a settings pane for it would be a worse lie than silence.
+            return nil
         }
+    }
+
+    /// True when the only way to answer a step is to walk first-run again.
+    /// The card uses this to label the button honestly.
+    static func stepNeedsFirstRun(_ requirement: SetupRequirement) -> Bool {
+        stepDestination(requirement) == "first-run"
     }
 
     static func credentialAnchor(_ requirement: SetupRequirement) -> String {
@@ -167,6 +226,17 @@ struct SettingsSearchEntry: Identifiable {
 enum SettingsSearchRegistry {
     static let entries: [SettingsSearchEntry] = [
         // General
+        // The link to Tuning. The dials that moved there are named here, so a
+        // search for any of them still lands on the one row that says where
+        // they went rather than on nothing.
+        SettingsSearchEntry(id: "general.tuning", title: "Tuning",
+            location: SettingsLocation(pane: .general, anchor: "general.tuning"),
+            keywords: ["tuning", "tune", "behaviour", "behavior", "how grux acts", "threshold", "how sure",
+                       "decisions", "decision budget", "budget", "daily cap", "decisions key", "jev",
+                       "listening mode", "banner", "tell me when", "speak aloud", "voice speed",
+                       "cooldown", "nudge", "stuck", "energy", "self-upgrade", "autonomy",
+                       "intelligence tier", "tier", "active hours", "snooze", "usage", "spend",
+                       "ledger", "latency", "memory", "recap", "tell grux what you want", "optimize"]),
         SettingsSearchEntry(id: "general.screen", title: "Screen awareness",
             location: SettingsLocation(pane: .general, anchor: "general.screen"),
             keywords: ["screen", "analysis", "notifications", "reminder", "auto-promote", "permission", "recording", "watch"]),
@@ -208,6 +278,16 @@ enum SettingsSearchRegistry {
                        "automation", "calendar", "contacts", "notifications", "system audio",
                        "full disk access", "full disk", "tcc", "denied", "revoked", "allow",
                        "why does grux need", "what does grux need"]),
+        SettingsSearchEntry(id: "general.doors", title: "Sidebar doors",
+            location: SettingsLocation(pane: .general, anchor: "general.doors"),
+            keywords: ["developer", "developer door", "door", "doors", "sidebar", "rail", "commands", "agents",
+                       "local models", "compare", "unlock", "show"]),
+        // The way back to the pre-3.0 frame for one release. People name it
+        // by what it looked like, not by the config key.
+        SettingsSearchEntry(id: "general.shell", title: "Classic sidebar",
+            location: SettingsLocation(pane: .general, anchor: "general.shell"),
+            keywords: ["classic", "classic sidebar", "sidebar", "legacy", "old sidebar", "old look",
+                       "shell", "panel", "command panel", "240", "switch back", "layout"]),
         SettingsSearchEntry(id: "general.firstRun", title: "Restart onboarding",
             location: SettingsLocation(pane: .general, anchor: "general.firstRun"),
             keywords: ["onboarding", "first run", "first-run", "reset onboarding", "run onboarding",
@@ -228,13 +308,14 @@ enum SettingsSearchRegistry {
             keywords: ["microphone", "mic", "input", "fidelity", "dji", "voice processing", "default input", "built-in",
                        "noise cancellation", "echo cancellation", "aec", "agc", "noise suppression",
                        "tinny", "muffled", "narrow band", "comm mode", "audio quality", "music quality",
-                       "sound quality", "speakers", "spotify", "youtube", "netflix"]),
+                       "sound quality", "speakers", "spotify", "youtube", "netflix",
+                       "headphones", "airpods", "bluetooth"]),
         SettingsSearchEntry(id: "voice.engine", title: "Voice engine",
             location: SettingsLocation(pane: .voiceAmbient, sub: "voice", anchor: "voice.engine"),
             keywords: ["voice engine", "whisper", "dictation", "transcription", "recognition"]),
-        SettingsSearchEntry(id: "voice.wake", title: "Wake word",
+        SettingsSearchEntry(id: "voice.wake", title: "Listening",
             location: SettingsLocation(pane: .voiceAmbient, sub: "voice", anchor: "voice.wake"),
-            keywords: ["wake word", "hey grux", "auto-send", "listening"]),
+            keywords: ["listening", "always on", "wake word", "hey grux", "off", "microphone", "mic"]),
         SettingsSearchEntry(id: "voice.replies", title: "Spoken replies",
             location: SettingsLocation(pane: .voiceAmbient, sub: "voice", anchor: "voice.replies"),
             keywords: ["spoken replies", "speak aloud", "barge-in", "voice speed", "playback", "tts", "test voice"]),
@@ -253,9 +334,9 @@ enum SettingsSearchRegistry {
         SettingsSearchEntry(id: "sessions.credential", title: "Which credential sessions spend",
             location: SettingsLocation(pane: .voiceAmbient, sub: "sessions", anchor: "sessions.credential"),
             keywords: ["subscription", "api key", "oauth", "billing", "cost", "who pays", "rate limit", "credential"]),
-        SettingsSearchEntry(id: "ambient.passive", title: "Passive listening",
+        SettingsSearchEntry(id: "ambient.passive", title: "Listening",
             location: SettingsLocation(pane: .voiceAmbient, sub: "ambient", anchor: "ambient.passive"),
-            keywords: ["ambient", "passive listening", "transcribe", "whisper", "capture"]),
+            keywords: ["listening", "always on", "ambient", "passive listening", "transcribe", "capture"]),
         SettingsSearchEntry(id: "ambient.behaviors", title: "Ambient behaviors",
             location: SettingsLocation(pane: .voiceAmbient, sub: "ambient", anchor: "ambient.behaviors"),
             keywords: ["auto-promote", "actions", "coach", "nudge", "hud", "floating", "task stack"]),
@@ -277,11 +358,15 @@ enum SettingsSearchRegistry {
         SettingsSearchEntry(id: "focus.pane", title: "Focus cadence & snooze",
             location: SettingsLocation(pane: .voiceAmbient, sub: "focus"),
             keywords: ["focus", "cadence", "capture interval", "drift", "threshold", "snooze", "nudging"]),
-        SettingsSearchEntry(id: "terminal.pane", title: "Terminal focus",
-            location: SettingsLocation(pane: .voiceAmbient, sub: "terminal"),
-            keywords: ["terminal", "claude session", "hotkey", "mapping", "recorder", "stuck"]),
 
         // Models
+        // Somebody asking what Grux costs or how fast it is types the question,
+        // not the card's name, so the question words carry the discovery.
+        SettingsSearchEntry(id: "models.usage", title: "Usage",
+            location: SettingsLocation(pane: .models, sub: "models", anchor: "models.usage"),
+            keywords: ["usage", "cost", "spend", "spent", "money", "price", "bill", "credit",
+                       "latency", "speed", "how fast", "slow", "milliseconds",
+                       "decisions", "jev", "on this mac", "on device"]),
         SettingsSearchEntry(id: "models.api", title: "Anthropic API",
             location: SettingsLocation(pane: .models, sub: "models", anchor: "models.api"),
             keywords: ["anthropic", "api key", "model id", "claude", "haiku", "sonnet", "opus", "test api"]),
@@ -351,10 +436,9 @@ enum SettingsSearchRegistry {
         SettingsSearchEntry(id: "data.ios", title: "iOS developer",
             location: SettingsLocation(pane: .dataSecurity, sub: "capabilities", anchor: "data.ios"),
             keywords: ["ios", "developer", "bundle prefix", "team id", "scaffold", "iphone"]),
-        SettingsSearchEntry(id: "data.domainMonitor", title: "Domain renewals",
-            location: SettingsLocation(pane: .dataSecurity, sub: "capabilities", anchor: "data.domainMonitor"),
-            keywords: ["domain", "domains", "registrar", "godaddy", "expiry", "expire", "renewal",
-                       "dns", "renew"]),
+        SettingsSearchEntry(id: "data.brands", title: "Brands",
+            location: SettingsLocation(pane: .dataSecurity, sub: "capabilities", anchor: "data.brands"),
+            keywords: ["brand", "brands", "business", "company", "meta ads", "social", "add a brand"]),
         SettingsSearchEntry(id: "data.controlSocket", title: "Command line",
             location: SettingsLocation(pane: .dataSecurity, sub: "capabilities", anchor: "data.controlSocket"),
             keywords: ["cli", "command line", "grux command", "socket", "mcp", "terminal",

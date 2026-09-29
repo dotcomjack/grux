@@ -185,7 +185,8 @@ final class LaunchConsentGateTests: XCTestCase {
         "MusicWatcher.shared.start()",           // Automation (Spotify / Music) prompt, then now-playing
         "NotificationWatcher.shared.start()",    // reads the notificationd store, needs Full Disk Access
         "SleepWatcher.shared.start()",           // records sleep and wake times to disk
-        "CalendarCorrelator.ensurePermission()", // EventKit prompt
+        // CalendarCorrelator.ensurePermission() left this list: launch no longer
+        // asks for Calendar at all, gated or not (AmbientPromptGuardTests).
         "DailyRecapScheduler.shared.start()",    // checks its window on start, takeover plus speech
         "EnergyRecapScheduler.shared.start()",   // same, one window earlier in the evening
         "WorkdayLogScheduler.shared.start()",     // checkAndFire() runs inside start(), 6 to 10 AM

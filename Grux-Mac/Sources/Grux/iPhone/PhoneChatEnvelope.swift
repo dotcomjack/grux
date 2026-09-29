@@ -64,10 +64,11 @@ enum ChatEnvelope: Codable {
     //   ts:     unix-millis stamp from the Mac so the phone can dedupe
     case agentPaused(jobId: String, title: String, accountLabel: String?, reason: String, ts: Int64)
     // Notify the phone that a Commands V2 run reached a milestone phase
-    // (currently: ship-ios-app phases 2/4/5/8). Phone shows a status banner
+    // (ship-ios-app: build, walkthrough, publish, decide-next). Phone shows a status banner
     // + tap-to-open-run-detail. Payload carries no secrets - only commandId,
     // runId, phaseName, and the 1-based phase index/total. Mirrors the
-    // macOS notification fired by NotificationManager.notifyAgentPhaseTransition.
+    // macOS banner CommandV2PhaseNotifier delivers through
+    // NotificationManager.deliverPhaseTransition.
     //   ts: unix-millis stamp for phone-side dedupe
     case phaseTransitioned(commandId: String, runId: String, phaseName: String,
                            phaseIndex: Int, totalPhases: Int, ts: Int64)

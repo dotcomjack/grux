@@ -275,14 +275,17 @@ struct Run: ParsableCommand {
         // A MACRO, AND ITS STEPS SPLIT THREE WAYS. The registry awaits the steps marked wait
         // for completion and lets the rest go, so "ran it" is a sentence that is false about
         // part of any macro with a detached step in it. Every step is accounted for here and
-        // the three numbers sum to the total by construction.
+        // the numbers sum to the total by construction.
         let total = (obj?["steps"] as? Int) ?? 0
         let waited = (obj?["steps_waited"] as? Int) ?? 0
         let detached = (obj?["steps_detached"] as? Int) ?? 0
         let off = (obj?["steps_off"] as? Int) ?? 0
+        // A refused step reported back without doing its work, so it is its own clause.
+        let failed = min((obj?["steps_failed"] as? Int) ?? 0, waited)
 
         var clauses: [String] = []
-        if waited > 0 { clauses.append("\(waited) ran and reported back") }
+        if waited - failed > 0 { clauses.append("\(waited - failed) ran and reported back") }
+        if failed > 0 { clauses.append("\(failed) came back with an error") }
         if detached > 0 {
             let verb: String = detached == 1 ? "was" : "were"
             clauses.append("\(detached) " + verb + " left running in the background")

@@ -44,7 +44,7 @@ final class EnergyRecapPanelController {
             backing: .buffered,
             defer: false
         )
-        p.level = .floating
+        WindowFacade.setLevel(.floating, of: p)
         p.isOpaque = false
         p.backgroundColor = .clear
         p.hasShadow = false
@@ -81,7 +81,7 @@ final class EnergyRecapPanelController {
         self.panel = p
         self.hostingController = hc
 
-        p.orderFrontRegardless()
+        WindowFacade.orderFrontRegardless(p)
         p.alphaValue = 1.0
         WakeLog.shared.log("energyRecap: panel presented at \(origin)")
     }

@@ -101,8 +101,7 @@ final class TestDigestStore: ObservableObject {
 
     private var jsonURL: URL { Persistence.supportDir.appendingPathComponent("nightly-tests.json") }
     private var mdURL: URL {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let dir = home.appendingPathComponent(".grux", isDirectory: true)
+        let dir = Persistence.gruxDir
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("nightly-tests.md")
     }

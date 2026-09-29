@@ -149,7 +149,7 @@ final class ShippedBundleHygieneTests: XCTestCase {
     /// and even a live 77-byte literal returned from a reachable property did not
     /// appear as searchable bytes. Independently, "Good morning" and "Still up",
     /// which are live literals in `HomeBriefingModel.greeting`, return ZERO on the
-    /// same scan while "Terminal Focus" returns ten. So release-mode Swift does
+    /// same scan while a live sidebar label returned ten. So release-mode Swift does
     /// not store these uniformly in a contiguous, byte-searchable form.
     ///
     /// **Therefore this test is NOT the guard against a name in a shipped string.**

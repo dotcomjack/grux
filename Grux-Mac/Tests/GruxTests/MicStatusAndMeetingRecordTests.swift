@@ -122,7 +122,7 @@ final class MicStatusFileTests: XCTestCase {
             try String(contentsOf: URL(fileURLWithPath: #filePath)
                 .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
                 .appendingPathComponent("Sources/Grux/MicController.swift"), encoding: .utf8))
-        for (function, what) in [("static func mute()", "stopping a live meeting"),
+        for (function, what) in [("static func mute(source:", "stopping a live meeting"),
                                  ("static func unmute()", "restarting a listener")] {
             let r = try XCTUnwrap(src.range(of: function), "\(function) was renamed")
             let rest = String(src[r.upperBound...])

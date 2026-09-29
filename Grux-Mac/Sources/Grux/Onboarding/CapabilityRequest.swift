@@ -110,23 +110,113 @@ enum CapabilityRequest {
         guard Bundle.main.bundleURL.pathExtension == "app" else {
             return CapabilityResolver.isSatisfied(.permNotifications)
         }
-        let granted: Bool = await withCheckedContinuation { continuation in
+        let status: UNAuthorizationStatus = await withCheckedContinuation { continuation in
             UNUserNotificationCenter.current().getNotificationSettings { settings in
-                let ok = settings.authorizationStatus == .authorized
-                    || settings.authorizationStatus == .provisional
-                continuation.resume(returning: ok)
+                continuation.resume(returning: settings.authorizationStatus)
             }
         }
+        let granted = status == .authorized || status == .provisional
+        notificationsDeniedLastSeen = status == .denied
         CapabilityResolver.setNotificationAuthorizationCache(granted)
         return granted
     }
 
-    /// Open the exact Privacy pane for this permission.
+    /// Whether the last awaited read found Notifications explicitly turned off. In memory
+    /// only: it feeds `recordedDenial`, which the setup card reads on every render, and it
+    /// is refreshed whenever that card re-checks.
+    private(set) static var notificationsDeniedLastSeen = false
+
+    /// A requirement re-read with its stale answers brought up to date first.
     ///
-    /// Duplicated deliberately from nowhere: `CapabilitySetupCard` had this
-    /// switch first, and it now lives here so both surfaces share one mapping
-    /// rather than two that agree until somebody edits one.
+    /// Two capabilities cannot be re-read synchronously: Notifications is cached, and
+    /// Automation is a recorded observation. Both setup surfaces that send somebody to
+    /// System Settings re-check through this, so neither can consult a value nothing has
+    /// updated. Every probe asks TCC what it has ALREADY decided; none raises a dialog.
+    static func isSatisfiedAfterRefresh(_ requirement: SetupRequirement) async -> Bool {
+        if requirement == .permNotifications {
+            _ = await refreshedNotificationAuthorization()
+        }
+        // Only from the app. The Automation probe is an Apple Events round trip that blocks
+        // while the screen is locked, and a render test that hosts this screen must never ask.
+        if requirement == .permAutomation, Bundle.main.bundleURL.pathExtension == "app" {
+            await CapabilityResolver.refreshAutomationObservationInBackground()
+        }
+        return CapabilityResolver.isSatisfied(requirement)
+    }
+
+    /// Whether macOS has ALREADY recorded a refusal, so asking again shows no prompt.
+    ///
+    /// A button that reads "Allow" on a permission macOS has refused is a dead end: the
+    /// request returns at once with no dialog and nothing changes. Read from the same
+    /// status calls the resolver uses, none of which prompts. Notifications answers from
+    /// the last awaited refresh.
+    static func recordedDenial(_ requirement: SetupRequirement) -> Bool {
+        switch requirement {
+        case .permMicrophone:
+            let s = AVCaptureDevice.authorizationStatus(for: .audio)
+            return s == .denied || s == .restricted
+        case .permCalendar:
+            let s = EKEventStore.authorizationStatus(for: .event)
+            return s == .denied || s == .restricted
+        case .permContacts:
+            let s = CNContactStore.authorizationStatus(for: .contacts)
+            return s == .denied || s == .restricted
+        case .permNotifications:
+            return notificationsDeniedLastSeen
+        default:
+            return false
+        }
+    }
+
+    /// Open the exact pane for this permission.
+    ///
+    /// THE ONE MAPPING. `CapabilitySetupCard` kept its own copy of this switch, and when
+    /// the Notifications anchor was fixed here the copy went on opening Privacy &
+    /// Security. The copy is gone: the card, onboarding and Settings all call this.
+    ///
+    /// Headless (`WindowFacade`): nothing is raised or brought forward. What would
+    /// have happened is recorded instead (`WindowFacade.withheld`).
     static func openSystemSettings(for requirement: SetupRequirement) {
+        let url = settingsURL(for: requirement)
+        if WindowFacade.isHeadless {
+            WindowFacade.withhold("open System Settings \(url.absoluteString)"
+                                  + (registersWithSystemFirst(requirement) ? " after the Accessibility prompt" : ""))
+            return
+        }
+        if registersWithSystemFirst(requirement) {
+            // The one-shot system dialog. It is what puts Grux in the
+            // Accessibility list, so the pane opened next has a row to turn
+            // on. A person just pressed the button, so asking is theirs.
+            ScreenControlEngine.promptAccessibility()
+        }
+        // A test that asked for the visible path still never opens System Settings.
+        if Persistence.isUnderTest { testOpenedURLs.append(url); return }
+        NSWorkspace.shared.open(url)
+    }
+
+    /// Panes a test run would have opened.
+    private(set) static var testOpenedURLs: [URL] = []
+
+    /// Accessibility is the one settings-only permission whose pane shows no
+    /// row for an app macOS has never seen ask. Fresh install, or a rebuilt
+    /// app with a new signature: the person landed on a pane with nothing to
+    /// toggle and a plus button to work out. Pure, so a test pins it.
+    nonisolated static func registersWithSystemFirst(_ requirement: SetupRequirement) -> Bool {
+        requirement == .permAccessibility
+    }
+
+    /// The URL that lands on this permission's pane, pure so a test pins every anchor.
+    ///
+    /// NOTIFICATIONS IS NOT A PRIVACY PANE. It was built as
+    /// `com.apple.preference.security?Notifications`, which measured on macOS 26.6.2
+    /// landing on Privacy & Security, a page with no Notifications switch on it, so the
+    /// button that promised the switch sent the person somewhere else. The Notifications
+    /// settings extension is its own URL, and that one measured landing on Notifications.
+    /// Every Privacy anchor below was measured landing on its own pane.
+    static func settingsURL(for requirement: SetupRequirement) -> URL {
+        if requirement == .permNotifications {
+            return URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension")!
+        }
         let anchor: String
         switch requirement {
         case .permScreenRecording, .permSystemAudio: anchor = "Privacy_ScreenCapture"
@@ -136,12 +226,9 @@ enum CapabilityRequest {
         case .permContacts:                          anchor = "Privacy_Contacts"
         case .permAutomation:                        anchor = "Privacy_Automation"
         case .permFullDiskAccess:                    anchor = "Privacy_AllFiles"
-        case .permNotifications:                     anchor = "Notifications"
         default:                                     anchor = "Privacy"
         }
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(anchor)") {
-            NSWorkspace.shared.open(url)
-        }
+        return URL(string: "x-apple.systempreferences:com.apple.preference.security?\(anchor)")!
     }
 
     /// WHERE TO GO, in the words macOS uses on its own screens.

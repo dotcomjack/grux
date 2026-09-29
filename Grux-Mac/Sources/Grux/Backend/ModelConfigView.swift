@@ -265,6 +265,16 @@ struct ModelConfigSection: View {
                     .font(.caption).foregroundStyle(.secondary)
                 Text(ep.hasAPIKey ? "API key stored in Keychain" : "No API key")
                     .font(.caption2).foregroundStyle(.secondary)
+                // The model this endpoint serves. Blank means the local model
+                // name, which is right for a second Ollama and wrong for a
+                // hosted router, so hosted endpoints name theirs here.
+                TextField("Model (e.g. deepseek/deepseek-v4-flash-0731)",
+                          text: Binding(
+                            get: { ep.modelId ?? "" },
+                            set: { endpointStore.setModelId($0, for: ep.id) }))
+                    .textFieldStyle(.roundedBorder)
+                    .font(.caption)
+                    .frame(maxWidth: 360)
             }
             Spacer()
             if isActive {

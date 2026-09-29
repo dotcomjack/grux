@@ -39,7 +39,16 @@ struct UserCronEditorView: View {
 
     private var selected: UserCronJob? { selection.flatMap { store.job(id: $0) } }
 
+
+    // Workflows lives beside this surface, in the Schedules row's switch
+    // (LaunchRootView.schedulesSurfaces): the workflows a schedule runs belong
+    // beside the schedules, and every Phase C fold uses the one mechanism.
     var body: some View {
+        schedulesPane
+    }
+
+    /// The schedules themselves: the list on the left, the editor on the right.
+    private var schedulesPane: some View {
         GruxListDetailScaffold {
             listColumn
         } detail: {

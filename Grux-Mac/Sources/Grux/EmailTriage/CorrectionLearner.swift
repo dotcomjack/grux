@@ -82,6 +82,17 @@ enum CorrectionLearner {
 
     // MARK: - Lesson extraction (LLM)
 
+    // The one model call behind a lesson: system prompt and user prompt in,
+    // raw reply out. Swapped only by tests, which have no model to ask;
+    // everything around it (the cleaning, the store, the profile heuristic and
+    // the directive trace) runs exactly as it does live.
+    static var askModel: (_ system: String, _ user: String) async throws -> String = { system, user in
+        try await AmbientLLM.completeTagged(
+            system: system,
+            messages: [ClaudeMessage(role: "user", content: user)],
+            maxTokens: 120, temperature: 0.2, featureTag: "support_learn").text
+    }
+
     private static func extractLesson(brand: String, category: String, subject: String,
                                       before: String, after: String) async -> String? {
         let system = """
@@ -109,12 +120,8 @@ enum CorrectionLearner {
         The single lesson (or NONE):
         """
         do {
-            let res = try await AmbientLLM.completeTagged(
-                system: system,
-                messages: [ClaudeMessage(role: "user", content: user)],
-                maxTokens: 120, temperature: 0.2, featureTag: "support_learn")
             // Take the first non-empty line, strip any leading bullet, scrub dashes.
-            let cleaned = stripThink(res.text)
+            let cleaned = stripThink(try await askModel(system, user))
             let line = cleaned
                 .split(whereSeparator: { $0 == "\n" || $0 == "\r" })
                 .map { $0.trimmingCharacters(in: .whitespaces) }

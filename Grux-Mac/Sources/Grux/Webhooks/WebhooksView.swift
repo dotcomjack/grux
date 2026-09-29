@@ -202,7 +202,8 @@ struct WebhooksView: View {
 
 // MARK: - Add / edit sheet
 
-private struct WebhookEditSheet: View {
+// Internal, not private: PaneFitSweepTests hosts it.
+struct WebhookEditSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let existing: WebhookConfig?

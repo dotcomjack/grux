@@ -4,13 +4,13 @@ import XCTest
 /// A SETUP STEP THAT ONLY A CHECKBOX CAN SATISFY IS A LOOP NOBODY CAN CLOSE.
 ///
 /// Every `step.*` capability used to resolve to a `UserDefaults` boolean whose only writers
-/// were in-app controls. So somebody could install the agent CLI, fetch the speech model
-/// and write the focus hook, and Grux would still report `needs-setup`, the counts would
+/// were in-app controls. So somebody could install the agent CLI and fetch the speech
+/// model, and Grux would still report `needs-setup`, the counts would
 /// not move, and regenerating the agent handoff produced identical text. `AgentHandoff`
 /// shipped a paragraph warning the reader about exactly that, because the alternative was
 /// pretending it had noticed.
 ///
-/// Four steps are now DETECTED from the machine and six remain self-attested on purpose.
+/// Three steps are now DETECTED from the machine and six remain self-attested on purpose.
 /// The split is the point: a probe for "you confirmed you will tell people you are
 /// recording" does not exist and should not, so those stay somebody's word and `grux status`
 /// says so rather than implying a check it never ran.
@@ -39,8 +39,8 @@ final class StepDetectionTests: XCTestCase {
         let stray = covered.subtracting(Set(allSteps)).map(\.rawValue).sorted()
         XCTAssertTrue(stray.isEmpty, "\(stray) is classified as a step but is not one")
 
-        XCTAssertEqual(allSteps.count, 10, "the step count changed, so revisit the split")
-        XCTAssertEqual(detected.count, 4)
+        XCTAssertEqual(allSteps.count, 9, "the step count changed, so revisit the split")
+        XCTAssertEqual(detected.count, 3)
         XCTAssertEqual(attested.count, 6)
     }
 
@@ -189,24 +189,5 @@ final class StepDetectionTests: XCTestCase {
         try fm.removeItem(at: model.appendingPathComponent(CapabilityResolver.speechModelBundles[1]))
         XCTAssertFalse(CapabilityResolver.speechModelIsDownloaded(at: model.path),
                        "two of three bundles is an unusable model and must not report ready")
-
-        let hook = dir.appendingPathComponent("terminal-focus.sh")
-        XCTAssertFalse(CapabilityResolver.terminalFocusHookIsInstalled(at: hook.path),
-                       "control: reported a hook that is not there")
-        try "#!/bin/sh\n".write(to: hook, atomically: true, encoding: .utf8)
-        XCTAssertTrue(CapabilityResolver.terminalFocusHookIsInstalled(at: hook.path),
-                      "hook written and it still says no")
-    }
-
-    /// One path, named once. `TerminalFocusState` writes the hook and the resolver reads it,
-    /// and if those two ever disagree the pane and the setup card say different things about
-    /// the same file.
-    func testTheHookPathIsTheOneTerminalFocusWrites() {
-        XCTAssertEqual(CapabilityResolver.terminalFocusHookPath,
-                       NSHomeDirectory() + "/.claude/hooks/terminal-focus.sh")
-        XCTAssertEqual(CapabilityResolver.isSatisfied(.stepTerminalFocusHookInstalled),
-                       FileManager.default.fileExists(
-                        atPath: CapabilityResolver.terminalFocusHookPath),
-                       "the hook step disagrees with the file it is about")
     }
 }

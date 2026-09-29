@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Security
 
@@ -38,10 +39,22 @@ enum KeychainServiceMigrator {
 
     /// Where "already done" is recorded. Keyed on the rename table itself, so adding a
     /// future rename starts a new question rather than inheriting an old answer.
-    static var doneKey: String {
-        "grux.keychain.serviceMigration.done."
-            + String(renames.map { $0.old + ">" + $0.new }.joined(separator: ",").hashValue)
+    static var doneKey: String { doneKey(for: renames) }
+
+    /// A STABLE digest, never `hashValue`. Swift seeds `String.hashValue` per process, so
+    /// the key this used to build was different on every launch: the migration never found
+    /// its own flag, re-queried the keychain on every boot, and left one more flag behind
+    /// each time. One operator's defaults held 154 of them. SHA-256 of the table is the
+    /// same answer in every process on every Mac.
+    static func doneKey(for table: [(old: String, new: String)]) -> String {
+        let text = table.map { $0.old + ">" + $0.new }.joined(separator: ",")
+        let digest = SHA256.hash(data: Data(text.utf8))
+        let hex = digest.prefix(8).map { String(format: "%02x", $0) }.joined()
+        return "grux.keychain.serviceMigration.done." + hex
     }
+
+    /// The prefix every done flag has carried, the per-launch ones included.
+    static let doneKeyPrefix = "grux.keychain.serviceMigration.done."
 
     /// RUNS ONCE, WHICH IT DID NOT BEFORE.
     ///

@@ -38,7 +38,7 @@ final class PostMergeWatch: ObservableObject {
 
     @Published private(set) var watches: [Watch] = []
 
-    private let jaxDir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".grux/jax", isDirectory: true)
+    private let jaxDir = Persistence.gruxDir.appendingPathComponent("jax", isDirectory: true)
     private var storeURL: URL { jaxDir.appendingPathComponent("post-merge-watch.json") }
     private var sessionFlagURL: URL { jaxDir.appendingPathComponent("post-merge-session.flag") }
     private var rollbackIntentURL: URL { jaxDir.appendingPathComponent("rollback-intent.json") }

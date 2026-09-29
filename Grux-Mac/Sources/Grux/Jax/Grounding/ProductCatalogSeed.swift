@@ -84,8 +84,7 @@ enum ProductCatalogSeed {
     /// partial one: half a price list is more dangerous than none, because the
     /// gate would ground some claims and silently refuse others.
     static let catalog: Catalog = {
-        let url = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux/product-catalog.json")
+        let url = Persistence.gruxDir.appendingPathComponent("product-catalog.json")
         guard let data = try? Data(contentsOf: url),
               let decoded = try? JSONDecoder().decode(Catalog.self, from: data)
         else { return Catalog() }

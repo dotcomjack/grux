@@ -135,9 +135,12 @@ struct MetaAdsView: View {
                 .foregroundStyle(GruxTheme.accentCo)
             VStack(alignment: .leading, spacing: 1) {
                 MetaAdsEyebrow(text: "Autonomous engine", tint: GruxTheme.accentPrimaryLight)
-                Text("Meta Ads")
-                    .font(GruxTheme.Font.title)
-                    .foregroundStyle(GruxTheme.textPrimary)
+                HStack(spacing: 6) {
+                    Text("Meta Ads")
+                        .font(GruxTheme.Font.title)
+                        .foregroundStyle(GruxTheme.textPrimary)
+                    LabsHeaderBadge(feature: "meta.ads")
+                }
             }
             Text(subtitle)
                 .font(.system(size: 10, weight: .medium, design: .monospaced))

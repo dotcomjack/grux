@@ -10,13 +10,25 @@ extension Notification.Name {
 
 /// Appends timestamped lines to ~/Library/Application Support/Grux/wake.log
 /// so we can `tail -f` it while testing.
+///
+/// Rooted at `Persistence.supportDir`, so the suite logs into its own scratch
+/// directory. It used to hardcode the real Application Support path, and every
+/// `swift test` run wrote hundreds of lines of test noise (consent churn,
+/// meta-ads failures against a test port, "auto-revert (crash loop: test)")
+/// into the operator's real log. The lines carry a time and no date, so a day
+/// later that noise reads as something the running app did. Measured
+/// 2026-09-21: it sent a live audio diagnosis down a wrong path for a while.
 final class WakeLog: @unchecked Sendable {
     static let shared = WakeLog()
     private let url: URL
     private let fmt: DateFormatter
     private let q = DispatchQueue(label: "grux.wake.log")
+
+    /// Where the lines go, for tests.
+    var fileURL: URL { url }
+
     private init() {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!.appendingPathComponent("Grux", isDirectory: true)
+        let base = Persistence.supportDir
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
         self.url = base.appendingPathComponent("wake.log")
         self.fmt = DateFormatter()
@@ -36,7 +48,6 @@ final class WakeWordListener: ObservableObject {
     static let shared = WakeWordListener()
 
     @Published var isListening = false
-    @Published var lastHeard: String = ""
     @Published var error: String?
 
     private var audioEngine: AVAudioEngine?
@@ -80,7 +91,9 @@ final class WakeWordListener: ObservableObject {
     }
 
     fileprivate static let sharedWakeRegex: NSRegularExpression = {
-        let pattern = #"(?:\b(?:hey|ok|okay|yo|hi|hay|aye)\s+)?\bgr(?:[aeiouy]{1,3})[a-z]{0,3}s?\b"#
+        // A greeting and any known mishearing, or a bare name that is not an
+        // English word (GruxName). "gr plus a vowel" fired on "great".
+        let pattern = #"\b"# + GruxName.greeting + #"\s+"# + GruxName.loose + #"\b|\b"# + GruxName.strong + #"\b"#
         return try! NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
     }()
 
@@ -170,6 +183,7 @@ final class WakeWordListener: ObservableObject {
     }
 
     func stop() {
+        ListeningMicGuard.shared.release("wake")
         restartTimer?.invalidate(); restartTimer = nil
         task?.cancel(); task = nil
         request?.endAudio(); request = nil
@@ -210,6 +224,9 @@ final class WakeWordListener: ObservableObject {
         req.requiresOnDeviceRecognition = false
         request = req
 
+        // Same rule as ambient: the wake word listens on the Mac's own
+        // microphone, never a borrowed one. Released in stop().
+        ListeningMicGuard.shared.claim("wake")
         let engine = AVAudioEngine()
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
@@ -242,7 +259,10 @@ final class WakeWordListener: ObservableObject {
     }
 
     private func handle(transcript: String) {
-        lastHeard = transcript
+        // No published copy of the transcript. There used to be one, read by
+        // nothing, and every partial result the recognizer produced (a steady
+        // stream while music plays) fired objectWillChange on this listener,
+        // which the main window's root observed and re-rendered for.
         // Log every transcript change so we can see what the recognizer hears.
         if transcript != lastLoggedTranscript {
             WakeLog.shared.log("heard: \(transcript)")
@@ -268,9 +288,9 @@ final class WakeWordListener: ObservableObject {
         lastTriggerAt = now
         WakeLog.shared.log(">>> MATCHED: \(matched)")
 
-        // Fallback to Glass if Tink isn't available - NSSound(named:) can
-        // return nil on some installs.
-        (NSSound(named: "Tink") ?? NSSound(named: "Glass") ?? NSSound(named: "Pop"))?.play()
+        // Fallback to Glass if Tink isn't available - a named system sound can
+        // be missing on some installs.
+        AudioOutput.chime([.tink, .glass, .pop], source: "WakeWordListener.matched")
         shouldResumeAfterDictation = true
         stop()
 

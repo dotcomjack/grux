@@ -47,6 +47,14 @@ struct PendingApproval: Codable, Identifiable, Equatable {
     var reason: String
     var state: State
     var resolvedAt: Date?
+    // P-R-6: how much could go wrong if this runs, judged once when the item
+    // was queued (ApprovalRiskJudgment). Nil when nothing judged it, which is
+    // every keyless install. It can put a flag on the card and nothing else.
+    var risk: ApprovalRisk?
+    // What the last approved run of this item answered when it failed. An
+    // approval that fails goes back to waiting; without this the reason lived
+    // only in wake.log, because every approve caller drops the result.
+    var lastFailure: String?
 
     init(
         id: UUID = UUID(),
@@ -56,7 +64,8 @@ struct PendingApproval: Codable, Identifiable, Equatable {
         persona: GatePersona = .none,
         reason: String = "",
         state: State = .pending,
-        resolvedAt: Date? = nil
+        resolvedAt: Date? = nil,
+        risk: ApprovalRisk? = nil
     ) {
         self.id = id
         self.action = action
@@ -66,10 +75,11 @@ struct PendingApproval: Codable, Identifiable, Equatable {
         self.reason = reason
         self.state = state
         self.resolvedAt = resolvedAt
+        self.risk = risk
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, action, createdAt, urgent, persona, reason, state, resolvedAt
+        case id, action, createdAt, urgent, persona, reason, state, resolvedAt, risk, lastFailure
     }
 
     // Lenient decode: an older approvals.json missing any newer key still loads
@@ -85,6 +95,8 @@ struct PendingApproval: Codable, Identifiable, Equatable {
         reason = (try? c.decode(String.self, forKey: .reason)) ?? ""
         state = (try? c.decode(State.self, forKey: .state)) ?? .pending
         resolvedAt = try? c.decodeIfPresent(Date.self, forKey: .resolvedAt)
+        risk = try? c.decodeIfPresent(ApprovalRisk.self, forKey: .risk)
+        lastFailure = try? c.decodeIfPresent(String.self, forKey: .lastFailure)
     }
 
     // Convenience passthroughs the queue + any UI use without reaching into
@@ -105,17 +117,50 @@ final class ApprovalQueue: ObservableObject {
     @Published private(set) var items: [PendingApproval] = []
 
     private let storeURL: URL
+    /// Where the queue lives, for tests.
+    var storeFileURL: URL { storeURL }
     private var loaded = false
+
+    // P-R-6: judges a NEW item's risk, once. The default asks nothing without
+    // a key, so a keyless install queues exactly as it always has. Nil turns
+    // the judgment off entirely.
+    var judgeRisk: (@MainActor (PendingApproval) async -> ApprovalRisk?)? = { item in
+        let engine = DecisionEngine.shared
+        guard engine.hasRemoteKey else { return nil }
+        return await ApprovalRiskJudgment.judge(item, engine: engine,
+                                                threshold: AppState.shared.config.listeningThreshold)
+    }
+    // Where an item's detail says who was told "pending". Chat is the only
+    // teller today (JaxToolGate and compose_email answer the chat turn), and
+    // an item Chat announced reports its outcome back there when a person
+    // approves or skips it, wherever they tap. Without it the approved event
+    // or the failure lived in wake.log and Jax HQ, never in the thread that
+    // said "pending".
+    static let askedInKey = "__asked_in"
+    static let askedInChat = "chat"
+    var tellChat: @MainActor (String) -> Void = { line in
+        AppState.shared.appendChat(ChatMessage(role: .assistant, content: line))
+    }
+
+    private var riskAsked: Set<UUID> = []
+    // Judgments still out, by item id. Each removes itself when it lands, so
+    // this never grows past the handful in flight.
+    private var riskInFlight: [UUID: Task<Void, Never>] = [:]
 
     // ~/.grux/jax/approvals.json , matching the global-instructions storage hint
     // and the InboxStore ~/.grux mirror posture.
     init(storeURL: URL? = nil) {
         if let storeURL {
             self.storeURL = storeURL
+        } else if Persistence.isUnderTest {
+            // THE SUITE NEVER QUEUES INTO THE OPERATOR'S REAL APPROVALS. Until
+            // 2026-09-21 it did: JaxToolGateDesignRouteTests queued two design
+            // generations per run into ~/.grux/jax/approvals.json, and Today
+            // read "1306 approvals waiting on you", 1,270 of them test fixtures
+            // (project "x", brief "y") going back to June.
+            self.storeURL = Persistence.supportDir.appendingPathComponent("jax-approvals.json")
         } else {
-            let home = FileManager.default.homeDirectoryForCurrentUser
-            let dir = home
-                .appendingPathComponent(".grux", isDirectory: true)
+            let dir = Persistence.gruxDir
                 .appendingPathComponent("jax", isDirectory: true)
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             self.storeURL = dir.appendingPathComponent("approvals.json")
@@ -138,8 +183,25 @@ final class ApprovalQueue: ObservableObject {
         dec.dateDecodingStrategy = .iso8601
         if let data = try? Data(contentsOf: storeURL),
            let arr = try? dec.decode([PendingApproval].self, from: data) {
-            items = arr
+            items = arr.map { var item = $0; item.action = Self.namedForPerson(item.action); return item }
         }
+    }
+
+    // The gate queues every knowingly gated tool under its fallback summary
+    // (`Run tool 'create_event' (unclassified side effect).`), which the
+    // sniffers must keep seeing. What a person reads in Approvals and in
+    // `grux approvals` is named here, after the verdict, from the replay the
+    // gate stamped (row A30).
+    static func namedForPerson(_ action: ProposedAction) -> ProposedAction {
+        guard action.summary.hasPrefix("Run tool '"),
+              let tool = action.detail["__replay_tool"] else { return action }
+        let input = action.detail["__replay_input"]
+            .flatMap { $0.data(using: .utf8) }
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+        guard let line = ToolReplyCopy.approvalSummary(tool: tool, input: input) else { return action }
+        var named = action
+        named.summary = line
+        return named
     }
 
     private func save() {
@@ -163,7 +225,7 @@ final class ApprovalQueue: ObservableObject {
         reason: String = ""
     ) -> PendingApproval {
         let item = PendingApproval(
-            action: action,
+            action: Self.namedForPerson(action),
             urgent: urgent,
             persona: persona,
             reason: reason
@@ -171,17 +233,42 @@ final class ApprovalQueue: ObservableObject {
         items.append(item)
         save()
         if urgent { notifyUrgent(item) }
+        judgeRiskOnce(item.id)
         return item
     }
 
     // Convenience: enqueue straight from a GateVerdict.queueForApproval payload
     // the gate already populated. Keeps callers from re-deriving urgency/persona.
     @discardableResult
-    func enqueue(_ prepared: PendingApproval) -> PendingApproval {
+    func enqueue(_ incoming: PendingApproval) -> PendingApproval {
+        var prepared = incoming
+        prepared.action = Self.namedForPerson(prepared.action)
         items.append(prepared)
         save()
         if prepared.urgent { notifyUrgent(prepared) }
+        judgeRiskOnce(prepared.id)
         return prepared
+    }
+
+    // Asks for a new item's risk once, off the enqueue path: the caller has
+    // already been told the item is pending, so nobody waits on this. The
+    // answer is stored on the item; it never changes its state, urgency or
+    // reason.
+    private func judgeRiskOnce(_ id: UUID) {
+        guard let judge = judgeRisk, riskAsked.insert(id).inserted,
+              let item = items.first(where: { $0.id == id }), item.risk == nil else { return }
+        riskInFlight[id] = Task { @MainActor [weak self] in
+            defer { self?.riskInFlight[id] = nil }
+            guard let risk = await judge(item), let self,
+                  let i = self.items.firstIndex(where: { $0.id == id }) else { return }
+            self.items[i].risk = risk
+            self.save()
+        }
+    }
+
+    /// Waits for every risk judgment started so far. For tests.
+    func waitForRiskJudgments() async {
+        for t in Array(riskInFlight.values) { await t.value }
     }
 
     // The user tapped yes. Marks the item approved and hands the ProposedAction back
@@ -233,19 +320,30 @@ final class ApprovalQueue: ObservableObject {
 
         JaxToolGate.arm(id)
         let result = await ChatService.dispatchTool(name: tool, input: input)
-        JaxToolGate.disarm()
+        JaxToolGate.disarm(id)
 
         // Do not leave a FAILED execution showing as a green "Approved". If the
         // tool reported an error or refusal, return the item to pending so the user
         // sees it still needs them (and can retry / skip) instead of a false
         // success in the activity log.
+        // The failure stays on the item: the callers drop this result, so the
+        // queue is the only place the person who approved it can read why.
         let failed = result.hasPrefix("error") || result.hasPrefix("refused") || result.hasPrefix("busy")
-        if let i = items.firstIndex(where: { $0.id == id }), failed {
-            items[i].state = .pending
-            items[i].resolvedAt = nil
+        if let i = items.firstIndex(where: { $0.id == id }) {
+            if failed {
+                items[i].state = .pending
+                items[i].resolvedAt = nil
+            }
+            items[i].lastFailure = failed ? result : nil
             save()
         }
         WakeLog.shared.log("jax-approve: \(failed ? "FAILED" : "executed") '\(tool)' for \(id.uuidString.prefix(8)) -> \(result.prefix(120))")
+        if action.detail[Self.askedInKey] == Self.askedInChat {
+            let line = ToolReplyCopy.forPerson(tool: tool, input: input, result: result)
+            tellChat(failed
+                ? "Approved, but it did not go through. \(line) It is still waiting in Approvals."
+                : "Approved and done. \(line)")
+        }
         return result
     }
 
@@ -263,6 +361,11 @@ final class ApprovalQueue: ObservableObject {
         items[idx].state = .skipped
         items[idx].resolvedAt = Date()
         save()
+        if items[idx].action.detail[Self.askedInKey] == Self.askedInChat {
+            let detail = items[idx].action.detail
+            let input = detail["__replay_input"].flatMap(Self.decodeInput) ?? [:]
+            tellChat(ToolReplyCopy.skipped(tool: detail["__replay_tool"], input: input, summary: items[idx].summary))
+        }
     }
 
     // Drop resolved history older than a cutoff so the file does not grow without

@@ -12,8 +12,9 @@ extension Persistence {
     /// init reads this is constructed when the view hierarchy is built, which is at launch,
     /// so a creating getter here puts a folder in the person's Documents before they have
     /// opened anything. Whatever writes a design system creates it.
+    /// Under test it hangs off the suite's scratch folder, as `designDir` does.
     static var designSystemsDir: URL {
-        URL(fileURLWithPath: NSHomeDirectory())
+        (isUnderTest ? supportDir : URL(fileURLWithPath: NSHomeDirectory()))
             .appendingPathComponent("Documents", isDirectory: true)
             .appendingPathComponent("Grux", isDirectory: true)
             .appendingPathComponent("design-systems", isDirectory: true)

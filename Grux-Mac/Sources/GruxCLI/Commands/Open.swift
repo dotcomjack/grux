@@ -157,7 +157,7 @@ struct Open: ParsableCommand {
     // MARK: - Screens
 
     private func render(_ catalogue: Catalogue, _ r: Renderer) {
-        // Sized from the WIDEST KEY PRESENT, never a fixed guess: terminalFocus is thirteen
+        // Sized from the WIDEST KEY PRESENT, never a fixed guess: featureReview is thirteen
         // characters and home is four, so a guessed gutter either wraps the long ones or
         // pushes the short ones halfway across the terminal.
         let width = catalogue.keys.map(\.count).max() ?? 4

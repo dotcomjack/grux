@@ -119,7 +119,7 @@ struct CapabilityGroup: Equatable {
 @MainActor
 enum FeatureRegistry {
 
-    /// Sidebar tab key to feature id, for the eight that differ. Every other id
+    /// Sidebar tab key to feature id, for the seven that differ. Every other id
     /// equals its sidebar key. Transcribed from feature-registry.md section 2.2.
     static let tabAliases: [String: String] = [
         "cognitionMap": "cognition.map",
@@ -129,11 +129,10 @@ enum FeatureRegistry {
         "jaxHQ": "jax.hq",
         "metaAds": "meta.ads",
         "selfUpgrade": "self.upgrade",
-        "terminalFocus": "terminal.focus",
     ]
 
     static let rows: [FeatureRow] = [
-        FeatureRow(id: "home", label: "Home", tier: .core,
+        FeatureRow(id: "home", label: "Today", tier: .core,
                    requires: [],
                    optional: [.permCalendar, .keyAnthropic, .keyElevenlabs],
                    steps: [],
@@ -158,7 +157,7 @@ enum FeatureRegistry {
                    // generic CustomEndpointStore, which holds its own per-endpoint
                    // key, so the dedicated slot was a second place to type a
                    // credential that nothing would ever load.
-                   optional: [.keySlack, .keyNotion, .keyResend, .keyBrave, .permMicrophone, .keyElevenlabs, .permScreenRecording, .permAccessibility, .permAutomation, .permCalendar, .permContacts, .endpointImap, .keyReplicate, .endpointMediaService],
+                   optional: [.keySlack, .keyNotion, .keyResend, .keyBrave, .permMicrophone, .keyElevenlabs, .permScreenRecording, .permAccessibility, .permAutomation, .permCalendar, .permContacts, .endpointImap, .keyReplicate, .endpointMediaService, .keyTypesafe],
                    steps: [],
                    optionalSteps: [.stepAgentCliInstalled, .stepYoutubeTranscriptsEnabled, .stepTerminalSessionsExplained],
                    anyOf: [CapabilityGroup(capabilities: [.keyAnthropic, .endpointOllama], min: 1)]),
@@ -262,11 +261,18 @@ enum FeatureRegistry {
                    optional: [.endpointMediaService, .endpointRegistry],
                    steps: [],
                    optionalSteps: []),
+        // SAME RULE AS CHAT, and for the same measured reason. This row
+        // required `key.anthropic` outright, so the Studio rail row drew a
+        // needs-setup dot on an install whose chat works: the engine resolves
+        // its route through `ModelRegistry.resolvedRouting`, exactly as
+        // ChatService does, so a local model or a custom endpoint serves it.
+        // Demanding a key it never reads is the defect CR-32 fixed for chat.
         FeatureRow(id: "design.studio", label: "Design Studio", tier: .core,
-                   requires: [.keyAnthropic],
-                   optional: [.endpointOllama, .endpointRegistry],
+                   requires: [.keyAnthropic, .endpointOllama],
+                   optional: [.endpointRegistry],
                    steps: [],
-                   optionalSteps: [.stepAgentCliInstalled, .stepTerminalSessionsExplained]),
+                   optionalSteps: [.stepAgentCliInstalled, .stepTerminalSessionsExplained],
+                   anyOf: [CapabilityGroup(capabilities: [.keyAnthropic, .endpointOllama], min: 1)]),
         FeatureRow(id: "meetings", label: "Meetings", tier: .core,
                    requires: [.permMicrophone, .permSystemAudio],
                    optional: [.keyAnthropic],
@@ -308,11 +314,6 @@ enum FeatureRegistry {
                    optional: [.permAccessibility, .permNotifications],
                    steps: [.stepFirstFrameReviewed, .stepCaptureExclusionsConfirmed],
                    optionalSteps: []),
-        FeatureRow(id: "terminal.focus", label: "Terminal Focus", tier: .labs,
-                   requires: [.permScreenRecording],
-                   optional: [.permAutomation],
-                   steps: [.stepTerminalFocusHookInstalled],
-                   optionalSteps: []),
         FeatureRow(id: "self.upgrade", label: "Self-Upgrade", tier: .labs,
                    requires: [],
                    optional: [],
@@ -336,11 +337,6 @@ enum FeatureRegistry {
         FeatureRow(id: "meta.ads", label: "Meta Ads", tier: .labs,
                    requires: [],
                    optional: [.keyAnthropic, .keyTelegram],
-                   steps: [],
-                   optionalSteps: []),
-        FeatureRow(id: "domains", label: "Domain monitor", tier: .labs,
-                   requires: [.keyGodaddy],
-                   optional: [],
                    steps: [],
                    optionalSteps: []),
         FeatureRow(id: "phone", label: "Phone companion", tier: .labs,
@@ -522,15 +518,14 @@ enum FeatureRegistry {
     ///
     /// `domains` says plainly that it has no page. That is not a placeholder, it
     /// is the measured truth: every call site of `openEmpireDashboardWindow()`
-    /// is a file watcher trigger in GruxApp, there is no menu item and no
-    /// button, so a user has no way to reach it. Saying so is better than naming
-    /// a window they cannot open.
+    /// is a file watcher trigger in Triggers/AppTriggers.swift, there is no menu
+    /// item and no button, so a user has no way to reach it. Saying so is better
+    /// than naming a window they cannot open.
     static let homes: [String: String] = [
-        "approvals": "a section inside the Jax HQ tab",
+        "approvals": "the tray at the foot of the rail, which appears whenever something is waiting",
         "mailbox.compose": "inside the Mailbox tab",
         "integrations.webhooks": "a section inside the Integrations tab",
         "phone": "a section in Settings",
-        "domains": "no page of its own yet, so do not send anyone looking for it",
     ]
 
     static func systemPromptBlock() -> String {

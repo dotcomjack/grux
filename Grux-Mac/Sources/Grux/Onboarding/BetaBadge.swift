@@ -35,3 +35,29 @@ struct BetaBadge: View {
             .accessibilityLabel("beta feature")
     }
 }
+
+/// 3.0: BETA is said ONCE, where the feature is. Behind the Labs door the door
+/// says it for all eight; a labs feature that lives anywhere else (Agents
+/// behind the Developer door, Media Studio inside Studio,
+/// Workflows inside Schedules, Compose inside Mail, Meta Ads and Social for a
+/// brand) says it once, beside its own title. No sidebar row carries a pill.
+///
+/// Decided by the operator 2026-09-22 (questionnaires/_decisions/grux-3-0-
+/// final-decisions.md). Reads the registry, so which features qualify is never
+/// a second list.
+extension FeatureRegistry {
+    static var labsOutsideTheLabsDoor: [String] {
+        rows.filter { $0.tier == .labs && $0.disposition != .labs }.map(\.id)
+    }
+}
+
+struct LabsHeaderBadge: View {
+    /// A registry row id.
+    let feature: String
+
+    var body: some View {
+        if FeatureRegistry.labsOutsideTheLabsDoor.contains(feature) {
+            BetaBadge()
+        }
+    }
+}

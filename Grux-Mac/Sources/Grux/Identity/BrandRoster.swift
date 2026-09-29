@@ -137,8 +137,7 @@ enum BrandRoster {
     /// roster is configuration rather than state: a mid-session change would
     /// otherwise re-key the filter under a running UI.
     static let roster: Roster = {
-        let url = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux/brands.json")
+        let url = fileURL
         guard let data = try? Data(contentsOf: url),
               let decoded = try? JSONDecoder().decode(Roster.self, from: data)
         else { return Roster() }
@@ -177,4 +176,71 @@ enum BrandRoster {
     static func bannedOffers(forId id: String) -> [String] {
         (brand(id: id) ?? inbox(id: id))?.bannedOffers ?? []
     }
+
+    // MARK: - Adding a brand (Phase C, C12)
+
+    /// Where the roster lives. The one path, shared by the reader above and
+    /// the writer below.
+    static var fileURL: URL { Persistence.gruxDir.appendingPathComponent("brands.json") }
+
+    enum AddOutcome: Equatable {
+        case added(id: String)
+        case alreadyThere(id: String)
+        case notAName
+    }
+
+    /// The id a label files under: lowercased, spaces to hyphens, anything
+    /// else dropped. "Harbor Bakery" becomes `harbor-bakery`.
+    static func slug(_ label: String) -> String {
+        let lowered = label.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let hyphened = lowered.replacingOccurrences(of: " ", with: "-")
+        let kept = hyphened.unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) || $0 == "-" }
+        return String(String.UnicodeScalarView(kept)).split(separator: "-").joined(separator: "-")
+    }
+
+    /// The roster file with one brand appended, or nil when there is nothing to
+    /// write. Pure: bytes in, bytes out. Every key the file already carries
+    /// (support inboxes, banned offers, anything a person added by hand) comes
+    /// back untouched, because this file is hand-editable and a writer that
+    /// drops what it does not understand destroys someone's work.
+    static func adding(label: String, to existing: Data?) -> (data: Data?, outcome: AddOutcome) {
+        let shown = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        let id = slug(shown)
+        guard !id.isEmpty, id != BrandScope.allToken else { return (nil, .notAName) }
+        var object: [String: Any] = [:]
+        if let existing, !existing.isEmpty,
+           let parsed = (try? JSONSerialization.jsonObject(with: existing)) as? [String: Any] {
+            object = parsed
+        }
+        var brands = object["brands"] as? [[String: Any]] ?? []
+        let known = brands.compactMap { ($0["id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            + ((object["supportInboxes"] as? [[String: Any]]) ?? [])
+                .compactMap { ($0["id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        if known.contains(id) { return (nil, .alreadyThere(id: id)) }
+        brands.append(["id": id, "label": shown])
+        object["brands"] = brands
+        let data = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+        return (data, .added(id: id))
+    }
+
+    /// Appends a brand to the file. The running roster is read once on
+    /// purpose (see `roster`), so the brand's rows appear the next time Grux
+    /// starts, and the caller says so.
+    @discardableResult
+    static func add(label: String, at url: URL = fileURL) -> AddOutcome {
+        let result = adding(label: label, to: try? Data(contentsOf: url))
+        if let data = result.data {
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            guard (try? data.write(to: url, options: .atomic)) != nil else { return .notAName }
+        }
+        return result.outcome
+    }
+
+    /// The labels on disk right now, including any added since launch.
+    static func labelsOnDisk(at url: URL = fileURL) -> [String] {
+        guard let data = try? Data(contentsOf: url),
+              let decoded = try? JSONDecoder().decode(Roster.self, from: data) else { return [] }
+        return decoded.brands.map(\.label)
+    }
 }
+

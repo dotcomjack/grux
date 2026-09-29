@@ -78,15 +78,33 @@ final class SessionConcurrencyTests: XCTestCase {
 
     /// And the choke point actually applies it. Asserting the helper alone would
     /// leave the real path free to ignore it, which is the shape of the original
-    /// defect: a correct rule nothing called.
-    func testStartSwarmAppliesTheClamp() async {
+    /// defect: a correct rule nothing called. `plannedJob` is the part of
+    /// `startSwarm` that builds the job; calling `startSwarm` itself from a test
+    /// started a real swarm in the operator's real store on every run (284 of
+    /// them by 2026-09-20) and made the running app announce each failure aloud.
+    func testStartSwarmAppliesTheClamp() {
         UserDefaults.standard.set(2, forKey: SessionConcurrency.defaultsKey)
         let dir = NSTemporaryDirectory() + "grux-concurrency-test"
-        let job = await AgentService.shared.startSwarm(
+        let job = AgentService.plannedJob(
             goal: "concurrency clamp probe, no worker is started by this call",
             rootDir: dir,
             maxParallelWorkers: 50)
         XCTAssertEqual(job.maxParallelWorkers, 2,
                        "startSwarm stored the unclamped request, so the ceiling is advisory only")
+    }
+
+    /// The suite must never start a swarm through the shared service: that is
+    /// how the probe jobs and the spoken failures got in.
+    func testNoTestStartsARealSwarm() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        let files = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension == "swift" }
+        var offenders: [String] = []
+        for f in files {
+            let src = try String(contentsOf: f, encoding: .utf8)
+            // Split so this file does not match its own search string.
+            if src.contains("AgentService.shared" + ".startSwarm(") { offenders.append(f.lastPathComponent) }
+        }
+        XCTAssertEqual(offenders, [], "these tests start a real swarm in the operator's store: \(offenders)")
     }
 }

@@ -198,8 +198,8 @@ enum ClaudeSessionJSONL {
     ///
     /// This exists because the fold is INCREMENTAL and was being run as if it were not.
     /// Every field here is either last-wins or accumulating, so folding entries 1...n then
-    /// folding n+1 gives the same answer as folding 1...n+1 in one pass. `ClaudeSessionTailer`
-    /// was re-folding the entire accumulated history on a 1.5 second timer, against session
+    /// folding n+1 gives the same answer as folding 1...n+1 in one pass. A session tailer, since
+    /// removed, was re-folding the entire accumulated history on a 1.5 second timer, against session
     /// transcripts that reach several hundred megabytes, which is where the app's idle CPU
     /// was going. Keeping the accumulator lets it fold only what is new.
     ///

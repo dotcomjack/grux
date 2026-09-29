@@ -102,8 +102,7 @@ final class ProductCatalog: ObservableObject {
     @Published private(set) var supportEmailByBrand: [String: String] = [:]
 
     private let storeURL: URL = {
-        let dir = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux").appendingPathComponent("jax")
+        let dir = Persistence.gruxDir.appendingPathComponent("jax")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("product-catalog.json")
     }()

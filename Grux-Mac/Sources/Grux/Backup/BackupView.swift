@@ -49,7 +49,9 @@ struct BackupView: View {
                     Toggle("Back up automatically once a day", isOn: $scheduler.autoBackupEnabled)
                     HStack(spacing: 8) {
                         Text("Destination").font(.caption).frame(width: 80, alignment: .leading)
-                        Text(scheduler.destinationPath)
+                        // With the home folder as ~, the way Finder and the
+                        // shell write it: shorter, and it names no account.
+                        Text((scheduler.destinationPath as NSString).abbreviatingWithTildeInPath)
                             .font(.caption).foregroundStyle(.secondary)
                             .lineLimit(1).truncationMode(.middle)
                         Button("Change...") { pickDestination() }

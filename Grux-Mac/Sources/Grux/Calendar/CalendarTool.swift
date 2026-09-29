@@ -212,8 +212,17 @@ enum CalendarTool {
         }
     }
 
-    private static let noAccessMessage =
-        "error: calendar access not granted. The user can enable it in System Settings > Privacy & Security > Calendars, or open the Calendar tab in Grux to trigger the prompt."
+    private static var noAccessMessage: String { noAccessMessage(for: CalendarCorrelator.currentPermissionState()) }
+
+    /// Once Calendar access was declined macOS never asks again, so only
+    /// System Settings can turn it on; the Calendar tab helps only while
+    /// nobody has been asked yet.
+    static func noAccessMessage(for state: CalendarCorrelator.PermissionState) -> String {
+        if state == .denied {
+            return "error: calendar access is off for Grux. macOS will not ask again, so the user has to turn it on in System Settings > Privacy & Security > Calendars."
+        }
+        return "error: calendar access not granted. The user can enable it in System Settings > Privacy & Security > Calendars, or open the Calendar tab in Grux to trigger the prompt."
+    }
 
     // MARK: - Date input parsing
 

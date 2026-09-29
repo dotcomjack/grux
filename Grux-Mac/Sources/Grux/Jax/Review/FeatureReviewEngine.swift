@@ -89,16 +89,16 @@ final class FeatureReviewEngine: ObservableObject {
         return UserDefaults.standard.string(forKey: Self.repoDirDefaultsKey) ?? ""
     }
     private let storeURL: URL = {
-        let dir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".grux/jax", isDirectory: true)
+        let dir = Persistence.gruxDir.appendingPathComponent("jax", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("features.json")
     }()
     private let verdictsURL: URL = {
-        let dir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".grux/jax", isDirectory: true)
+        let dir = Persistence.gruxDir.appendingPathComponent("jax", isDirectory: true)
         return dir.appendingPathComponent("gate-verdicts.json")
     }()
     private let mergeIntentURL: URL = {
-        let dir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".grux/jax", isDirectory: true)
+        let dir = Persistence.gruxDir.appendingPathComponent("jax", isDirectory: true)
         return dir.appendingPathComponent("merge-intent.json")
     }()
 

@@ -194,6 +194,24 @@ enum GateVerdict: Equatable {
     case refuse(reason: String)
 }
 
+// MARK: - GateHold
+
+// The verdicts, ordered by how much they hold back. This ordering is the whole
+// mechanism behind "tighten only": a second opinion may move a verdict UP this
+// scale and never down.
+//
+// Named GateHold rather than a severity because the sibling GateSeverity in
+// Review/QualityGate.swift already owns that word for code-review findings,
+// and two enums called the same thing in one module is how a reviewer reads
+// the wrong table.
+enum GateHold: Int, Comparable, Equatable {
+    case proceed = 0
+    case queue = 1
+    case refuse = 2
+
+    static func < (a: GateHold, b: GateHold) -> Bool { a.rawValue < b.rawValue }
+}
+
 // MARK: - DecisionGate
 
 @MainActor
@@ -285,6 +303,85 @@ final class DecisionGate: ObservableObject {
             return .queueForApproval(item)
         case .guardrailHit(let reason):
             return .refuse(reason: reason)
+        }
+    }
+
+    // MARK: - The engine as a second opinion, tightening only
+    //
+    // The sniffers above are keyword lists. They will miss a public post to a
+    // surface nobody listed, and a leak phrased as something other than
+    // "attach the file". Missing one of those turns a hard refuse into a tap,
+    // and GUARDRAIL 3 says there is deliberately no one-tap path to publishing
+    // as the user at all, so a miss there breaks the rule rather than costing
+    // a tap.
+    //
+    // So a provider gets to look at the same action and RAISE the verdict. It
+    // can never lower one. That is not a style preference: the sniffers are
+    // the part of this gate that keeps working when the network is down, the
+    // key is wrong, or the provider has been talked into something by the very
+    // content it is judging. A model that is certain a wire transfer is
+    // routine changes nothing here.
+
+    static let publicPostOption = "public_post"
+    static let secretLeakOption = "secret_leak"
+    static let neitherOption = "neither"
+
+    static let secondOpinionInstructions =
+        "Grux is about to take this action on the user's behalf. Which hard rule does it break, if any? "
+        + "\(publicPostOption) means it would publish something publicly as the user, on any social network, "
+        + "forum, blog or public page, whatever that surface is called. "
+        + "\(secretLeakOption) means it would send a document, a file, source code, a credential or "
+        + "internal information to somebody outside. "
+        + "\(neitherOption) means it breaks neither of those, whatever else it does."
+
+    /// Where a verdict sits on the tighten-only scale.
+    nonisolated static func hold(of verdict: GateVerdict) -> GateHold {
+        switch verdict {
+        case .proceed: return .proceed
+        case .queueForApproval: return .queue
+        case .refuse: return .refuse
+        }
+    }
+
+    /// Returns the verdict unchanged unless `refusal` is strictly tighter.
+    /// There is no path here that loosens anything.
+    nonisolated static func raisedToRefusal(_ verdict: GateVerdict, reason: String) -> GateVerdict {
+        guard hold(of: verdict) < .refuse else { return verdict }
+        return .refuse(reason: reason)
+    }
+
+    /// Asks one question about an action the sniffers already judged, and
+    /// raises to a refusal if a provider that can actually judge says it
+    /// breaks one of the two never-rules.
+    ///
+    /// Nothing is asked about a verdict that already refuses: there is
+    /// nothing left to raise, and asking would be pure spend.
+    func tightened(_ verdict: GateVerdict,
+                   for action: ProposedAction,
+                   engine: DecisionEngine,
+                   threshold: Double) async -> GateVerdict {
+        guard Self.hold(of: verdict) < .refuse else { return verdict }
+        let result = await engine.decide(
+            surface: "jax.gate",
+            state: "The action is: \(action.summary)\nIts target is: \(action.target)\n"
+                + "Details: \(action.detail.sorted { $0.key < $1.key }.map { "\($0.key) \($0.value)" }.joined(separator: ", "))",
+            questions: ["rule": .choice(instructions: Self.secondOpinionInstructions,
+                                        criteria: [Self.publicPostOption: "publishing publicly as the user",
+                                                   Self.secretLeakOption: "sending documents, files or credentials outside",
+                                                   Self.neitherOption: "neither of those two rules"])])
+        // On device this is keyword overlap on the very text it is judging, so
+        // it does not get to invoke a hard refusal. A guardrail is raised only
+        // by a provider that can actually read the action.
+        guard result.provider != .local,
+              case .choice(let rule, let confidence, _)? = result.answers["rule"],
+              confidence >= threshold else { return verdict }
+        switch rule {
+        case Self.publicPostOption:
+            return Self.raisedToRefusal(verdict, reason: "Public posting as you is never allowed. \(UserIdentity.assistantName) does not publish to social.")
+        case Self.secretLeakOption:
+            return Self.raisedToRefusal(verdict, reason: "Sharing documents, files, or trade secrets externally is never allowed.")
+        default:
+            return verdict
         }
     }
 

@@ -104,16 +104,24 @@ struct ChatMessage: Identifiable, Codable {
     // block. Nil for every assistant message and every text-only user message.
     var imageData: Data?
     var imageMediaType: String?
+    // A notice is something Grux itself said about a failed turn ("the key was
+    // rejected"). It renders in the thread, and it is NEVER sent back to the
+    // model as an assistant turn: a history full of the same error line taught
+    // the model to answer "what time is it" with the error line, measured
+    // 2026-09-20 after six failed turns in one thread.
+    var isNotice: Bool
 
     init(id: UUID = UUID(), role: ChatRole, content: String,
          timestamp: Date = Date(),
-         imageData: Data? = nil, imageMediaType: String? = nil) {
+         imageData: Data? = nil, imageMediaType: String? = nil,
+         isNotice: Bool = false) {
         self.id = id; self.role = role; self.content = content; self.timestamp = timestamp
         self.imageData = imageData; self.imageMediaType = imageMediaType
+        self.isNotice = isNotice
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, role, content, timestamp, imageData, imageMediaType
+        case id, role, content, timestamp, imageData, imageMediaType, isNotice
     }
 
     init(from decoder: Decoder) throws {
@@ -124,6 +132,10 @@ struct ChatMessage: Identifiable, Codable {
         timestamp = try c.decode(Date.self, forKey: .timestamp)
         imageData = try c.decodeIfPresent(Data.self, forKey: .imageData)
         imageMediaType = try c.decodeIfPresent(String.self, forKey: .imageMediaType)
+        // Saved before the flag existed: Grux's own notices always began with
+        // the warning sign, and no model reply ever did.
+        isNotice = try c.decodeIfPresent(Bool.self, forKey: .isNotice)
+            ?? (role == .assistant && content.unicodeScalars.first == "\u{26A0}")
     }
 }
 
@@ -167,6 +179,36 @@ struct ChatRecovery: Identifiable, Equatable {
 //            command. No wake phrase required - the user can just talk to Grux
 //            while working and get instant answers. Higher bar for what
 //            counts as "meaningful" to avoid chatter spam.
+/// The one listening control. Replaces the separate wake word, ambient and
+/// auto-send switches in the face; those fields stay for the listeners
+/// underneath and are derived from this at launch.
+public enum ListeningMode: String, Codable, CaseIterable, Identifiable {
+    case alwaysOn
+    case wakeWord
+    case off
+
+    public var id: String { rawValue }
+
+    public var label: String {
+        switch self {
+        case .alwaysOn: return "Always on"
+        case .wakeWord: return "After \u{201C}Hey Grux\u{201D}"
+        case .off: return "Off"
+        }
+    }
+
+    public var explanation: String {
+        switch self {
+        case .alwaysOn:
+            return "Grux hears you all the time and decides, in under a second, whether you were talking to it. Nothing you say is kept unless you ask it to remember."
+        case .wakeWord:
+            return "Grux ignores everything until you say Hey Grux, then listens for one request."
+        case .off:
+            return "The microphone stays closed. Type instead, or tap the orb to talk."
+        }
+    }
+}
+
 public enum AmbientMode: String, Codable, CaseIterable, Identifiable {
     case wake
     case focus
@@ -665,13 +707,51 @@ struct GruxConfig: Codable {
     var elevenLabsVoiceId: String
     var elevenLabsModelId: String
     var useElevenLabs: Bool
-    var bargeInEnabled: Bool
+    // `bargeInEnabled` was here from the first commit and nothing ever read
+    // it: SpeechEngine deliberately does not listen while it talks. Removed
+    // in P-E-2 rather than moved into Tuning as a switch that does nothing.
     var voicePlaybackRate: Double  // 0.75 = slower, 1.0 = natural, 1.5 = default, 2.0 = max
     var ambientEnabled: Bool
     var ambientAutoPromoteActions: Bool
     var ambientCoachEnabled: Bool
     var ambientHUDVisible: Bool
     var ambientMode: AmbientMode
+    var listeningMode: ListeningMode
+    /// Execute at or above this confidence; ask below it. Tuning owns it.
+    var listeningThreshold: Double
+    /// The one-time banner that explains the per-decision banners has shown.
+    /// Whether the Developer door shows in the rail.
+    ///
+    /// The init default and the decode fallback DELIBERATELY DISAGREE, and
+    /// that is the whole point. A fresh install starts with it off, which is
+    /// what makes the first-run rail fourteen rows rather than fifteen. An
+    /// install that predates this key gets `true`, because those people
+    /// already had Commands and Agents as rail rows and an
+    /// upgrade must not quietly take a surface away.
+    var developerSurfacesUnlocked: Bool
+    /// The 240pt sidebar shell instead of the Command Panel. One release
+    /// only; the panel is the shell. Default false for every install, new or
+    /// old, which is why the decode fallback also says false.
+    var legacyShell: Bool
+    /// The Command Panel floats above other windows. Default false for every
+    /// install, new or old. The classic shell ignores it.
+    var keepOnTop: Bool
+    /// Tuning: the most remote decisions a day, then on device. 0 is no cap.
+    var dailyDecisionBudget: Int
+    /// Tuning: the most any self-upgrade lane may do on its own, whatever it
+    /// has earned (0 proposes, 1 builds, 2 lands). A ceiling only ever lowers
+    /// autonomy. The init default and the decode fallback DISAGREE on purpose,
+    /// as `developerSurfacesUnlocked` does: a new install starts at TIER 0, as
+    /// How Grux works promises, and an existing install keeps the tiers its
+    /// lanes already earned.
+    var selfUpgradeMaxTier: Int
+    var listeningBannerExplained: Bool
+    /// Show the last decision in the menu bar and the HUD.
+    var showLastDecision: Bool
+    /// Always-on listening uses the Mac's own microphone rather than a
+    /// headset, a phone over Continuity or an AirPlay receiver. See
+    /// `ListeningMicPolicy`.
+    var listenOnTheMacsOwnMic: Bool
     var dailyRecapHour: Int         // 0..23, local time. Default 22 (10pm).
     var energyRecapHour: Int        // 0..23, local time. Default 20 (8pm). Fires the daily energy + focus recap, distinct from the 10pm task-focused dailyRecap.
     var stuckThresholdMinutes: Int  // silence+idle minutes before stuck nudge fires. Default 8.
@@ -689,8 +769,6 @@ struct GruxConfig: Codable {
     // Orb / Glow / HUD overlay - parity-plus additions (2026-04-24). All
     // default on so the visual identity is visible immediately after
     // upgrade. Each can be toggled from Settings → Orb & overlays.
-    var orbAnywhereEnabled: Bool       // Floating, always-on-top Grux orb on the desktop.
-    var orbAnywhereAudioReactive: Bool // Modulate the floating orb by live mic + TTS level.
     var stageEnabled: Bool             // Expose the cinematic `grux_orb_stage` tool to Claude.
     var audioReactiveGlow: Bool        // Pulse the window-edge glow with TTS output level while Grux speaks.
     var crashSafeAudioEnabled: Bool    // Meeting-capture WAL: rolling 90s PCM buffer on disk so a crash doesn't lose pre-transcription audio.
@@ -716,13 +794,6 @@ struct GruxConfig: Codable {
     /// and calls Apple on every launch, which an install with no iOS apps should
     /// never do.
     var ascMonitorEnabled: Bool
-    /// Sweeps your registrar every 24 hours, and SPEAKS ALOUD plus posts a banner when a
-    /// domain crosses the 30-day line. OFF by default for the same reason as the App Store
-    /// Connect monitor, which sits nine lines above it in the launch path and was gated
-    /// while this was not: it adopts a credential left in ~/.grux/godaddy-creds.json or the
-    /// environment and calls GoDaddy on the strength of it. The Empire dashboard's manual
-    /// sweep keeps the capability reachable while this is off.
-    var domainMonitorEnabled: Bool
     /// Drops Apple Music to 50% while Grux talks. OFF by default because turning it on is
     /// what sends the first Apple event to Music, and macOS answers that with "Grux wants
     /// access to control Music". Nothing in the app said Grux touches Music at all.
@@ -823,10 +894,16 @@ struct GruxConfig: Codable {
         case autoPromoteDetectedTask, notificationsEnabled, screenAnalysisEnabled
         case launchAtLogin, snoozeMinutes, activeHoursStart, activeHoursEnd
         case wakeWordEnabled, autoSendOnWake, speakRepliesAloud
-        case elevenLabsApiKey, elevenLabsVoiceId, elevenLabsModelId, useElevenLabs, bargeInEnabled
+        case elevenLabsApiKey, elevenLabsVoiceId, elevenLabsModelId, useElevenLabs
         case voicePlaybackRate
         case ambientEnabled, ambientAutoPromoteActions, ambientCoachEnabled, ambientHUDVisible
         case ambientMode
+        case listeningMode, listeningThreshold, listeningBannerExplained, showLastDecision
+        case developerSurfacesUnlocked
+        case legacyShell
+        case keepOnTop
+        case dailyDecisionBudget, selfUpgradeMaxTier
+        case listenOnTheMacsOwnMic
         case dailyRecapHour
         case energyRecapHour
         case stuckThresholdMinutes
@@ -841,13 +918,11 @@ struct GruxConfig: Codable {
         case musicStrategy
         case developerTeamId
         case developerBundlePrefix
-        case orbAnywhereEnabled
-        case orbAnywhereAudioReactive
         case stageEnabled
         case audioReactiveGlow
         case crashSafeAudioEnabled
         case phoneCompanionEnabled, prInboxEnabled, ascMonitorEnabled
-        case domainMonitorEnabled, musicDuckingEnabled, meetingAutoDetectEnabled
+        case musicDuckingEnabled, meetingAutoDetectEnabled
         case personMemoryEnabled, decisionLogEnabled, controlSocketEnabled
         case foundryEnabled, spokenBriefingsEnabled
         case screenControlEnabled
@@ -875,13 +950,22 @@ struct GruxConfig: Codable {
          elevenLabsVoiceId: String = "RPJ8nnVtuTgG8McXwW6M",
          elevenLabsModelId: String = "eleven_turbo_v2_5",
          useElevenLabs: Bool = true,
-         bargeInEnabled: Bool = true,
          voicePlaybackRate: Double = 1.5,
          ambientEnabled: Bool = false,
          ambientAutoPromoteActions: Bool = false,
          ambientCoachEnabled: Bool = true,
          ambientHUDVisible: Bool = true,
          ambientMode: AmbientMode = .wake,
+         listeningMode: ListeningMode = .alwaysOn,
+         listeningThreshold: Double = 0.70,
+         developerSurfacesUnlocked: Bool = false,
+         legacyShell: Bool = false,
+         keepOnTop: Bool = false,
+         dailyDecisionBudget: Int = 0,
+         selfUpgradeMaxTier: Int = 0,
+         listeningBannerExplained: Bool = false,
+         showLastDecision: Bool = true,
+         listenOnTheMacsOwnMic: Bool = true,
          dailyRecapHour: Int = 22,
          energyRecapHour: Int = 20,
          stuckThresholdMinutes: Int = 8,
@@ -896,8 +980,6 @@ struct GruxConfig: Codable {
          musicStrategy: MusicStrategy = .libraryFirst,
          developerTeamId: String = "",
          developerBundlePrefix: String = "com.example",
-         orbAnywhereEnabled: Bool = true,
-         orbAnywhereAudioReactive: Bool = true,
          stageEnabled: Bool = true,
          audioReactiveGlow: Bool = true,
          crashSafeAudioEnabled: Bool = true,
@@ -907,7 +989,6 @@ struct GruxConfig: Codable {
          screenControlEnabled: Bool = false,
          prInboxEnabled: Bool = false,
          ascMonitorEnabled: Bool = false,
-         domainMonitorEnabled: Bool = false,
          musicDuckingEnabled: Bool = false,
          meetingAutoDetectEnabled: Bool = false,
          personMemoryEnabled: Bool = false,
@@ -947,13 +1028,22 @@ struct GruxConfig: Codable {
         self.elevenLabsVoiceId = elevenLabsVoiceId
         self.elevenLabsModelId = elevenLabsModelId
         self.useElevenLabs = useElevenLabs
-        self.bargeInEnabled = bargeInEnabled
         self.voicePlaybackRate = voicePlaybackRate
         self.ambientEnabled = ambientEnabled
         self.ambientAutoPromoteActions = ambientAutoPromoteActions
         self.ambientCoachEnabled = ambientCoachEnabled
         self.ambientHUDVisible = ambientHUDVisible
         self.ambientMode = ambientMode
+        self.listeningMode = listeningMode
+        self.listeningThreshold = listeningThreshold
+        self.developerSurfacesUnlocked = developerSurfacesUnlocked
+        self.legacyShell = legacyShell
+        self.keepOnTop = keepOnTop
+        self.dailyDecisionBudget = dailyDecisionBudget
+        self.selfUpgradeMaxTier = selfUpgradeMaxTier
+        self.listeningBannerExplained = listeningBannerExplained
+        self.showLastDecision = showLastDecision
+        self.listenOnTheMacsOwnMic = listenOnTheMacsOwnMic
         self.dailyRecapHour = dailyRecapHour
         self.energyRecapHour = energyRecapHour
         self.stuckThresholdMinutes = stuckThresholdMinutes
@@ -968,8 +1058,6 @@ struct GruxConfig: Codable {
         self.musicStrategy = musicStrategy
         self.developerTeamId = developerTeamId
         self.developerBundlePrefix = developerBundlePrefix
-        self.orbAnywhereEnabled = orbAnywhereEnabled
-        self.orbAnywhereAudioReactive = orbAnywhereAudioReactive
         self.stageEnabled = stageEnabled
         self.audioReactiveGlow = audioReactiveGlow
         self.crashSafeAudioEnabled = crashSafeAudioEnabled
@@ -977,7 +1065,6 @@ struct GruxConfig: Codable {
         self.screenControlEnabled = screenControlEnabled
         self.prInboxEnabled = prInboxEnabled
         self.ascMonitorEnabled = ascMonitorEnabled
-        self.domainMonitorEnabled = domainMonitorEnabled
         self.musicDuckingEnabled = musicDuckingEnabled
         self.meetingAutoDetectEnabled = meetingAutoDetectEnabled
         self.personMemoryEnabled = personMemoryEnabled
@@ -1030,7 +1117,6 @@ struct GruxConfig: Codable {
         elevenLabsVoiceId = try c.decodeIfPresent(String.self, forKey: .elevenLabsVoiceId) ?? "RPJ8nnVtuTgG8McXwW6M"
         elevenLabsModelId = try c.decodeIfPresent(String.self, forKey: .elevenLabsModelId) ?? "eleven_turbo_v2_5"
         useElevenLabs = try c.decodeIfPresent(Bool.self, forKey: .useElevenLabs) ?? true
-        bargeInEnabled = try c.decodeIfPresent(Bool.self, forKey: .bargeInEnabled) ?? true
         voicePlaybackRate = try c.decodeIfPresent(Double.self, forKey: .voicePlaybackRate) ?? 1.5
         ambientEnabled = try c.decodeIfPresent(Bool.self, forKey: .ambientEnabled) ?? false
         ambientAutoPromoteActions = try c.decodeIfPresent(Bool.self, forKey: .ambientAutoPromoteActions) ?? false
@@ -1051,8 +1137,6 @@ struct GruxConfig: Codable {
         musicStrategy = try c.decodeIfPresent(MusicStrategy.self, forKey: .musicStrategy) ?? .libraryFirst
         developerTeamId = try c.decodeIfPresent(String.self, forKey: .developerTeamId) ?? ""
         developerBundlePrefix = try c.decodeIfPresent(String.self, forKey: .developerBundlePrefix) ?? "com.example"
-        orbAnywhereEnabled = try c.decodeIfPresent(Bool.self, forKey: .orbAnywhereEnabled) ?? true
-        orbAnywhereAudioReactive = try c.decodeIfPresent(Bool.self, forKey: .orbAnywhereAudioReactive) ?? true
         stageEnabled = try c.decodeIfPresent(Bool.self, forKey: .stageEnabled) ?? true
         audioReactiveGlow = try c.decodeIfPresent(Bool.self, forKey: .audioReactiveGlow) ?? true
         crashSafeAudioEnabled = try c.decodeIfPresent(Bool.self, forKey: .crashSafeAudioEnabled) ?? true
@@ -1065,7 +1149,6 @@ struct GruxConfig: Codable {
         screenControlEnabled = try c.decodeIfPresent(Bool.self, forKey: .screenControlEnabled) ?? false
         prInboxEnabled = try c.decodeIfPresent(Bool.self, forKey: .prInboxEnabled) ?? false
         ascMonitorEnabled = try c.decodeIfPresent(Bool.self, forKey: .ascMonitorEnabled) ?? false
-        domainMonitorEnabled = try c.decodeIfPresent(Bool.self, forKey: .domainMonitorEnabled) ?? false
         musicDuckingEnabled = try c.decodeIfPresent(Bool.self, forKey: .musicDuckingEnabled) ?? false
         meetingAutoDetectEnabled = try c.decodeIfPresent(Bool.self, forKey: .meetingAutoDetectEnabled) ?? false
         personMemoryEnabled = try c.decodeIfPresent(Bool.self, forKey: .personMemoryEnabled) ?? false
@@ -1086,6 +1169,29 @@ struct GruxConfig: Codable {
             Bool.self, forKey: .ambientConsentAcknowledged) ?? false
         wakeWordConsentAcknowledged = try c.decodeIfPresent(
             Bool.self, forKey: .wakeWordConsentAcknowledged) ?? false
+        listeningThreshold = try c.decodeIfPresent(Double.self, forKey: .listeningThreshold) ?? 0.70
+        developerSurfacesUnlocked = try c.decodeIfPresent(Bool.self, forKey: .developerSurfacesUnlocked) ?? true
+        legacyShell = try c.decodeIfPresent(Bool.self, forKey: .legacyShell) ?? false
+        keepOnTop = try c.decodeIfPresent(Bool.self, forKey: .keepOnTop) ?? false
+        dailyDecisionBudget = try c.decodeIfPresent(Int.self, forKey: .dailyDecisionBudget) ?? 0
+        selfUpgradeMaxTier = try c.decodeIfPresent(Int.self, forKey: .selfUpgradeMaxTier) ?? 2
+        listeningBannerExplained = try c.decodeIfPresent(Bool.self, forKey: .listeningBannerExplained) ?? false
+        showLastDecision = try c.decodeIfPresent(Bool.self, forKey: .showLastDecision) ?? true
+        listenOnTheMacsOwnMic = try c.decodeIfPresent(Bool.self, forKey: .listenOnTheMacsOwnMic) ?? true
+        if let explicit = try c.decodeIfPresent(ListeningMode.self, forKey: .listeningMode) {
+            listeningMode = explicit
+        } else {
+            // Migration from the three old switches. A person who turned both
+            // off after seeing a consent dialog turned it down on purpose; a
+            // fresh install has never been asked and starts always on, with
+            // the mic consent dialog still gating the first capture.
+            let turnedDown = !wakeWordEnabled && !ambientEnabled
+                && (wakeWordConsentAcknowledged || ambientConsentAcknowledged)
+            if ambientEnabled { listeningMode = .alwaysOn }
+            else if wakeWordEnabled { listeningMode = .wakeWord }
+            else if turnedDown { listeningMode = .off }
+            else { listeningMode = .alwaysOn }
+        }
         // decodeIfPresent, so an existing install is untouched. A new install
         // gets an empty name, which is what makes the onboarding gate fire for
         // genuinely new users only.

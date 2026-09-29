@@ -35,8 +35,7 @@ enum SocialOpsService {
     // answers the same question from the same file and reads it through this
     // one parser (the authHeaders() precedent: one reader per ~/.grux file).
     static func configuredHosts() -> [String] {
-        let url = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".grux", isDirectory: true)
+        let url = Persistence.gruxDir
             .appendingPathComponent("social-ops-hosts.txt")
         guard let raw = try? String(contentsOf: url, encoding: .utf8) else { return [] }
         return raw
@@ -56,8 +55,7 @@ enum SocialOpsService {
     // from its gitignored .env. Empty string when no token file exists yet
     // (loopback calls do not require it).
     private static func bearerToken() -> String {
-        let url = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".grux", isDirectory: true)
+        let url = Persistence.gruxDir
             .appendingPathComponent("pr-inbox-token.txt")
         guard let s = try? String(contentsOf: url, encoding: .utf8) else { return "" }
         return s.trimmingCharacters(in: .whitespacesAndNewlines)

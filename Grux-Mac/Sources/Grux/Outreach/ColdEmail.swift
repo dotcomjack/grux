@@ -365,8 +365,7 @@ final class ColdEmailEngine {
     // or email. Returns a warning string with the date, or nil. Keeps the user
     // from re-pitching someone they already contacted.
     static func recentlyEmailed(company: String, email: String) -> String? {
-        let dir = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux").appendingPathComponent("outreach")
+        let dir = Persistence.gruxDir.appendingPathComponent("outreach")
         guard let files = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else { return nil }
         let co = company.lowercased().trimmingCharacters(in: .whitespaces)
         let em = email.lowercased().trimmingCharacters(in: .whitespaces)
@@ -432,8 +431,7 @@ final class ColdEmailEngine {
     }
 
     private func logSend(draft: OutreachDraft, to: String, messageId: String) {
-        let dir = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux").appendingPathComponent("outreach")
+        let dir = Persistence.gruxDir.appendingPathComponent("outreach")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let dayKey = Self.dayKey()
         let url = dir.appendingPathComponent("sent-\(dayKey).jsonl")
@@ -563,8 +561,7 @@ enum OutreachPitch {
     static var path: String { "~/.grux/outreach/pitch.md" }
 
     static func load() -> String {
-        let url = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux").appendingPathComponent("outreach")
+        let url = Persistence.gruxDir.appendingPathComponent("outreach")
             .appendingPathComponent("pitch.md")
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { return "" }
         return String(text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(2000))
@@ -588,8 +585,7 @@ struct OutreachSender {
     }
 
     static func load() -> OutreachSender? {
-        let url = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux").appendingPathComponent("outreach")
+        let url = Persistence.gruxDir.appendingPathComponent("outreach")
             .appendingPathComponent("sender.json")
         guard let data = try? Data(contentsOf: url),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -606,8 +602,7 @@ struct OutreachSender {
 // Present + non-empty means the cap is hit and we must warn before any send.
 enum OutreachCap {
     static func activeClient() -> String? {
-        let url = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux").appendingPathComponent("outreach")
+        let url = Persistence.gruxDir.appendingPathComponent("outreach")
             .appendingPathComponent("active-client.json")
         guard let data = try? Data(contentsOf: url) else { return nil }
         if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

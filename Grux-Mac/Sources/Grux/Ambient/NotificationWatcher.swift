@@ -198,7 +198,7 @@ final class NotificationWatcher {
         didReportFDADenied = true
         fdaDeniedLock.unlock()
         guard first else { return }
-        let path = NSHomeDirectory() + "/.grux/notif-storm-fda-required.txt"
+        let path = Persistence.gruxDir.appendingPathComponent("notif-storm-fda-required.txt").path
         let body = """
         NotificationWatcher needs Full Disk Access.
 
@@ -308,8 +308,7 @@ final class NotificationWatcher {
     // MARK: - NDJSON layout (mirrors ScreenTimeWatcher)
 
     nonisolated static var notifDir: URL {
-        URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux", isDirectory: true)
+        Persistence.gruxDir
             .appendingPathComponent("ambient", isDirectory: true)
     }
 

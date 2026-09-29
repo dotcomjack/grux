@@ -6,6 +6,32 @@ import Foundation
 // chat.json into the first thread on first launch so no messages are lost.
 @MainActor
 final class ChatThreadStore {
+
+    // MARK: - Housekeeping rules (pure, so a test can drive them)
+
+    /// A thread nobody said anything in is not a conversation. Discarding it
+    /// when the person moves on keeps the rail full of threads they can
+    /// recognise instead of a column of "New chat".
+    ///
+    /// Starred is the escape hatch: a person who deliberately kept an empty
+    /// thread meant to.
+    static func shouldDiscard(_ entry: ChatThreadIndexEntry) -> Bool {
+        entry.messageCount == 0
+            && !entry.starred
+            && entry.title.trimmingCharacters(in: .whitespacesAndNewlines) == ChatTitleHygiene.neutralDefault
+    }
+
+    /// A title that shipped before the hygiene check existed. Measured
+    /// 2026-09-20 on the running app: two of eight visible threads were named
+    /// after the error that broke them, and those names sit in the rail until
+    /// something renames them. Fixing the generator only helps new threads.
+    static func repairedTitle(for entry: ChatThreadIndexEntry) -> String? {
+        guard !ChatTitleHygiene.isFitToShow(entry.title) else { return nil }
+        let repaired = ChatTitleHygiene.clean(generated: entry.title,
+                                              firstUserLine: entry.preview ?? "")
+        return repaired == entry.title ? nil : repaired
+    }
+
     static let shared = ChatThreadStore()
 
     private(set) var index: [ChatThreadIndexEntry] = []

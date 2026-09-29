@@ -175,8 +175,7 @@ enum MeetingTool {
             guard let summary = await MeetingSummarizer.summarize(rec) else {
                 return "error: summarization failed (missing key or LLM error)"
             }
-            rec.summary = summary.tldr
-            rec.actionItems = summary.actionItems
+            summary.apply(to: &rec)
             await MainActor.run { MeetingStore.shared.finalize(rec) }
             let actionsLine = rec.actionItems.isEmpty ? "" : "\naction_items:\n" + rec.actionItems.map { "- \($0)" }.joined(separator: "\n")
             return "ok: resummarized\nsummary: \(summary.tldr)\(actionsLine)"

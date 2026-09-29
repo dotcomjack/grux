@@ -4,8 +4,8 @@ import Combine
 // MARK: - ShellStateBus
 //
 // One canonical answer to "what is the shell doing right now". Today that
-// answer is scattered: LaunchRootView, MenuBarView, ChatView, AmbientHUD and
-// OrbAnywhereView each recompute their own GruxOrbState from SpeechEngine,
+// answer is scattered: LaunchRootView, MenuBarView, ChatView and AmbientHUD
+// each recompute their own GruxOrbState from SpeechEngine,
 // WakeWordListener and AppState, while the glow border and Stage take ad-hoc
 // pushes. The bus collapses those into a single published ShellMoment so
 // every surface (orb, glow, HUD pill, menu bar) tells the same story at the
@@ -198,5 +198,107 @@ final class ShellStateBus: ObservableObject {
         if current.isExpired(at: now) { return candidate }
         if candidate.source == current.source { return candidate }
         return nil
+    }
+}
+
+// MARK: - ListeningTell
+//
+// The one word the orb, the menu bar, the HUD and the floating focus card
+// all show at the same instant. Before this, each surface reasoned from
+// micMuted, WakeWordListener.isListening and SpeechEngine.isSpeaking on its
+// own, so the sidebar orb could read LISTENING while the menu bar read IDLE.
+// The tell is a pure function of three flags plus the saved mode, so the
+// surfaces cannot disagree and a test can enumerate every combination.
+
+/// What Grux is doing with your microphone, in one word.
+enum ListeningTell: String, CaseIterable, Sendable {
+    /// Listening is on and the microphone is live.
+    case armed
+    /// The user muted the microphone. Listening resumes when they unmute.
+    case muted
+    /// Grux is talking.
+    case speaking
+    /// Grux is working on something you already said.
+    case thinking
+    /// Listening is switched off in Tuning, not muted.
+    case off
+    /// Listening is on, but the microphone is sending no sound. Grux keeps
+    /// retrying on its own, and a tap on the orb retries now.
+    case notHearing
+
+    var label: String { self == .notHearing ? "NOT HEARING" : rawValue.uppercased() }
+
+    /// Priority, highest first: speaking and thinking are things happening
+    /// right now, and you must not miss them; muted beats the configured
+    /// mode because it is the thing the user most recently did.
+    /// `notHearing` comes from `MicHealth`: an ARMED that is not hearing
+    /// anything is the one word here that would be a lie.
+    static func resolve(mode: ListeningMode, micMuted: Bool, isSpeaking: Bool, isThinking: Bool,
+                        notHearing: Bool = false) -> ListeningTell {
+        if isSpeaking { return .speaking }
+        if isThinking { return .thinking }
+        if micMuted { return .muted }
+        if mode == .off { return .off }
+        return notHearing ? .notHearing : .armed
+    }
+
+    /// The glow the orb wears while showing this word.
+    var orbState: GruxOrbState {
+        switch self {
+        case .armed:    return .listening
+        case .muted:    return .muted
+        case .speaking: return .speaking
+        case .thinking: return .thinking
+        case .off:      return .idle
+        case .notHearing: return .muted
+        }
+    }
+
+    /// One sentence for a tooltip, so the word is never the only explanation.
+    var help: String {
+        switch self {
+        case .armed:    return "Listening. Just talk, no wake word needed."
+        case .muted:    return "Muted. Tap the orb to listen again."
+        case .speaking: return "Grux is speaking."
+        case .thinking: return "Grux is working on it."
+        case .off:      return "Listening is off. Turn it on in Tuning."
+        case .notHearing: return "The microphone is not sending any sound. Grux keeps trying; tap the orb to try now."
+        }
+    }
+}
+
+extension ListeningTell {
+    /// The tell from the live objects, so both shells compute it the same
+    /// way: the mode in effect, the mute, speech, thinking and whether the
+    /// microphone is heard. `notHearing` is a value so the caller's own
+    /// observation of `MicHealth` is what redraws it.
+    @MainActor
+    static func resolve(state: AppState, speech: SpeechEngine, notHearing: Bool) -> ListeningTell {
+        resolve(mode: state.config.listeningModeInEffect,
+                micMuted: state.micMuted,
+                isSpeaking: speech.isSpeaking || speech.isBuffering,
+                isThinking: state.isThinking,
+                notHearing: notHearing)
+    }
+}
+
+extension GruxConfig {
+    /// The listening mode that can actually be running, which is what the tell
+    /// shows. Not the preference.
+    ///
+    /// Listening is on by default, by decision, and launch never opens a
+    /// consent dialog over the first screen (`ListeningController.applyAtLaunch`),
+    /// so a fresh install holds `.alwaysOn` with the microphone closed until the
+    /// person agrees. Resolving the tell from the preference made that install
+    /// read ARMED while nothing was listening, which is the one word the tell
+    /// must never say falsely. Each mode counts only once its own consent is
+    /// given: agreeing to ambient is not agreeing to the wake word, whose audio
+    /// can leave the Mac.
+    var listeningModeInEffect: ListeningMode {
+        switch listeningMode {
+        case .alwaysOn: return ambientConsentAcknowledged ? .alwaysOn : .off
+        case .wakeWord: return wakeWordConsentAcknowledged ? .wakeWord : .off
+        case .off: return .off
+        }
     }
 }

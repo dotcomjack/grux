@@ -149,8 +149,7 @@ final class ChromeTabWatcher {
     // MARK: - NDJSON layout
 
     nonisolated static var chromeTabsDir: URL {
-        URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux", isDirectory: true)
+        Persistence.gruxDir
             .appendingPathComponent("ambient", isDirectory: true)
     }
 

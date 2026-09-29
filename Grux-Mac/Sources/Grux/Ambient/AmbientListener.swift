@@ -1,6 +1,7 @@
 import Foundation
 import AVFoundation
 import AppKit
+import CoreAudio
 import WhisperKit
 
 // Continuous passive listener. Captures mic → 16 kHz mono Float32 → chunks on
@@ -13,8 +14,20 @@ final class AmbientListener {
 
     private let buffer = AmbientAudioBuffer()
     private var audioEngine: AVAudioEngine?
-    private var whisperKit: WhisperKit?
-    private var whisperInitTask: Task<Void, Never>?
+    /// The model, loaded once and shared; a failed load is tried again on the next ask.
+    private lazy var whisper = RetryableLoad<WhisperKit> { [modelName, modelRepo] in
+        let cfg = WhisperKitConfig(
+            model: modelName,
+            downloadBase: WhisperModelStore.downloadBase,
+            modelRepo: modelRepo,
+            verbose: false,
+            prewarm: true,
+            load: true,
+            download: WhisperModelStore.mayDownload
+        )
+        return try await WhisperKit(cfg)
+    }
+    private var whisperKit: WhisperKit? { whisper.value }
     private var chunkTimer: Timer?
     private var levelTimer: Timer?
     private var running = false
@@ -41,13 +54,63 @@ final class AmbientListener {
     // treated as the command. Cleared after consumption or expiry. Also
     // re-armed automatically after every Grux speech stop so follow-up turns
     // in a conversation don't need a fresh "hey grux" each time.
-    private var wakeArmedUntil: Date = .distantPast
+    /// Internal, not private, so a test can see a dry run left it alone.
+    var wakeArmedUntil: Date = .distantPast
     private let wakeArmWindow: TimeInterval = 18
     private let conversationFollowUpWindow: TimeInterval = 30
     // Timestamp of the last Grux speech stop. Used to drop self-echo chunks
     // that leak in during the resume grace window.
     private var lastSpeechEndAt: Date = .distantPast
     private let postSpeechEchoGuardSeconds: TimeInterval = 2.5
+    // Whether the engine last built by startEngine() asked for voice
+    // processing. Compared when the default output device changes, so capture
+    // restarts only when the decision actually flips.
+    private var voiceProcessingDecision: Bool?
+    /// Total samples the buffer had at the last growth check, and when it
+    /// last actually grew. Drives the running deaf watchdog.
+    private var lastAppendedEver: UInt64 = 0
+    /// Measured on the MONOTONIC clock, not `Date`. `ProcessInfo.systemUptime`
+    /// does not advance while the Mac is asleep, and `Date` does: with a wall
+    /// clock, the first timer tick after an eight hour lid close reads
+    /// "no new audio for 28800.0s" and reports a dead microphone on every
+    /// single wake. A forward NTP step does the same with no fault at all.
+    private var lastAudioGrowthUptime = ProcessInfo.processInfo.systemUptime
+    /// True once `deafStartAction` has returned `.giveUp`, cleared the moment
+    /// audio actually arrives again.
+    ///
+    /// WITHOUT THIS THE WATCHDOG DEFEATS `maxDeafRestarts`. `.giveUp` does not
+    /// tear anything down: it sets the error and returns, leaving `running`
+    /// true, the engine non-nil and the chunk timer alive. So eight seconds
+    /// later the watchdog sees a live engine with no audio and calls
+    /// `restartAfterDeafStart(attempt: 0)`, which starts the whole five step
+    /// ladder over with a fresh count, forever. Measured shape on a genuinely
+    /// dead input: a roughly 122 second cycle, six CoreAudio rebuilds and six
+    /// mic-guard claims per cycle, with the orb flickering between Listening
+    /// and Error instead of settling on the "Tap the orb to try again" state
+    /// that `.giveUp` exists to produce.
+    private var gaveUpOnDeafCapture = false
+
+    /// Whether this listener's microphone is open while Grux's own voice plays.
+    /// It is NOT, and the wiring below this line is what makes it false:
+    /// `.gruxSpeechDidStart` calls `suspendForSpeech()`, which calls
+    /// `tearDownCapture()`, which stops the engine AND resets the rolling
+    /// buffer, and `resumeIfReady()` then waits 400ms after the reply ends
+    /// before opening the mic again. Grux's reply cannot reach this engine,
+    /// so Apple's echo canceller has nothing here to cancel.
+    ///
+    /// That matters because the cost is not free: measured 2026-09-23, another
+    /// process capturing from the same microphone STOPS receiving audio the
+    /// moment VPIO starts here, and `wake.log` carries 12 starts where voice
+    /// processing came up and delivered nothing, each costing a 2.1s deaf
+    /// window and a restart. `VoiceProcessingListenerTests` holds this whole
+    /// chain: if ambient is ever changed to keep listening while Grux speaks,
+    /// this constant is wrong and that test fails rather than silently
+    /// shipping a listener that hears itself.
+    nonisolated static let holdsMicWhileGruxSpeaks = false
+    // Installed while running (start() to stop()), so AirPods connecting or
+    // headphones unplugging mid-listen re-makes the voice processing call.
+    private var outputRouteListening = false
+    private var outputRouteDebounce: Task<Void, Never>?
 
     private let targetFormat = AVAudioFormat(
         commonFormat: .pcmFormatFloat32,
@@ -63,6 +126,39 @@ final class AmbientListener {
 
     // VAD/chunking parameters
     private let silenceFlushSeconds: TimeInterval = 1.6
+
+    /// THE GAP THAT ENDS A SHORT UTTERANCE, which is how fast a spoken command
+    /// can possibly be.
+    ///
+    /// Measured 2026-09-22 by saying "open my calendar" into the microphone
+    /// nine times: 3.1 seconds from the end of the sentence to the decision
+    /// being written, of which the decision itself was 450ms. The rest was
+    /// this wait plus transcribing a buffer that had 1.6 seconds of silence
+    /// on the end of it. Nobody is served by holding a finished command for a
+    /// second and a half to see whether more words arrive.
+    ///
+    /// A conversational pause mid-sentence runs about 0.2 to 0.3 seconds, so
+    /// 0.6 clears it comfortably while still being a gap a person can feel the
+    /// end of. Long buffers keep the old threshold, because sustained speech
+    /// is somebody talking rather than somebody instructing, and splitting
+    /// that produces short chunks Whisper transcribes worse.
+    ///
+    /// Meeting capture is unaffected: `MeetingCaptureService` calls
+    /// `pauseForMeeting()` and runs its own buffer, sharing only the model.
+    private let commandSilenceFlushSeconds: TimeInterval = 0.6
+    /// Speech this short is a command, not a conversation. NOT the buffer
+    /// length: the buffer carries room silence from before anyone spoke.
+    private let commandWindowSeconds: Double = 3.5
+
+    /// Which silence gap ends this chunk. Pure, so the numbers are held by a
+    /// test instead of living only in a condition.
+    nonisolated static func flushSilenceThreshold(spokenSeconds: Double,
+                                                  commandWindow: Double,
+                                                  commandGap: TimeInterval,
+                                                  conversationGap: TimeInterval) -> TimeInterval {
+        spokenSeconds <= commandWindow ? commandGap : conversationGap
+    }
+
     private let minChunkSeconds: Double = 1.0
     private let maxChunkSeconds: Double = 22.0
     private let deadAirResetSeconds: Double = 12.0
@@ -136,11 +232,15 @@ final class AmbientListener {
         AmbientState.shared.status = "Listening"
         startChunkTimer()
         startLevelTimer()
+        installOutputRouteListener()
         WakeLog.shared.log("ambient: STARTED")
     }
 
     func stop() {
         running = false
+        // Stopped is not deaf: muted and off have their own words.
+        MicHealth.shared.set(notHearing: false)
+        removeOutputRouteListener()
         // CLEAR THE ARBITRATION FLAGS, or the microphone is held forever.
         //
         // The reported shape: mute during a meeting fires a summariser that
@@ -171,6 +271,7 @@ final class AmbientListener {
         AmbientState.shared.isCapturing = false
         AmbientState.shared.liveLevel = 0
         AmbientState.shared.status = "Paused"
+        ListeningMicGuard.shared.release("ambient")
         WakeLog.shared.log("ambient: stopped")
     }
 
@@ -194,7 +295,10 @@ final class AmbientListener {
     func suspendForSpeech() {
         guard running, !pausedForSpeech else { return }
         pausedForSpeech = true
-        tearDownCapture(reason: "Grux is speaking")
+        // Not a release: this is a blip inside one listening session, and
+        // handing the input back and forth per utterance would switch the
+        // person's device twice every time Grux speaks.
+        tearDownCapture(reason: "Grux is speaking", releaseMic: false)
     }
 
     func resumeAfterSpeech() {
@@ -234,7 +338,7 @@ final class AmbientListener {
 
     // Shared teardown used by both pause paths. Cancels timers, stops engine,
     // and resets the rolling buffer so no in-flight samples survive the pause.
-    private func tearDownCapture(reason: String) {
+    private func tearDownCapture(reason: String, releaseMic: Bool = true) {
         chunkTimer?.invalidate(); chunkTimer = nil
         levelTimer?.invalidate(); levelTimer = nil
         if let engine = audioEngine {
@@ -247,6 +351,7 @@ final class AmbientListener {
         AmbientState.shared.isCapturing = false
         AmbientState.shared.liveLevel = 0
         AmbientState.shared.status = "Paused (\(reason))"
+        if releaseMic { ListeningMicGuard.shared.release("ambient") }
         WakeLog.shared.log("ambient: paused - \(reason)")
     }
 
@@ -284,38 +389,95 @@ final class AmbientListener {
     private func initWhisperIfNeeded() async {
         AmbientState.shared.status = "Loading Whisper model…"
         WakeLog.shared.log("ambient: whisper init (model=\(modelName))")
-        if whisperInitTask == nil {
-            whisperInitTask = Task.detached(priority: .userInitiated) { [weak self] in
-                guard let self else { return }
-                do {
-                    let cfg = WhisperKitConfig(
-                        model: self.modelName,
-                        modelRepo: self.modelRepo,
-                        verbose: false,
-                        prewarm: true,
-                        load: true,
-                        download: true
-                    )
-                    let kit = try await WhisperKit(cfg)
-                    await MainActor.run {
-                        self.whisperKit = kit
-                        AmbientState.shared.whisperReady = true
-                    }
-                    WakeLog.shared.log("ambient: whisper READY")
-                } catch {
-                    await MainActor.run {
-                        AmbientState.shared.error = "Whisper init failed: \(error.localizedDescription)"
-                    }
-                    WakeLog.shared.log("ambient: whisper init FAILED \(error)")
-                }
-            }
+        if await whisper.get() != nil {
+            AmbientState.shared.whisperReady = true
+            WakeLog.shared.log("ambient: whisper READY")
+        } else if let error = whisper.lastFailure {
+            AmbientState.shared.error = "Whisper init failed: \(error.localizedDescription)"
+            WakeLog.shared.log("ambient: whisper init FAILED \(error)")
         }
-        _ = await whisperInitTask?.value
     }
+
+    /// Why the last model load failed, or nil after a success or before any load.
+    var whisperLoadFailure: String? { whisper.lastFailure?.localizedDescription }
 
     // MARK: - Engine
 
-    private func startEngine() throws {
+    /// What to do two seconds after a start, from how much audio arrived.
+    ///
+    /// A start that hears nothing restarts, later each time, and gives up only
+    /// after `maxDeafRestarts`, about a minute and a half of trying. Measured
+    /// 2026-09-21: the restarts after Grux spoke came up deaf at 11:42 AM and
+    /// 1:08 PM and stayed deaf until relaunch, because the check only logged;
+    /// and at 2:24 PM three starts running were deaf and the first version of
+    /// this gave up after two restarts, while the fault was transient (a fresh
+    /// process ten minutes later heard fine). Every one of those deaf starts
+    /// had voice processing on, and Core Audio logged why: the voice
+    /// processing IO would not start. So a deaf start with it on also marks
+    /// `VoiceProcessingRefusal`, and the restarts run without it.
+    enum DeafStartAction: Equatable {
+        case hearing
+        case restart(afterSeconds: Double)
+        case giveUp
+    }
+
+    static let maxDeafRestarts = 5
+    nonisolated static let deafRestartDelays: [Double] = [1, 2, 10, 30, 60]
+
+    /// How long the tap may deliver NOTHING, while the engine is up and
+    /// capturing, before the capture is treated as dead.
+    ///
+    /// MEASURED 2026-09-23, and this is the incident that put it here. Grux
+    /// ran for 1h40m reporting `ambientCapturing = true` with every surface
+    /// saying it was listening, while `wake.log` showed the same line every
+    /// five seconds:
+    ///
+    ///     ambient vad: buf=1.8s spoken=0.0s rms=0.0000 peak=0.000 voiced=N
+    ///
+    /// A frozen buffer and an rms of exactly zero. A separate process
+    /// capturing from the same microphone in the same moment got 120,000
+    /// frames of real audio, so the device was fine and only Grux was deaf.
+    ///
+    /// Nothing caught it. `deafStartAction` runs ONCE, about two seconds
+    /// after `startEngine`, so it only ever sees a start that was born deaf,
+    /// never one that died later. `deadAirResetSeconds` could not catch it
+    /// either: it fires when the buffer passes 12s with no voice, and a
+    /// buffer frozen at 1.8s never gets there.
+    ///
+    /// Eight seconds is well past any legitimate gap. The tap fires on every
+    /// hardware buffer regardless of whether anyone is speaking, so silence
+    /// still arrives as samples; zero NEW SAMPLES for eight seconds is not a
+    /// quiet room, it is a dead tap.
+    static let captureStallSeconds: Double = 8.0
+
+    /// Whether a capture that has delivered no new samples for `stalledFor`
+    /// should be treated as dead. Pure so the threshold is testable without
+    /// an audio device.
+    nonisolated static func captureIsStalled(noNewAudioFor stalledFor: TimeInterval,
+                                             threshold: Double = captureStallSeconds) -> Bool {
+        stalledFor >= threshold
+    }
+
+    nonisolated static func deafStartAction(heardSeconds: Double, attempt: Int) -> DeafStartAction {
+        guard heardSeconds <= 0 else { return .hearing }
+        guard attempt < maxDeafRestarts else { return .giveUp }
+        return .restart(afterSeconds: deafRestartDelays[min(attempt, deafRestartDelays.count - 1)])
+    }
+
+    /// Whether the tell should read NOT HEARING after a deaf start: not on the
+    /// first, which a restart one second later usually cures, so the orb does
+    /// not flicker; from the second deaf start in a row on.
+    nonisolated static func tellsNotHearing(afterDeafAttempt attempt: Int) -> Bool { attempt >= 1 }
+
+    /// The orb, tapped while not hearing: start over now, with a fresh count.
+    func retryNow() {
+        guard running else { return }
+        restartAfterDeafStart(attempt: 0, afterSeconds: 0.2)
+    }
+
+    /// `deafAttempt` counts restarts made because the previous start heard
+    /// nothing. Every other caller starts a fresh count at zero.
+    private func startEngine(deafAttempt: Int = 0) throws {
         // NEVER ASSIGN OVER A LIVE ENGINE. Every caller is supposed to have
         // stopped first, and the orphaned-engine defect above proves that
         // "supposed to" is not a guarantee: an engine dropped without stopping
@@ -327,40 +489,86 @@ final class AmbientListener {
             existing.stop()
             audioEngine = nil
         }
-        let engine = AVAudioEngine()
-        let input = engine.inputNode
-
         // FaceTime / Phone use kAudioUnitSubType_VoiceProcessingIO under the
         // hood - Apple's hardware-level AEC + noise suppression + AGC. Great
         // for laptop built-in mics (cancels Music/YouTube out of the mic so
-        // we never transcribe lyrics as user utterances). BUT enabling VPIO
-        // forces the entire system output chain into the narrow-band
-        // "communications" codec - Music/Safari/YouTube go tinny-mono until
-        // the engine stops. External mics like the DJI Mic Mini have strong
-        // on-device DSP and don't need our VPIO; the whitelist lets the user mark
-        // specific mics "skip VPIO - preserve full-fidelity output".
+        // we never transcribe lyrics as user utterances).
+        //
+        // WHAT ENABLING IT COSTS, corrected 2026-09-23. This comment used to
+        // say it forced the whole system output chain into a narrow-band
+        // "communications" codec and made Music, Safari and YouTube go
+        // tinny-mono until the engine stopped. That was never measured and it
+        // is false: a 12 kHz tone survived 73 dB above the noise floor while
+        // VPIO ran, the output device stayed 48000 Hz 2ch 32bit lpcm, and a
+        // playback-only app saw no disruption. The real cost lands on any
+        // OTHER app that is RECORDING, whose microphone capture stops dead.
+        // Ambient does not enable VPIO at all any more (see
+        // holdsMicWhileGruxSpeaks above); this block is kept because the
+        // policy, not the call site, is what decides.
+        //
+        // External mics like the DJI Mic Mini have strong on-device DSP and
+        // don't need our VPIO; the whitelist lets the user mark specific mics
+        // "skip VPIO - preserve full-fidelity output".
         MicWhitelist.applyPreferredInputIfPossible()
+        // Off a borrowed device (headset, phone, AirPlay) before the engine
+        // opens anything: holding one costs the person audio quality on it
+        // for as long as Grux listens. Released in tearDownCapture.
+        ListeningMicGuard.shared.claim("ambient")
         let activeInputUID = MicDevices.systemDefaultInputUID() ?? ""
-        let bypassVPIO = MicWhitelist.isWhitelisted(uid: activeInputUID)
+        // THE ENGINE IS BUILT AFTER THE MIC IS CHOSEN, never before. It used to
+        // be built first, so its input was taken while the default input was
+        // still the headset the guard was about to move off. Voice processing
+        // rebuilt the pairing and hid it; without voice processing the engine
+        // kept the headset's microphone (see MicDevices.bindInput).
+        let engine = AVAudioEngine()
+        let input = engine.inputNode
         // The global switch is read here as well as in VoiceInput. Until
         // 2026-08-22 this path consulted only the per-mic whitelist, so turning
         // voice processing off in Settings quieted dictation and left ambient
         // still forcing VPIO: the same narrow-band output, coming from the half
-        // nobody thought to check.
-        let wantsVPIO = AppState.shared.config.premiumNoiseCancellation
-        if bypassVPIO || !wantsVPIO {
-            let why = bypassVPIO ? "whitelisted mic \(activeInputUID)" : "voice processing off in Settings"
-            WakeLog.shared.log("ambient: VPIO BYPASSED (\(why)) - speakers stay full-fidelity")
+        // nobody thought to check. The output route is read too: with
+        // headphones the mic cannot hear the output, so VPIO buys nothing and
+        // costs the music its quality (see VoiceProcessingPolicy). A route
+        // change while capturing re-makes this call via
+        // reconsiderVoiceProcessing().
+        let vpio = VoiceProcessingPolicy.shouldEnable(
+            settingOn: AppState.shared.config.premiumNoiseCancellation,
+            micWhitelisted: MicWhitelist.isWhitelisted(uid: activeInputUID),
+            output: MicDevices.defaultOutputRoute(),
+            refusedRecently: VoiceProcessingRefusal.isRecent(),
+            holdsMicWhileGruxSpeaks: Self.holdsMicWhileGruxSpeaks)
+        voiceProcessingDecision = vpio.enable
+        var boundToChosenMic = false
+        if !vpio.enable {
+            WakeLog.shared.log("ambient: VPIO BYPASSED (\(vpio.reason)) input \(activeInputUID) - output stays full-fidelity")
+            boundToChosenMic = MicDevices.bindInput(input, toUID: activeInputUID)
+            if !boundToChosenMic {
+                WakeLog.shared.log("ambient: could not bind the input to \(activeInputUID), the engine picks its own")
+            }
         } else {
             do {
                 try input.setVoiceProcessingEnabled(true)
-                WakeLog.shared.log("ambient: VoiceProcessingIO ENABLED (AEC/NS/AGC) for \(activeInputUID)")
+                // Without this macOS applies its default ducking and lowers
+                // every other app for as long as ambient listens.
+                input.voiceProcessingOtherAudioDuckingConfiguration = VoiceProcessingPolicy.otherAudioDucking
+                WakeLog.shared.log("ambient: VoiceProcessingIO ENABLED (AEC/NS/AGC) for \(activeInputUID) (\(vpio.reason))")
             } catch {
                 WakeLog.shared.log("ambient: VoiceProcessingIO enable FAILED \(error.localizedDescription)")
             }
         }
 
-        let nativeFormat = input.outputFormat(forBus: 0)
+        // After an explicit bind the node's OUTPUT format is stale: it still
+        // describes the device the engine was created on. Measured with a
+        // probe: bound to the MacBook Pro Microphone (48 kHz), outputFormat
+        // still read 24 kHz from the AirPods, and a tap in that format got 0
+        // frames in 2 seconds. A tap in the device's own INPUT format got
+        // 96000. So a bound input is tapped in its hardware format.
+        // A fresh engine starts the watchdog's clock over. Without this the
+        // new engine inherits the dead one's timestamp and trips instantly.
+        lastAppendedEver = buffer.stats().appendedEver
+        lastAudioGrowthUptime = ProcessInfo.processInfo.systemUptime
+
+        let nativeFormat = MicDevices.tapFormat(for: input, bound: boundToChosenMic)
         let nativeRate = nativeFormat.sampleRate
         let channelCount = Int(nativeFormat.channelCount)
 
@@ -392,7 +600,150 @@ final class AmbientListener {
         // user sees what was heard, but sung lyrics don't get routed as
         // commands. Stop is handled in tearDownCapture / stop().
         SingingDetector.shared.start(inputFormat: targetFormat)
-        WakeLog.shared.log("ambient: engine up  native=\(Int(nativeRate))Hz ch=\(channelCount)")
+        WakeLog.shared.log("ambient: engine up  native=\(Int(nativeRate))Hz ch=\(channelCount) on \(MicDevices.boundInputName(input))")
+        // A listener that reports capturing while nothing arrives is the worst
+        // kind of broken: the orb says ARMED and Grux is deaf. Measured
+        // 2026-09-21, every VAD tick read buf=0.0s for as long as it ran and
+        // nothing said so. Two seconds in, check that audio is flowing.
+        let started = Date()
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard let self, self.audioEngine === engine else { return }
+            let heard = self.buffer.stats().totalSeconds
+            let action = Self.deafStartAction(heardSeconds: heard, attempt: deafAttempt)
+            if action != .hearing && vpio.enable {
+                VoiceProcessingRefusal.markRefused()
+                WakeLog.shared.log("ambient: voice processing started and delivered nothing; listening without it for \(Int(VoiceProcessingRefusal.window / 60)) minutes")
+            }
+            switch action {
+            case .hearing:
+                MicHealth.shared.set(notHearing: false)
+                WakeLog.shared.log("ambient: hearing \(String(format: "%.1f", heard))s of audio from \(MicDevices.boundInputName(input))")
+            case .restart(let delay):
+                if Self.tellsNotHearing(afterDeafAttempt: deafAttempt) { MicHealth.shared.set(notHearing: true) }
+                WakeLog.shared.log("ambient: DEAF, no audio from \(MicDevices.boundInputName(input)) \(String(format: "%.1f", Date().timeIntervalSince(started)))s after start, restarting in \(Int(delay))s (restart \(deafAttempt + 1) of \(Self.maxDeafRestarts))")
+                self.restartAfterDeafStart(attempt: deafAttempt + 1, afterSeconds: delay)
+            case .giveUp:
+                self.gaveUpOnDeafCapture = true
+                MicHealth.shared.set(notHearing: true)
+                WakeLog.shared.log("ambient: DEAF after \(deafAttempt) restarts, no audio from \(MicDevices.boundInputName(input)); stopped retrying")
+                AmbientState.shared.isCapturing = false
+                AmbientState.shared.status = "Error"
+                AmbientState.shared.error = "The microphone is not sending any sound. Tap the orb to try again."
+            }
+        }
+    }
+
+    // MARK: - Output route
+
+    // THE C FUNCTION-POINTER API, NOT THE BLOCK ONE, AND THAT IS LOAD-BEARING.
+    // AudioObjectPropertyListenerBlock imports as a plain Swift closure type,
+    // so every call re-wraps it in a NEW block, and removal matches on block
+    // identity. Measured 2026-09-21 with a per-process property as the
+    // trigger: after AudioObjectRemovePropertyListenerBlock with the stored
+    // closure the listener still fired, while the proc below stopped firing
+    // once removed. With the block API every stop() leaked a listener and
+    // every mute and unmute stacked another one. The block remove also
+    // returned 0 for a block never added, so its status proves nothing.
+    // Called on a CoreAudio thread; hops to the main actor.
+    private static let outputRouteProc: AudioObjectPropertyListenerProc = { _, _, _, _ in
+        Task { @MainActor in AmbientListener.shared.outputRouteDidChange() }
+        return noErr
+    }
+
+    private func installOutputRouteListener() {
+        guard !outputRouteListening else { return }
+        var addr = MicDevices.defaultOutputDeviceAddress
+        let status = AudioObjectAddPropertyListener(
+            AudioObjectID(kAudioObjectSystemObject), &addr, Self.outputRouteProc, nil)
+        if status == noErr {
+            outputRouteListening = true
+        } else {
+            WakeLog.shared.log("ambient: could not watch the output device (\(status)), voice processing is decided at each start only")
+        }
+    }
+
+    private func removeOutputRouteListener() {
+        outputRouteDebounce?.cancel()
+        outputRouteDebounce = nil
+        guard outputRouteListening else { return }
+        var addr = MicDevices.defaultOutputDeviceAddress
+        AudioObjectRemovePropertyListener(
+            AudioObjectID(kAudioObjectSystemObject), &addr, Self.outputRouteProc, nil)
+        outputRouteListening = false
+    }
+
+    // Debounced: connecting AirPods can move the default output more than once
+    // inside a second, and every restart drops the audio buffered so far.
+    private func outputRouteDidChange() {
+        outputRouteDebounce?.cancel()
+        outputRouteDebounce = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            guard !Task.isCancelled else { return }
+            self?.reconsiderVoiceProcessing()
+        }
+    }
+
+    /// Tears down a start that heard nothing and starts again after `seconds`,
+    /// unless something else took over meanwhile (a pause, a stop, or another
+    /// start that already built an engine).
+    private func restartAfterDeafStart(attempt: Int, afterSeconds seconds: Double) {
+        guard running, !pausedForExplicit, !pausedForSpeech, !pausedForMeeting else { return }
+        tearDownCapture(reason: "no audio arrived", releaseMic: false)
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            guard running, audioEngine == nil,
+                  !self.pausedForExplicit, !self.pausedForSpeech, !self.pausedForMeeting else { return }
+            do {
+                try startEngine(deafAttempt: attempt)
+                AmbientState.shared.isCapturing = true
+                AmbientState.shared.status = Date() < self.wakeArmedUntil
+                    ? "Listening · conversation open"
+                    : "Listening"
+                startChunkTimer()
+                startLevelTimer()
+                WakeLog.shared.log("ambient: restarted after a deaf start (restart \(attempt) of \(Self.maxDeafRestarts))")
+            } catch {
+                AmbientState.shared.error = "Restart failed: \(error.localizedDescription)"
+                AmbientState.shared.status = "Error"
+                WakeLog.shared.log("ambient: deaf restart failed \(error)")
+            }
+        }
+    }
+
+    // Re-make the voice processing call for the new output, and restart
+    // capture ONLY when it flips. While paused there is no engine to fix: the
+    // resume path calls startEngine(), which decides afresh.
+    private func reconsiderVoiceProcessing() {
+        guard running, audioEngine != nil, let current = voiceProcessingDecision,
+              !pausedForExplicit, !pausedForSpeech, !pausedForMeeting else { return }
+        let activeInputUID = MicDevices.systemDefaultInputUID() ?? ""
+        let next = VoiceProcessingPolicy.shouldEnable(
+            settingOn: AppState.shared.config.premiumNoiseCancellation,
+            micWhitelisted: MicWhitelist.isWhitelisted(uid: activeInputUID),
+            output: MicDevices.defaultOutputRoute(),
+            holdsMicWhileGruxSpeaks: Self.holdsMicWhileGruxSpeaks)
+        guard next.enable != current else {
+            WakeLog.shared.log("ambient: output changed, voice processing unchanged (\(next.reason))")
+            return
+        }
+        // tearDownCapture stops the live engine and drops it before
+        // startEngine builds the next one, so nothing is left orphaned.
+        tearDownCapture(reason: "output changed", releaseMic: false)
+        do {
+            try startEngine()
+            AmbientState.shared.isCapturing = true
+            AmbientState.shared.status = Date() < wakeArmedUntil
+                ? "Listening · conversation open"
+                : "Listening"
+            startChunkTimer()
+            startLevelTimer()
+            WakeLog.shared.log("ambient: restarted for output change (\(next.reason))")
+        } catch {
+            AmbientState.shared.error = "Restart after output change failed: \(error.localizedDescription)"
+            AmbientState.shared.status = "Error"
+            WakeLog.shared.log("ambient: restart after output change failed \(error)")
+        }
     }
 
     private nonisolated static func downmixAndResample(
@@ -483,7 +834,7 @@ final class AmbientListener {
         levelTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
-                let snap = self.buffer.snapshot()
+                let snap = self.buffer.stats()
                 AmbientState.shared.liveLevel = min(1, snap.rms * 6)
             }
         }
@@ -504,9 +855,46 @@ final class AmbientListener {
         // the engine is about to be torn down.
         checkSilenceTimeout()
         guard running, !pausedForExplicit, !transcribeInFlight else { return }
-        let snap = buffer.snapshot()
+        let snap = buffer.stats()
         let now = Date()
         let silentFor = now.timeIntervalSince(snap.lastVoiceAt)
+
+        // THE RUNNING DEAF WATCHDOG. Everything above this line assumes audio
+        // is still arriving; on 2026-09-23 it stopped arriving and nothing
+        // noticed for 1h40m. See captureStallSeconds for the measurement.
+        // Checked only while an engine is actually up and no pause is in
+        // effect, so a torn-down engine is never mistaken for a dead one.
+        if audioEngine != nil, !pausedForSpeech, !pausedForMeeting {
+            let uptime = ProcessInfo.processInfo.systemUptime
+            if snap.appendedEver != lastAppendedEver {
+                lastAppendedEver = snap.appendedEver
+                lastAudioGrowthUptime = uptime
+                // Audio arriving is the ONLY honest evidence that a give-up was
+                // wrong, so it is the only thing that lifts one. A device that
+                // comes back (replugged, released by the app that held it)
+                // otherwise stays stuck showing an error while it works.
+                if gaveUpOnDeafCapture {
+                    gaveUpOnDeafCapture = false
+                    MicHealth.shared.set(notHearing: false)
+                    AmbientState.shared.error = nil
+                    AmbientState.shared.isCapturing = true
+                    AmbientState.shared.status = Date() < wakeArmedUntil ? "Listening · conversation open" : "Listening"
+                    WakeLog.shared.log("ambient: audio came back after giving up; listening again")
+                }
+            } else if !gaveUpOnDeafCapture,
+                      Self.captureIsStalled(noNewAudioFor: uptime - lastAudioGrowthUptime) {
+                let stalled = uptime - lastAudioGrowthUptime
+                WakeLog.shared.log(String(format:
+                    "ambient: CAPTURE STALLED, no new audio for %.1fs while capturing; restarting the engine", stalled))
+                MicHealth.shared.set(notHearing: true)
+                // Attempt 0 is right for a NEW failure: this engine was working
+                // and stopped, which is not a continuation of a failed start.
+                // The give-up flag above is what stops that from restarting a
+                // ladder that has already run to its end.
+                restartAfterDeafStart(attempt: 0, afterSeconds: 1)
+                return
+            }
+        }
 
         // Diagnostic heartbeat: log VAD/peak every 5s so we can see why audio isn't chunking.
         if now.timeIntervalSince(lastVadStatLogAt) > 5 {
@@ -515,12 +903,16 @@ final class AmbientListener {
             // silentFor is a ~64-billion-second epoch sentinel (silentFor=63920114471s),
             // not a real gap. Log "never" in that case instead of the garbage delta.
             let silentForStr = snap.voicedEver ? String(format: "%.1fs", silentFor) : "never"
-            WakeLog.shared.log(String(format: "ambient vad: buf=%.1fs rms=%.4f peak=%.3f voiced=%@ silentFor=%@",
-                                      snap.totalSeconds, Double(snap.rms), Double(snap.peak),
+            WakeLog.shared.log(String(format: "ambient vad: buf=%.1fs spoken=%.1fs rms=%.4f peak=%.3f voiced=%@ silentFor=%@",
+                                      snap.totalSeconds, snap.voicedSeconds, Double(snap.rms), Double(snap.peak),
                                       snap.voicedEver ? "Y" : "N", silentForStr))
         }
 
-        if snap.voicedEver && snap.totalSeconds >= minChunkSeconds && silentFor >= silenceFlushSeconds {
+        let flushAfter = Self.flushSilenceThreshold(spokenSeconds: snap.voicedSeconds,
+                                                    commandWindow: commandWindowSeconds,
+                                                    commandGap: commandSilenceFlushSeconds,
+                                                    conversationGap: silenceFlushSeconds)
+        if snap.voicedEver && snap.totalSeconds >= minChunkSeconds && silentFor >= flushAfter {
             flush()
             return
         }
@@ -613,8 +1005,19 @@ final class AmbientListener {
             skipSpecialTokens: true,
             promptTokens: promptTokens
         )
+        // Timed because it is the largest remaining term in the spoken-command
+        // budget and nothing measured it. The decision is 1ms on the fast path
+        // and execution is about 10ms, so whatever this costs IS the latency.
+        // Logged per chunk with the audio length beside it, because a
+        // transcription time means nothing without knowing how much audio it
+        // was given.
+        let transcribeStarted = Date()
         do {
-            let results = try await kit.transcribe(audioArray: samples, decodeOptions: options)
+            let results = try await WhisperDecode.transcribe(kit, samples, options: options)
+            let transcribeMs = Int(Date().timeIntervalSince(transcribeStarted) * 1000)
+            let audioSeconds = Double(samples.count) / 16000.0
+            WakeLog.shared.log(String(format: "ambient: whisper %dms for %.1fs of audio (voiced %.2fs)",
+                                      transcribeMs, audioSeconds, Double(voiced)))
             // Confidence gate: Whisper fabricates plausible-sounding captions
             // ("(upbeat music)", "Thanks for watching!") when fed low-speech
             // audio - keyboard clatter, music, HVAC hum. Those fabrications
@@ -652,73 +1055,12 @@ final class AmbientListener {
                     // the chunk (hallucinations like "(typing)" / "[Silence]").
                     let preview = raw.prefix(80)
                     WakeLog.shared.log("ambient: dropped as noise/hallucination: '\(preview)'")
-                    return
                 }
-                // Self-echo guard: Whisper sometimes catches the tail of
-                // Grux's own speech within ~2s of the speech ending. If a
-                // new chunk arrives that fast AND contains a wake phrase,
-                // it's almost always Grux hearing itself, not the user.
-                let sinceSpeech = Date().timeIntervalSince(self.lastSpeechEndAt)
-                if sinceSpeech < self.postSpeechEchoGuardSeconds,
-                   Self.startsWithWake(text) {
-                    WakeLog.shared.log("ambient: dropped self-echo (\(String(format: "%.1f", sinceSpeech))s post-speech): \(text.prefix(80))")
-                    return
-                }
-                AmbientState.shared.appendChunk(text)
-                WakeLog.shared.log("ambient chunk: \(text.prefix(120))")
-                Task { await AmbientMemoryExtractor.shared.onNewChunk(text) }
-                // Watch for verbal frustration ("this is broken", "always
-                // fails", "TODO ...") next to a clear subject, and offer to
-                // draft a GitHub issue. Heuristic-gated so it only spends an
-                // LLM call on a hit; nothing files without confirmation.
-                Task { await IssueExtractor.shared.onNewChunk(text) }
-                // Voice-to-cold-email: "Grux, draft outreach to <person> at
-                // <company>". Regex-gated, debounced, and never sends on its
-                // own (drafts open a confirm dialog). See Outreach/ColdEmail.
-                Task { await ColdEmailEngine.shared.onTranscriptChunk(text) }
-
-                // Singing/music gate. When SingingDetector's SoundAnalysis
-                // classifier has been reporting sustained music/singing
-                // dominance over speech, suppress command dispatch entirely.
-                // The chunk is already in the transcript (above) so the user can
-                // still see what was heard - we just don't fire a ChatService
-                // round-trip or a mentor nudge on sung lyrics. The ONLY
-                // exception: FOCUS mode where the user has explicitly opted
-                // into full-time command routing - even there we drop the
-                // chunk because sung lyrics aren't a real command intent,
-                // just highly visible to the user via the transcript.
-                if SingingDetector.shared.isSingingActive {
-                    WakeLog.shared.log(String(format:
-                        "ambient: SUPPRESSED command dispatch - singing active (music=%.2f speech=%.2f) text='%@'",
-                        SingingDetector.shared.musicEMA,
-                        SingingDetector.shared.speechEMA,
-                        String(text.prefix(80))))
-                    AmbientState.shared.status = "🎵 Singing/music - commands muted"
-                    return
-                }
-
-                // Dismissal phrase: "go away", "bye grux", "we'll chat later",
-                // "thanks grux we'll chat later", "shut up grux", etc. In WAKE
-                // mode this exits the conversation immediately - mic + VP +
-                // Whisper all tear down and we drop back to cheap wake-idle so
-                // music plays clean again. In FOCUS mode dismissals are
-                // ignored (focus is meant to be uninterrupted).
-                if AppState.shared.config.ambientMode == .wake,
-                   AmbientState.shared.conversationActive,
-                   Self.isDismissal(text) {
-                    WakeLog.shared.log("ambient: dismissal matched → exiting conversation: '\(text.prefix(80))'")
-                    AmbientState.shared.exitConversation(reason: "dismissal phrase")
-                    return
-                }
-                // Mentor trigger: if the user explicitly asked for advice
-                // ("what do you think?", "any advice?"), fire a mentor
-                // reminder + speak the answer. Don't also run wake dispatch.
-                if MentorTriggerDetector.shared.evaluate(chunk: text) {
-                    WakeLog.shared.log("mentor-trigger handled chunk, skipping wake dispatch")
-                    return
-                }
-                self.handleInlineWakeOrCommand(text: text)
             }
+            guard !text.isEmpty else { return }
+            // Everything after cleaning is ONE function, shared with the
+            // inject seam, so a typed chunk and a heard chunk cannot drift.
+            Task { @MainActor in _ = await self.routeChunk(text) }
         } catch {
             await MainActor.run {
                 AmbientState.shared.isTranscribing = false
@@ -726,6 +1068,95 @@ final class AmbientListener {
             }
             WakeLog.shared.log("ambient transcribe FAILED: \(error.localizedDescription)")
         }
+    }
+
+    // MARK: - One chunk, start to finish
+
+    /// What became of one chunk. Every exit carries a reason, so no chunk is
+    /// dropped without a trace: the inject seam writes this to a file.
+    struct ChunkRoute {
+        let heard: String
+        let stage: String
+        var event: VoiceDecisionEvent? = nil
+        /// For a chunk that took no router decision: true when a dry run held
+        /// back what it would have done. Nil when nothing was held.
+        var dryRun: Bool? = nil
+    }
+
+    /// Everything that happens to a transcript once it is clean text: the
+    /// echo, music, dismissal and advice gates, then the listening mode's
+    /// dispatch. Transcription and `debugInjectChunk` both come through here,
+    /// so a typed chunk takes exactly the path a heard one does, with or
+    /// without a microphone.
+    @discardableResult
+    func routeChunk(_ text: String, dryRun: VoiceCommandRouter.DryRun = .none) async -> ChunkRoute {
+        // Self-echo guard: Whisper sometimes catches the tail of
+        // Grux's own speech within ~2s of the speech ending. If a
+        // new chunk arrives that fast AND contains a wake phrase,
+        // it's almost always Grux hearing itself, not the user.
+        let sinceSpeech = Date().timeIntervalSince(lastSpeechEndAt)
+        if sinceSpeech < postSpeechEchoGuardSeconds,
+           Self.startsWithWake(text) {
+            WakeLog.shared.log("ambient: dropped self-echo (\(String(format: "%.1f", sinceSpeech))s post-speech): \(text.prefix(80))")
+            return ChunkRoute(heard: text, stage: "dropped: self-echo within \(Int(postSpeechEchoGuardSeconds))s of Grux speaking")
+        }
+        AmbientState.shared.appendChunk(text)
+        WakeLog.shared.log("ambient chunk: \(text.prefix(120))")
+        // A full dry run records the decision and nothing else, so the side
+        // listeners that can draft, offer or spend a call stay out of it.
+        let sideListeners = dryRun != .everything
+        if sideListeners { Task { await AmbientMemoryExtractor.shared.onNewChunk(text) } }
+        // Watch for verbal frustration ("this is broken", "always
+        // fails", "TODO ...") next to a clear subject, and offer to
+        // draft a GitHub issue. Heuristic-gated so it only spends an
+        // LLM call on a hit; nothing files without confirmation.
+        if sideListeners { Task { await IssueExtractor.shared.onNewChunk(text) } }
+        // Voice-to-cold-email: "Grux, draft outreach to <person> at
+        // <company>". Regex-gated, debounced, and never sends on its
+        // own (drafts open a confirm dialog). See Outreach/ColdEmail.
+        if sideListeners { Task { await ColdEmailEngine.shared.onTranscriptChunk(text) } }
+
+        // Singing/music gate. When SingingDetector's SoundAnalysis
+        // classifier has been reporting sustained music/singing
+        // dominance over speech, suppress command dispatch entirely.
+        // The chunk is already in the transcript (above) so the user can
+        // still see what was heard - we just don't fire a ChatService
+        // round-trip or a mentor nudge on sung lyrics. The ONLY
+        // exception: FOCUS mode where the user has explicitly opted
+        // into full-time command routing - even there we drop the
+        // chunk because sung lyrics aren't a real command intent,
+        // just highly visible to the user via the transcript.
+        if SingingDetector.shared.isSingingActive {
+            WakeLog.shared.log(String(format:
+                "ambient: SUPPRESSED command dispatch - singing active (music=%.2f speech=%.2f) text='%@'",
+                SingingDetector.shared.musicEMA,
+                SingingDetector.shared.speechEMA,
+                String(text.prefix(80))))
+            AmbientState.shared.status = "🎵 Singing/music - commands muted"
+            return ChunkRoute(heard: text, stage: "dropped: singing or music is playing")
+        }
+
+        // Dismissal phrase: "go away", "bye grux", "we'll chat later",
+        // "thanks grux we'll chat later", "shut up grux", etc. In WAKE
+        // mode this exits the conversation immediately - mic + VP +
+        // Whisper all tear down and we drop back to cheap wake-idle so
+        // music plays clean again. In FOCUS mode dismissals are
+        // ignored (focus is meant to be uninterrupted).
+        if AppState.shared.config.ambientMode == .wake,
+           AmbientState.shared.conversationActive,
+           Self.isDismissal(text) {
+            WakeLog.shared.log("ambient: dismissal matched → exiting conversation: '\(text.prefix(80))'")
+            AmbientState.shared.exitConversation(reason: "dismissal phrase")
+            return ChunkRoute(heard: text, stage: "dismissal: conversation ended")
+        }
+        // Mentor trigger: if the user explicitly asked for advice
+        // ("what do you think?", "any advice?"), fire a mentor
+        // reminder + speak the answer. Don't also run wake dispatch.
+        if MentorTriggerDetector.shared.evaluate(chunk: text) {
+            WakeLog.shared.log("mentor-trigger handled chunk, skipping wake dispatch")
+            return ChunkRoute(heard: text, stage: "mentor: asked for advice")
+        }
+        return await handleInlineWakeOrCommand(text: text, dryRun: dryRun)
     }
 
     // MARK: - Inline wake / commands
@@ -744,15 +1175,18 @@ final class AmbientListener {
     private static let inlineWakeRegex: NSRegularExpression = {
         // Non-anchored. Word-boundary on the wake verb so "okay" isn't caught
         // inside an unrelated word. Capture group 1 is the trailing command.
-        let pattern = #"\b(?:hey|ok|okay|yo|hi|hay|aye|hi there|um|uh)[\s,.!?:;-]+gr[aeiouy]{1,3}[a-z]{0,3}s?[\s,.!?:;-]*(.*)$"#
+        // The name is GruxName's, not "gr plus a vowel": see GruxName for the
+        // meeting where "great" and "grab" were taken as Grux's name.
+        let pattern = #"\b"# + GruxName.greeting + #"[\s,.!?:;-]+"# + GruxName.loose + #"\b[\s,.!?:;-]*(.*)$"#
         return try! NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
     }()
 
-    // Bare brand call: "grux!" / "grux," / standalone "grux" at a word
-    // boundary. Also non-anchored. Conservative - only matches if preceded
-    // by whitespace/start-of-string to avoid grabbing "agreeing grux" etc.
+    // Bare brand call: "Grux, what's next" / "grux!" / "grux". ANCHORED to the
+    // start of the chunk and limited to spellings that are not English words
+    // (GruxName.strong). It used to match any "gr" word anywhere, so "we could
+    // grab a minute" was Grux being called by name.
     private static let bareBrandWakeRegex: NSRegularExpression = {
-        let pattern = #"(?:^|\s)gr[aeiouy]{1,3}[a-z]{0,3}s?[\s,.!?:;-]+(.*)$"#
+        let pattern = #"^[\s,.!?:;"'-]*"# + GruxName.strong + #"\b[\s,.!?:;-]*(.*)$"#
         return try! NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
     }()
 
@@ -787,9 +1221,38 @@ final class AmbientListener {
         return dismissalRegex.firstMatch(in: text, options: [], range: range) != nil
     }
 
-    @MainActor
-    private func handleInlineWakeOrCommand(text: String) {
-        // FOCUS MODE: every meaningful utterance is a command - no wake gate.
+    /// Why the always-on gate drops a chunk before the router sees it, or nil
+    /// when it goes on. Muted is a reason like any other: it used to be a bare
+    /// `return`, so a muted chunk vanished without a line anywhere.
+    static func alwaysOnDropReason(_ command: String, micMuted: Bool) -> String? {
+        guard command.count >= 4, !isFillerChunk(command), passesCommandGate(command) else {
+            return "dropped: short, filler or incoherent"
+        }
+        return micMuted ? "dropped: microphone is muted" : nil
+    }
+
+    private func handleInlineWakeOrCommand(text: String, dryRun: VoiceCommandRouter.DryRun) async -> ChunkRoute {
+        // ALWAYS ON: every chunk that clears the cheap gates is judged by the
+        // decision engine, which decides between a command, words said to
+        // Grux (those go to Chat), and chatter. Nothing is forwarded to Chat
+        // wholesale: measured 2026-09-20, a television advert in the room
+        // reached Chat as a user message and Grux answered it out loud.
+        if AppState.shared.config.listeningMode == .alwaysOn {
+            let command = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let reason = Self.alwaysOnDropReason(command, micMuted: AppState.shared.micMuted) {
+                WakeLog.shared.log("ambient (always on): \(reason): '\(text.prefix(60))'")
+                return ChunkRoute(heard: text, stage: reason)
+            }
+            guard let e = await VoiceCommandRouter.shared.consider(chunk: command, dryRun: dryRun) else {
+                WakeLog.shared.log("ambient (always on): router made no decision: '\(command.prefix(80))'")
+                return ChunkRoute(heard: text, stage: "router: no decision")
+            }
+            WakeLog.shared.log("ambient (always on): \(e.commandId) \(e.outcome) conf=\(String(format: "%.2f", e.confidence)) \(e.latencyMs)ms \(e.provider.rawValue)\(e.dryRun ? " (dry run)" : ""): '\(command.prefix(80))'")
+            return ChunkRoute(heard: text, stage: "routed", event: e)
+        }
+
+        // FOCUS MODE (legacy, only reachable when the Listening control is not
+        // Always on): every meaningful utterance is a command - no wake gate.
         // Safety rail: chunks shorter than 4 chars or that are pure fillers
         // are still ignored. Wake phrase prefixes get stripped so "hey grux,
         // count" still works naturally.
@@ -801,19 +1264,16 @@ final class AmbientListener {
             //   defaults write com.gruxai.grux requireWakeWordInFocus -bool true
             if UserDefaults.standard.bool(forKey: "requireWakeWordInFocus"), !Self.startsWithWake(text) {
                 WakeLog.shared.log("ambient (focus): no wake word, strict gate on, skipped: '\(text.prefix(60))'")
-                return
+                return ChunkRoute(heard: text, stage: "dropped: focus mode requires the wake word")
             }
-            let stripped = Self.stripWakePrefixForFocus(text)
+            let stripped = Self.stripWakePrefix(text)
             let command = stripped.trimmingCharacters(in: .whitespacesAndNewlines)
             guard command.count >= 4, !Self.isFillerChunk(command), Self.passesCommandGate(command) else {
                 WakeLog.shared.log("ambient (focus): skipped short/filler/incoherent: '\(text.prefix(60))'")
-                return
+                return ChunkRoute(heard: text, stage: "dropped: short, filler or incoherent")
             }
             WakeLog.shared.log("ambient (focus): → chat: \(command)")
-            Task { @MainActor in
-                await ChatService.shared.send(userText: command)
-            }
-            return
+            return sendToChat(command, heard: text, stage: "focus mode", dryRun: dryRun)
         }
 
         // WAKE MODE below. (Default.)
@@ -823,14 +1283,12 @@ final class AmbientListener {
             let command = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard command.count >= 4, !Self.isFillerChunk(command), Self.passesCommandGate(command) else {
                 WakeLog.shared.log("ambient: armed-wake skipped short/filler/incoherent: '\(command.prefix(60))'")
-                return
+                return ChunkRoute(heard: text, stage: "dropped: short, filler or incoherent")
             }
-            wakeArmedUntil = .distantPast
-            WakeLog.shared.log("ambient: armed-wake consumed → command: \(command)")
-            Task { @MainActor in
-                await ChatService.shared.send(userText: command)
-            }
-            return
+            // A dry run leaves the person's armed window as it found it (RV10).
+            if dryRun == .none { wakeArmedUntil = .distantPast }
+            WakeLog.shared.log("ambient: armed-wake \(dryRun == .none ? "consumed" : "left armed (dry run)") → command: \(command)")
+            return sendToChat(command, heard: text, stage: "wake mode, armed", dryRun: dryRun)
         }
 
         let range = NSRange(text.startIndex..<text.endIndex, in: text)
@@ -838,37 +1296,65 @@ final class AmbientListener {
             ?? Self.bareBrandWakeRegex.firstMatch(in: text, options: [], range: range)
         guard let m = match,
               m.numberOfRanges >= 2,
-              let r = Range(m.range(at: 1), in: text) else { return }
+              let r = Range(m.range(at: 1), in: text) else {
+            return ChunkRoute(heard: text, stage: "ignored: wake mode and no wake phrase")
+        }
         let command = String(text[r]).trimmingCharacters(
             in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: ".,!?:;-"))
         )
 
         WakeLog.shared.log("ambient: wake matched  text='\(text)'  cmd='\(command)'")
-        (NSSound(named: "Tink") ?? NSSound(named: "Glass"))?.play()
-        NotificationCenter.default.post(name: .gruxWakeDetected, object: nil)
+        let answersCommand = command.count >= 3 && Self.passesCommandGate(command)
+        // A dry run never chimes, greets or arms the window (review RV10):
+        // those answer a person in the room, and an injected line is not one.
+        if dryRun != .none, !answersCommand {
+            return ChunkRoute(heard: text, stage: "wake: dry run, would arm for the next chunk", dryRun: true)
+        }
+        if dryRun == .none {
+            AudioOutput.chime([.tink, .glass], source: "AmbientListener.wake")
+            NotificationCenter.default.post(name: .gruxWakeDetected, object: nil)
+        }
 
-        if command.count >= 3, Self.passesCommandGate(command) {
+        if answersCommand {
             // Single-breath command: fire immediately.
-            Task { @MainActor in
-                await ChatService.shared.send(userText: command)
-            }
+            return sendToChat(command, heard: text, stage: "wake phrase with a command", dryRun: dryRun)
         } else if command.count >= 3 {
             // Wake matched but the trailing command is incoherent (garbled /
             // roster echo). Arm for the next chunk instead of acting on noise.
             wakeArmedUntil = Date().addingTimeInterval(wakeArmWindow)
             AmbientState.shared.status = "Armed - say your command"
             SpeechEngine.shared.speak("Yeah, boss?")
+            return ChunkRoute(heard: text, stage: "wake: armed, the command after it was incoherent")
         } else {
             // Bare wake - acknowledge and arm for the next chunk.
             wakeArmedUntil = Date().addingTimeInterval(wakeArmWindow)
             AmbientState.shared.status = "Armed - say your command"
             SpeechEngine.shared.speak("Yeah, boss?")
+            return ChunkRoute(heard: text, stage: "wake: armed for the next chunk")
         }
     }
 
-    // Focus mode: if chunk leads with a wake phrase, strip it so Claude sees
-    // the actual ask. If there's no wake phrase, just return the chunk as-is.
-    private static func stripWakePrefixForFocus(_ text: String) -> String {
+    /// The focus and wake modes hand words to Chat without the router. A full
+    /// dry run holds that back like any other effect; an outside-Grux one
+    /// sends them as a dry-run turn, where every tool that acts outside Grux
+    /// only records (review RV4).
+    private func sendToChat(_ command: String, heard: String, stage: String,
+                            dryRun: VoiceCommandRouter.DryRun) -> ChunkRoute {
+        guard dryRun != .everything else {
+            return ChunkRoute(heard: heard, stage: "\(stage): dry run, would send to chat", dryRun: true)
+        }
+        let rehearsal = dryRun != .none
+        Task { @MainActor in
+            await JaxToolGate.$dryRun.withValue(rehearsal) { await ChatService.shared.send(userText: command) }
+        }
+        return ChunkRoute(heard: heard, stage: "\(stage): sent to chat\(rehearsal ? " as a dry run" : "")",
+                          dryRun: rehearsal ? true : nil)
+    }
+
+    // If the chunk leads with a wake phrase, strip it so the model sees the
+    // actual ask. If there's no wake phrase, return the chunk as-is. Shared
+    // with VoiceCommandRouter, which strips before dictating into Chat.
+    static func stripWakePrefix(_ text: String) -> String {
         let range = NSRange(text.startIndex..<text.endIndex, in: text)
         if let m = inlineWakeRegex.firstMatch(in: text, options: [], range: range),
            m.numberOfRanges >= 2, let r = Range(m.range(at: 1), in: text) {
@@ -936,8 +1422,9 @@ final class AmbientListener {
     }
 
     // Does a transcript chunk start with a wake phrase? Used to avoid
-    // consuming a back-to-back second wake as the command of the first.
-    private static func startsWithWake(_ text: String) -> Bool {
+    // consuming a back-to-back second wake as the command of the first, and
+    // by VoiceCommandRouter to tell an address from chatter.
+    static func startsWithWake(_ text: String) -> Bool {
         let range = NSRange(text.startIndex..<text.endIndex, in: text)
         if inlineWakeRegex.firstMatch(in: text, options: [], range: range) != nil { return true }
         if bareBrandWakeRegex.firstMatch(in: text, options: [], range: range) != nil { return true }
@@ -1045,17 +1532,16 @@ final class AmbientListener {
 
     // Debug hook: inject a pre-transcribed chunk as if Whisper had produced it.
     // Lets us stress-test the wake/command/armed state machine without an
-    // actual mic pipeline. Runs the same cleanTranscript + handleInlineWakeOrCommand
-    // path real chunks take.
-    func debugInjectChunk(_ text: String) {
+    // actual mic pipeline. Runs cleanTranscript and then routeChunk, the same
+    // path a transcribed chunk takes, and needs no capture hardware at all.
+    func debugInjectChunk(_ text: String, dryRun: VoiceCommandRouter.DryRun) async -> ChunkRoute {
         let cleaned = Self.cleanTranscript(text)
         guard !cleaned.isEmpty else {
             WakeLog.shared.log("debug inject: dropped empty-after-clean '\(text)'")
-            return
+            return ChunkRoute(heard: "", stage: "dropped: nothing left after cleaning")
         }
-        WakeLog.shared.log("debug inject: '\(cleaned)'")
-        AmbientState.shared.appendChunk(cleaned)
-        handleInlineWakeOrCommand(text: cleaned)
+        WakeLog.shared.log("debug inject: '\(cleaned)' (dry run: \(dryRun.rawValue))")
+        return await routeChunk(cleaned, dryRun: dryRun)
     }
 
     // Called by AmbientState.enterConversation right BEFORE start(), so the
@@ -1095,7 +1581,7 @@ final class AmbientListener {
     // extraction pass so memories/actions update without waiting.
     func flushNow() async {
         guard running, !pausedForExplicit, !pausedForSpeech else { return }
-        let snap = buffer.snapshot()
+        let snap = buffer.stats()
         guard snap.totalSeconds >= 0.3 else {
             // Nothing in the buffer - just force an extraction pass over the
             // existing transcript so the user sees fresh memories/actions.
@@ -1117,6 +1603,14 @@ final class AmbientAudioBuffer: @unchecked Sendable {
     private let lock = NSLock()
     private var samples: [Float] = []
     private var lastVoiceAt: Date = .distantPast
+    /// When speech STARTED in this chunk. The buffer is not one
+    /// utterance: it accumulates from the last flush, so it carries
+    /// however much room silence preceded somebody speaking, and its
+    /// total length says nothing about how long they talked. Measured
+    /// 2026-09-22, buffers at flush ran 1.5s to 8.0s for the same
+    /// one-second command. The span between this and `lastVoiceAt` is
+    /// what separates a command from a conversation.
+    private var firstVoiceAt: Date = .distantPast
     private var voicedEver: Bool = false
     private var peak: Float = 0
     private var liveRms: Float = 0
@@ -1127,9 +1621,16 @@ final class AmbientAudioBuffer: @unchecked Sendable {
     // Replaces the prior hard-coded `rms > 0.006` check, which was a fine
     // threshold in a quiet room but tripped constantly on a 3700+ RPM fan.
     private let noiseGate = AdaptiveNoiseGate()
+    /// Every sample this buffer has EVER been handed, across drains and
+    /// resets. `samples.count` cannot answer "is audio still arriving",
+    /// because a drain takes it to zero and a reset does too, so a stalled
+    /// tap and a freshly flushed buffer look identical. This only ever goes
+    /// up, so no growth means no audio, with no other reading available.
+    private var appendedEver: UInt64 = 0
 
     func appendSamples(_ ptr: UnsafePointer<Float>, count: Int, rms: Float) {
         lock.lock(); defer { lock.unlock() }
+        appendedEver &+= UInt64(count)
         samples.append(contentsOf: UnsafeBufferPointer(start: ptr, count: count))
         let cap = sampleRate * maxSeconds
         if samples.count > cap { samples.removeFirst(samples.count - cap) }
@@ -1137,13 +1638,31 @@ final class AmbientAudioBuffer: @unchecked Sendable {
         for i in 0..<count { peak = max(peak, abs(ptr[i])) }
         if noiseGate.classify(rms: rms) {
             lastVoiceAt = Date()
+            if !voicedEver { firstVoiceAt = lastVoiceAt }
             voicedEver = true
         }
     }
 
-    func snapshot() -> (samples: [Float], lastVoiceAt: Date, voicedEver: Bool, totalSeconds: Double, peak: Float, rms: Float) {
+    /// EVERYTHING ABOUT THE BUFFER EXCEPT THE BUFFER.
+    ///
+    /// There used to be only `snapshot()`, which returned the sample array
+    /// alongside the numbers. Swift arrays are copy on write, so handing that
+    /// reference to a caller keeps the storage alive, and the audio thread's
+    /// next `append` sees a refcount above one and deep copies the whole
+    /// thing. Thirty seconds at 16 kHz is 1.92 MB.
+    ///
+    /// Both hot callers asked for it twelve times a second, to read one float.
+    /// Neither ever touched a sample: the level meter wants `rms`, and
+    /// `considerFlush` wants the timings. The only caller that needs audio is
+    /// `flush()`, which takes it with `drain()` once per utterance.
+    ///
+    /// Measured 2026-09-22 with listening on and no window open: 8.9% of a
+    /// core before, and the level timer alone was asking for 1.92 MB ten times
+    /// a second.
+    func stats() -> (lastVoiceAt: Date, voicedEver: Bool, totalSeconds: Double, peak: Float, rms: Float, voicedSeconds: Double, appendedEver: UInt64) {
         lock.lock(); defer { lock.unlock() }
-        return (samples, lastVoiceAt, voicedEver, Double(samples.count) / Double(sampleRate), peak, liveRms)
+        let spoken = voicedEver ? lastVoiceAt.timeIntervalSince(firstVoiceAt) : 0
+        return (lastVoiceAt, voicedEver, Double(samples.count) / Double(sampleRate), peak, liveRms, spoken, appendedEver)
     }
 
     func drain() -> (samples: [Float], peak: Float) {
@@ -1152,6 +1671,7 @@ final class AmbientAudioBuffer: @unchecked Sendable {
         let p = peak
         samples.removeAll(keepingCapacity: false)
         lastVoiceAt = .distantPast
+        firstVoiceAt = .distantPast
         voicedEver = false
         peak = 0
         liveRms = 0
@@ -1162,6 +1682,7 @@ final class AmbientAudioBuffer: @unchecked Sendable {
         lock.lock()
         samples.removeAll(keepingCapacity: false)
         lastVoiceAt = .distantPast
+        firstVoiceAt = .distantPast
         voicedEver = false
         peak = 0
         liveRms = 0

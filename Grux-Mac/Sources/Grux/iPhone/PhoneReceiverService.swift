@@ -4,9 +4,8 @@ import AppKit
 import OSLog
 
 // NWListener running an HTTP+WebSocket endpoint on <this-mac>.local:<port>,
-// reachable from the same network only. There is no tunnel in front of it:
-// CloudflareTunnelManager is inert, so pairing over cellular or from another
-// network is not supported.
+// reachable from the same network only. There is no tunnel in front of it,
+// so pairing over cellular or from another network is not supported.
 //
 // Handshake:
 //   1. Phone opens WebSocket to ws://<this-mac>.local:<port>/ws
@@ -124,9 +123,6 @@ final class PhoneReceiverService {
                 localPort = p.rawValue
                 PhoneReceiverState.shared.listenerPort = p.rawValue
                 log.log("WS listener ready on local network :\(p.rawValue, privacy: .public)")
-                // Inert: logs that there is no cloud path and returns. Kept so
-                // spawn, if it ever comes back, comes back at this one site.
-                CloudflareTunnelManager.shared.start(forwardingTo: p.rawValue)
                 PhoneReceiverState.shared.isRunning = true
             }
         case .failed(let err):

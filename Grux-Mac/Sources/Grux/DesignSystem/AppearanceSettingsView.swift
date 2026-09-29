@@ -172,15 +172,6 @@ struct AppearanceSettingsView: View {
 
     private var orbOverlaysSection: some View {
         Section("Orb & overlays") {
-            Toggle("Show floating Grux orb on desktop", isOn: Binding(
-                get: { state.config.orbAnywhereEnabled },
-                set: { v in
-                    state.config.orbAnywhereEnabled = v
-                    state.saveConfig()
-                    if v { OrbAnywhereController.shared.show() }
-                    else { OrbAnywhereController.shared.hide() }
-                }
-            ))
             Toggle("Animate window edges red/green when I drift or re-focus", isOn: Binding(
                 get: { state.config.glowOverlayEnabled },
                 set: { v in
@@ -210,7 +201,7 @@ struct AppearanceSettingsView: View {
                     else { FocusOverlayController.shared.hide() }
                 }
             ))
-            Text("The floating orb, window-edge glow, and cinematic stage together form Grux's brand identity. Each is independent. The stage is opt-in per response: Claude decides when a beat deserves it. The FOCUS overlay is the top-right card that tracks your current focus task; turn it off to clear it from the desktop.")
+            Text("The window-edge glow and the cinematic stage together form Grux's brand identity. Each is independent. The stage is opt-in per response: Claude decides when a beat deserves it. The FOCUS overlay is the top-right card that tracks your current focus task; turn it off to clear it from the desktop.")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }

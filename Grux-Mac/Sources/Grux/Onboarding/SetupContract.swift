@@ -36,9 +36,9 @@ enum SetupRequirement: String, CaseIterable, Identifiable {
     case keyBrave = "key.brave"
     case keyResend = "key.resend"
     case keySlack = "key.slack"
-    case keyGodaddy = "key.godaddy"
     case keyNotion = "key.notion"
     case keyTelegram = "key.telegram"
+    case keyTypesafe = "key.typesafe"
 
     // MARK: Capabilities, class `perm` (contract 1.2)
 
@@ -73,7 +73,6 @@ enum SetupRequirement: String, CaseIterable, Identifiable {
     case stepRecordingConsentAcknowledged = "step.recording_consent_acknowledged"
     case stepSpeechModelDownloaded = "step.speech_model_downloaded"
     case stepCorpusSourcesConfirmed = "step.corpus_sources_confirmed"
-    case stepTerminalFocusHookInstalled = "step.terminal_focus_hook_installed"
     case stepTerminalSessionsExplained = "step.terminal_sessions_explained"
     case stepPhonePaired = "step.phone_paired"
     case stepYoutubeTranscriptsEnabled = "step.youtube_transcripts_enabled"
@@ -92,9 +91,9 @@ enum SetupRequirement: String, CaseIterable, Identifiable {
         case .keyBrave: return "Web search API key"
         case .keyResend: return "Email sending API key"
         case .keySlack: return "Slack token"
-        case .keyGodaddy: return "Domain registrar key"
         case .keyNotion: return "Notion token"
         case .keyTelegram: return "Telegram bot token"
+        case .keyTypesafe: return "TypeSafe decision key"
         case .permScreenRecording: return "Screen Recording"
         case .permMicrophone: return "Microphone"
         case .permAccessibility: return "Accessibility"
@@ -120,7 +119,6 @@ enum SetupRequirement: String, CaseIterable, Identifiable {
         case .stepRecordingConsentAcknowledged: return "Confirm you will tell people"
         case .stepSpeechModelDownloaded: return "Fetch the speech model"
         case .stepCorpusSourcesConfirmed: return "Choose what gets indexed"
-        case .stepTerminalFocusHookInstalled: return "Install the terminal hook"
         case .stepTerminalSessionsExplained: return "Understand terminal sessions"
         case .stepPhonePaired: return "Pair your iPhone"
         case .stepYoutubeTranscriptsEnabled: return "Turn on YouTube transcripts"
@@ -149,12 +147,12 @@ enum SetupRequirement: String, CaseIterable, Identifiable {
             return "Add your email provider API key in Settings so Grux can send mail. Grux has no SMTP client."
         case .keySlack:
             return "Connect Slack in Settings so Grux can read and post in your workspace."
-        case .keyGodaddy:
-            return "Add your registrar API key and secret in Settings so Grux can read your domains and DNS."
         case .keyNotion:
             return "Paste your Notion integration secret in Settings, and the database you want Grux to write to."
         case .keyTelegram:
             return "Add a Telegram bot token and chat id in Settings so Grux can send alerts to your phone. Nothing is sent until you add both."
+        case .keyTypesafe:
+            return "Optional. Add a TypeSafe key in Settings for faster decisions. Grux matches on this Mac without one."
         case .permScreenRecording:
             return "Grux needs Screen Recording to see what you are working on. Open System Settings, Privacy and Security, Screen Recording, and enable Grux."
         case .permMicrophone:
@@ -210,8 +208,6 @@ enum SetupRequirement: String, CaseIterable, Identifiable {
             return "Pick which of your messages, notes and sent mail Grux may index. Nothing is indexed until you choose."
         case .stepTerminalSessionsExplained:
             return "Read what a headless session runs and which credential it spends, then turn terminal sessions on in Settings."
-        case .stepTerminalFocusHookInstalled:
-            return "Grux adds one entry to your coding tool's settings and one script beside it. It removes nothing else."
         case .stepPhonePaired:
             return "Open Pair iPhone in Settings and scan the code with the Grux phone app. The pairing secret never leaves your Mac and your phone."
         case .stepYoutubeTranscriptsEnabled:
@@ -261,7 +257,7 @@ enum SetupRequirement: String, CaseIterable, Identifiable {
         case .permScreenRecording:
             return "Grux can see what you are working on, so it can keep you on the task you chose and answer questions about what is on screen. Decline and Grux is text only: focus tracking and screen questions stay off, everything else still works."
         case .permMicrophone:
-            return "You can talk to Grux instead of typing, and it can transcribe meetings on this Mac. Decline and voice and meeting notes stay off, everything else still works. Continuous listening is a separate switch that ships off."
+            return "You can talk to Grux instead of typing, and it can transcribe meetings on this Mac. Decline and voice and meeting notes stay off, everything else still works. Listening is a separate choice, made in setup and changeable in Tuning."
         case .permAccessibility:
             return "Grux can read which app and window you are in, which is how it knows what you are working on and how it clicks things for you. Decline and focus tracking and app control stay off."
         case .permAutomation:
@@ -286,6 +282,21 @@ enum SetupRequirement: String, CaseIterable, Identifiable {
         guard let end = Self.firstSentenceEnd(in: remediation) else { return "" }
         let after = remediation.index(after: end)
         return String(remediation[after...]).trimmingCharacters(in: .whitespaces)
+    }
+
+    /// THE ASK ITSELF: the first sentence of `remediation`, which is the half
+    /// `instructions` throws away.
+    ///
+    /// Nothing rendered it. The setup card shows `why` and then `instructions`,
+    /// and `why` is deliberately empty for everything that is configured rather
+    /// than granted, so for those the first sentence went nowhere. Measured on
+    /// a wiped Mac once the setup step stopped skipping itself: the mail server
+    /// card read "Mail server", "For Mailbox", and then nothing at all, on a
+    /// screen whose whole job is to ask for something. Its remediation is one
+    /// sentence, so `instructions` was empty too.
+    var ask: String {
+        guard let end = Self.firstSentenceEnd(in: remediation) else { return remediation }
+        return String(remediation[...end]).trimmingCharacters(in: .whitespaces)
     }
 
     /// The first full stop that actually ENDS A SENTENCE.

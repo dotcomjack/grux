@@ -61,6 +61,9 @@ enum GruxTheme {
     static let textPrimary = Color(red: 0xF5/255, green: 0xF5/255, blue: 0xF7/255)
     static let textSecondary = Color(red: 0xA1/255, green: 0xA1/255, blue: 0xAA/255)
     static let textTertiary = Color(red: 0x71/255, green: 0x71/255, blue: 0x7A/255)
+    // Chip fill: the faint fill behind a recent chip, the panel's input well
+    // and the Optimize card's request field.
+    static let chipFill = textTertiary.opacity(0.12)
 
     // MARK: - Gradients
 
@@ -121,6 +124,7 @@ enum GruxTheme {
         static let caption = SwiftUI.Font.system(size: 11, weight: .semibold, design: .default)
         static let mono = SwiftUI.Font.system(size: 11, weight: .medium, design: .monospaced)
         static let microCaps = SwiftUI.Font.system(size: 9, weight: .heavy, design: .monospaced)
+        static let field = SwiftUI.Font.system(size: 14, weight: .regular, design: .default)
     }
 }
 

@@ -169,13 +169,13 @@ enum ShellTool {
             }
         } else if name == "shell_run" {
             let command = (input["command"] as? String) ?? ""
-            if ShellSafety.detectNetworkOrExternalEffect(command: command) != nil {
+            let sessionId = (input["session_id"] as? String) ?? ""
+            let info = try? await ShellSessionManager.shared.status(sessionId: sessionId)
+            if await Self.dangerGateReason(command: command, cwd: info?.cwd) != nil {
                 // Only trust-mode sessions execute dangerous commands through
                 // shell_run; guarded/strict get gated=true and re-enter via
                 // shell_run_confirmed above (single prompt, no double-auth).
-                let sessionId = (input["session_id"] as? String) ?? ""
-                if let info = try? await ShellSessionManager.shared.status(sessionId: sessionId),
-                   info.mode == .trust {
+                if let info, info.mode == .trust {
                     let reason = "run dangerous shell command (trust mode): \(command.prefix(80))"
                     guard await SensitiveActionGate.shared.authorize(.shellDangerous, reason: reason) else {
                         return "error: blocked, Touch ID authorization refused for this command"
@@ -184,5 +184,52 @@ enum ShellTool {
             }
         }
         return await ShellDispatcher.dispatch(name: name, input: input)
+    }
+
+    /// Why a command needs the dangerous-command gate before a trust-mode
+    /// session runs it, or nil. The one predicate both doors ask: the model's
+    /// `shell_run` above and the person's `grux shell`.
+    ///
+    /// Second opinion. The text guards are pattern matching on a string, so
+    /// they miss `find . -delete` and a script whose name says it wipes a
+    /// database. A provider gets to look at the same string and RAISE the
+    /// verdict, never lower it: a command the text guard flagged is gated
+    /// whatever any model thinks of it.
+    @MainActor
+    static func dangerGateReason(command: String, cwd: String? = nil) async -> String? {
+        if let effect = ShellSafety.detectNetworkOrExternalEffect(command: command) {
+            return "it reaches off this Mac (\(effect))"
+        }
+        if await secondOpinionSaysDestructive(command: command, cwd: cwd) {
+            return "it would delete or overwrite something"
+        }
+        return nil
+    }
+
+    /// Asks the decision engine whether a command the text guards cleared
+    /// would still destroy something. Costs nothing on a read-only command and
+    /// nothing on a command already flagged, because there is nothing to raise
+    /// in either case. Agents run a lot of `ls`, and a decision per `ls` would
+    /// spend the budget on commands that cannot write.
+    @MainActor
+    static func secondOpinionSaysDestructive(command: String, cwd: String? = nil) async -> Bool {
+        let textGuard = ShellSafety.looksDestructive(command: command, cwd: cwd)
+        guard ShellSecondOpinion.worthAsking(command: command, textGuardSaysYes: textGuard) else {
+            return ShellSecondOpinion.isDestructive(textGuardSaysYes: textGuard,
+                                                    secondOpinion: nil, threshold: 1)
+        }
+        let result = await DecisionEngine.shared.decide(
+            surface: "shell.destructive",
+            state: "The command about to run is: \(command)",
+            questions: ["destroys": .noul(instructions: ShellSecondOpinion.instructions)])
+        guard case .noul(let p)? = result.answers["destroys"] else { return textGuard }
+        // On device a yes or no question answers 0.5, which is the provider
+        // saying it cannot judge. That must not become a gate on every write,
+        // so an unjudgeable answer is no answer.
+        let opinion: Double? = result.provider == .local ? nil : p
+        return ShellSecondOpinion.isDestructive(
+            textGuardSaysYes: textGuard,
+            secondOpinion: opinion,
+            threshold: AppState.shared.config.listeningThreshold)
     }
 }

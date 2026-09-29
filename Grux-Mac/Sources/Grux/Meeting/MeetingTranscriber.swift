@@ -48,7 +48,7 @@ final class MeetingTranscriber {
         )
 
         do {
-            let results = try await whisperKit.transcribe(audioArray: samples, decodeOptions: options)
+            let results = try await WhisperDecode.transcribe(whisperKit, samples, options: options)
             var kept: [String] = []
             var logprobs: [Float] = []
             var words: [WordStamp] = []

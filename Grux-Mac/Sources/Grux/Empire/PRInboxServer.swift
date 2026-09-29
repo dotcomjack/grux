@@ -46,8 +46,7 @@ final class PRInboxServer {
     // read if absent so Grux is self-sufficient; the deploy script syncs the
     // same value to the companion service. nonisolated: pure file I/O, no actor state.
     private static var tokenURL: URL {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let dir = home.appendingPathComponent(".grux", isDirectory: true)
+        let dir = Persistence.gruxDir
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("pr-inbox-token.txt")
     }

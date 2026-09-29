@@ -31,6 +31,7 @@ enum KeychainStore {
         case anthropicApiKey
         case elevenLabsApiKey
         case braveApiKey  // Brave Search API key for the web research tool.
+        case typesafeApiKey     // key.typesafe, the Jev decision model. Optional; on-device matching without it.
         // Replicate API token, used by ReplicateClient as the provider for
         // generated media in the Creative engine (image today, video/motion a
         // later rung). Auth header is `Authorization: Bearer {value}`. Seeded
@@ -65,6 +66,10 @@ enum KeychainStore {
         // on the account and alert when one is within 30 days of expiry. Auth
         // header is `sso-key {key}:{secret}` (two separate values). Seeded from
         // ~/.grux/godaddy-creds.json on first sweep when absent here.
+        // Nothing reads these since the Domain monitor was ripped (Phase C,
+        // C13). They stay so the items already in a login keychain remain
+        // addressable: an identifier removed from here does not delete the
+        // item, it strands it where nothing can find or remove it.
         case goDaddyApiKey
         case goDaddyApiSecret
         // The five contract `key.*` capabilities that had no slot until the
@@ -90,9 +95,36 @@ enum KeychainStore {
         case telegramChatId
     }
 
+    /// THE SUITE NEVER READS THE OPERATOR'S CREDENTIALS.
+    ///
+    /// Keychain reads never prompt, so nothing stopped a test from seeing a
+    /// real key: measured during P-F-1, a test render of `IntegrationsView`
+    /// drew the operator's actual Decisions key (masked, but drawn from the
+    /// real value), and any render or log in the suite could have carried one
+    /// out of the process. `Persistence` has been isolated this way for the
+    /// same reason since long before this.
+    ///
+    /// Under test every read answers from an in-process dictionary that
+    /// starts EMPTY, and every write lands there, so a test that wants a
+    /// credential sets one and gets exactly what it set. Nothing reaches
+    /// securityd, so the login keychain is neither read nor written.
+    ///
+    /// `KeychainServiceMigratorTests` is unaffected: it drives `SecItem*`
+    /// directly against scratch service names of its own, which is what makes
+    /// it a test of the migration rather than of this wrapper.
+    static let isUnderTest: Bool = NSClassFromString("XCTestCase") != nil
+
+    private static let testLock = NSLock()
+    nonisolated(unsafe) private static var testItems: [String: String] = [:]
+
     @discardableResult
     static func set(_ key: Key, _ value: String) -> Bool {
         invalidate(key)
+        if isUnderTest {
+            testLock.lock(); defer { testLock.unlock() }
+            testItems[key.rawValue] = value
+            return true
+        }
         guard let data = value.data(using: .utf8) else {
             NSLog("[KeychainStore] set \(key.rawValue) → utf8 encode failed")
             return false
@@ -262,6 +294,10 @@ enum KeychainStore {
     }
 
     static func get(_ key: Key) -> String {
+        if isUnderTest {
+            testLock.lock(); defer { testLock.unlock() }
+            return testItems[key.rawValue] ?? ""
+        }
         if let hit = cached(key) { return hit }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -290,9 +326,29 @@ enum KeychainStore {
         }
     }
 
+    /// `get` without ever waiting: the cached value, or nil while a background read is
+    /// still out (see `NonBlockingKeyRead`). For reads made on the main actor by
+    /// something no person just asked for, where an item access prompt nobody answers
+    /// would otherwise freeze every door behind it (A29).
+    static func getWithoutWaiting(_ key: Key) -> String? {
+        if isUnderTest { return get(key) }
+        let value = nonBlocking.value(key)
+        if value == nil {
+            WakeLog.shared.log("keychain: \(key.rawValue) read still out (a Keychain prompt may be up); answering without it")
+        }
+        return value
+    }
+
+    private static let nonBlocking = NonBlockingKeyRead<Key>(cached: { cached($0) }, read: { _ = get($0) })
+
     @discardableResult
     static func delete(_ key: Key) -> Bool {
         invalidate(key)
+        if isUnderTest {
+            testLock.lock(); defer { testLock.unlock() }
+            testItems[key.rawValue] = nil
+            return true
+        }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -309,6 +365,10 @@ enum KeychainStore {
     }
 
     static func exists(_ key: Key) -> Bool {
+        if isUnderTest {
+            testLock.lock(); defer { testLock.unlock() }
+            return !(testItems[key.rawValue] ?? "").isEmpty
+        }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,

@@ -99,7 +99,9 @@ final class TriagePolicyStore: ObservableObject {
     @Published var quietHours: TriageQuietHours {
         didSet { scheduleSave() }
     }
-    // Haiku escalation seam master switch (see TriageClassifier).
+    // Master switch for judging free text beyond the rules (see
+    // TriageClassifier): the content judgment with a decision key, the Haiku
+    // escalation seam without one. The stored name predates the former.
     @Published var llmEscalationEnabled: Bool {
         didSet { scheduleSave() }
     }
@@ -176,9 +178,14 @@ final class TriagePolicyStore: ObservableObject {
         return out
     }
 
-    func resolve(category: TriageCategory, actionRequired: Bool, at date: Date = Date()) -> TriageAction {
+    /// `judged` is a content judgment (`TriageClassifier.judge`, P-R-5). When
+    /// present it is the base for this one notification in place of the
+    /// category's row; the rest of the table is unchanged, so a blocker still
+    /// interrupts and quiet hours still hold. nil is exactly the old table.
+    func resolve(category: TriageCategory, actionRequired: Bool, judged: TriageAction? = nil,
+                 at date: Date = Date()) -> TriageAction {
         Self.resolve(
-            base: action(for: category),
+            base: judged ?? action(for: category),
             actionRequired: actionRequired,
             inQuietHours: quietHours.contains(date)
         )

@@ -3,9 +3,8 @@ import XCTest
 
 /// What a first launch is allowed to do to somebody who has never seen Grux.
 ///
-/// Both of these were reported from a fresh install on a Mac that had never run it, and
-/// both are the same shape: the app did something at boot that the person had not been
-/// told about and could not answer.
+/// Reported from a fresh install on a Mac that had never run it: the app did something
+/// at boot that the person had not been told about and could not answer.
 @MainActor
 final class FirstRunSilenceTests: XCTestCase {
 
@@ -70,35 +69,5 @@ final class FirstRunSilenceTests: XCTestCase {
         XCTAssertGreaterThan(key.count, "grux.keychain.serviceMigration.done.".count,
             "the key carries no digest of the rename table, so adding a rename would "
             + "inherit the old answer and never run")
-    }
-
-    // MARK: - Nothing takes the screen before it has been explained
-
-    /// The terminal overlay waits for the step that explains it.
-    ///
-    /// `step.terminal_sessions_explained` is in the contract, labelled "Understand terminal
-    /// sessions", and seven features in the registry list it. It gated NOTHING: the only
-    /// code reading it was the Settings pane that also writes it. Reported from a fresh
-    /// install: four terminal windows taken over at boot, with no dialog, no explanation of
-    /// what the workspace is, and no visible way to turn it off.
-    func testTheTerminalOverlayWaitsUntilItHasBeenExplained() throws {
-        let state = try source("Sources/Grux/TerminalFocusState.swift")
-        guard let restore = state.range(of: "func restoreOverlayAtLaunch() {") else {
-            return XCTFail("the launch restore is gone, so this proves nothing")
-        }
-        // TO THE FUNCTION'S OWN CLOSING BRACE, at four spaces. Stopping at the first `}`
-        // stops inside `guard ... else { return }` and reads none of the guards, which is
-        // how this test failed against code that was already correct.
-        let rest = state[restore.upperBound...]
-        let stop = rest.range(of: "\n    }")?.lowerBound ?? rest.endIndex
-        let body = rest[rest.startIndex..<stop]
-        XCTAssertTrue(body.contains("stepTerminalSessionsExplained"),
-            "the overlay restores at launch without checking whether anybody has been told "
-            + "what it is. isEnabled defaults to true, so a fresh install has its terminal "
-            + "windows taken over by a feature it has never heard of.")
-        // The two guards that were already there must survive alongside it.
-        XCTAssertTrue(body.contains("isEnabled"), "the kill switch check was dropped")
-        XCTAssertTrue(body.contains("OnboardingModel.shared.stage == .done"),
-            "the overlay can now appear during onboarding")
     }
 }

@@ -67,6 +67,33 @@ final class SpeechEngine: NSObject, ObservableObject {
         // stays natural even at rate=1.5.
         engine.connect(player, to: timePitch, format: playbackFormat)
         engine.connect(timePitch, to: engine.mainMixerNode, format: playbackFormat)
+
+        // The output device can change under a running graph: AirPods connect
+        // and macOS makes them the default output, at a different hardware
+        // rate. AVAudioEngine posts this and stops rendering correctly until
+        // it is restarted, and a graph left running through the change played
+        // the reply pitched up and unintelligible (measured 2026-09-20). Drop
+        // the in-flight speech, rebuild the graph, and let the next speak()
+        // start it clean.
+        NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.handleOutputConfigurationChange() }
+        }
+    }
+
+    private func handleOutputConfigurationChange() {
+        let wasSpeaking = isSpeaking
+        WakeLog.shared.log("speech engine: output configuration changed (device or rate), restarting graph"
+                           + (wasSpeaking ? ", dropping the reply in flight" : ""))
+        if wasSpeaking { stop(reason: "audio output changed") }
+        engine.stop()
+        player.stop()
+        engine.disconnectNodeOutput(player)
+        engine.disconnectNodeOutput(timePitch)
+        engine.connect(player, to: timePitch, format: playbackFormat)
+        engine.connect(timePitch, to: engine.mainMixerNode, format: playbackFormat)
+        hasStartedEngine = false
     }
 
     // MARK: - Public API
@@ -81,9 +108,10 @@ final class SpeechEngine: NSObject, ObservableObject {
         min(max(r, 0.5), 2.5)
     }
 
-    func speak(_ text: String) {
+    func speak(_ text: String, caller: String = #fileID, line: Int = #line) {
         let cleaned = Self.clean(text)
         guard !cleaned.isEmpty else { return }
+        guard permitSpeech(cleaned, caller: caller, line: line) else { return }
         let state = AppState.shared
         // Offline mode forces system voice (AVSpeechSynthesizer, fully
         // on-device) by short-circuiting the ElevenLabs branch - cloud TTS is a
@@ -107,6 +135,16 @@ final class SpeechEngine: NSObject, ObservableObject {
             WakeLog.shared.log("system-tts → \(cleaned.prefix(80))")
             Speaker.shared.speak(cleaned)
         }
+    }
+
+    /// Silent mode (`AudioOutput`): records the line instead of speaking it, and
+    /// reports the utterance as finished at once so anything waiting on
+    /// `.gruxSpeechDidStop` (workflow phases, macros) moves on without a timeout.
+    private func permitSpeech(_ text: String, caller: String, line: Int) -> Bool {
+        if AudioOutput.permit(.speech, source: "\(caller):\(line)", text: text) { return true }
+        WakeLog.shared.log("silent → \(text.prefix(80))")
+        NotificationCenter.default.post(name: .gruxSpeechDidStop, object: nil)
+        return false
     }
 
     /// Queue an utterance to play only AFTER any current Grux speech, chat
@@ -198,9 +236,10 @@ final class SpeechEngine: NSObject, ObservableObject {
     private var streamingFinalizeRequested = false
     private var streamingSession: UUID?
 
-    func appendStreaming(_ text: String) {
+    func appendStreaming(_ text: String, caller: String = #fileID, line: Int = #line) {
         let cleaned = Self.clean(text)
         guard !cleaned.isEmpty else { return }
+        guard permitSpeech(cleaned, caller: caller, line: line) else { return }
         let cfg = AppState.shared.config
         // Offline mode forces the on-device system-voice path (same guard as
         // speak()) so streamed replies never reach for cloud TTS.
@@ -320,6 +359,7 @@ final class SpeechEngine: NSObject, ObservableObject {
         do {
             let t0 = Date()
             let (data, resp) = try await URLSession.shared.data(for: req)
+            noteCredit(resp, data)
             if Task.isCancelled || session != streamingSession { return }
             if let http = resp as? HTTPURLResponse, http.statusCode != 200 {
                 let errBody = String(data: data.prefix(300), encoding: .utf8) ?? ""
@@ -394,6 +434,21 @@ final class SpeechEngine: NSObject, ObservableObject {
 
     // MARK: - ElevenLabs streaming
 
+    /// P-R-3: one text to speech answer, read for what it says about the
+    /// ElevenLabs credit, before anything else looks at it (a superseded
+    /// request still says whether the balance is there). Only the two speech
+    /// calls report: they are what spend credit. The voices list spends
+    /// nothing, so its 200 says nothing about the balance and must not end an
+    /// episode. The fallback each caller had is untouched.
+    private func noteCredit(_ response: URLResponse, _ data: Data) {
+        guard let http = response as? HTTPURLResponse else { return }
+        if http.statusCode == 200 {
+            CreditMonitor.shared.recordSuccess(.elevenLabs)
+        } else {
+            CreditMonitor.shared.recordFailure(.elevenLabs, status: http.statusCode, body: data)
+        }
+    }
+
     private func streamElevenLabs(text: String, session: UUID) async {
         let cfg = AppState.shared.config
         let voiceId = cfg.elevenLabsVoiceId
@@ -429,6 +484,7 @@ final class SpeechEngine: NSObject, ObservableObject {
         do {
             let t0 = Date()
             let (data, response) = try await URLSession.shared.data(for: req)
+            noteCredit(response, data)
             if Task.isCancelled || session != sessionId { return }
             if let http = response as? HTTPURLResponse, http.statusCode != 200 {
                 let errBody = String(data: data.prefix(400), encoding: .utf8) ?? ""
@@ -679,9 +735,10 @@ final class SpeechEngine: NSObject, ObservableObject {
                  .replacingOccurrences(of: "`", with: "")
         // Strip bracketed visual blocking ("[Orb pulses gently]") and parenthetical
         // acting notes ("(beat)"). Length-capped so a stray "[" from real prose
-        // can't eat the rest of the reply.
-        out = out.replacingOccurrences(of: #"\[[^\]\n]{0,200}\]"#, with: "", options: .regularExpression)
-                 .replacingOccurrences(of: #"\([^)\n]{0,200}\)"#, with: "", options: .regularExpression)
+        // can't eat the rest of the reply. The space before the cue goes with
+        // it, so "unknown (dry run) crashes" is not read with a gap.
+        out = out.replacingOccurrences(of: #"[ \t]*\[[^\]\n]{0,200}\]"#, with: "", options: .regularExpression)
+                 .replacingOccurrences(of: #"[ \t]*\([^)\n]{0,200}\)"#, with: "", options: .regularExpression)
         // Drop lines that are pure screenplay cues. Operates per-line so we keep
         // ordinary sentences that merely contain words like "scene" or "fade".
         let kept = out.split(separator: "\n", omittingEmptySubsequences: false).filter { line in

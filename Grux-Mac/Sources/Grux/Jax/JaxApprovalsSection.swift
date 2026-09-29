@@ -67,6 +67,7 @@ struct JaxApprovalCard: View {
             HStack(spacing: 8) {
                 kindBadge
                 if approval.urgent { urgentBadge }
+                if approval.risk?.raised == true { riskBadge }
                 if approval.persona != .none { personaChip }
                 Spacer()
                 if let cents = action.amountCents {
@@ -85,11 +86,22 @@ struct JaxApprovalCard: View {
 
             // Why the gate paused instead of proceeding.
             if !approval.reason.isEmpty {
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "pause.circle.fill").font(.system(size: 10)).foregroundStyle(GruxTheme.warnAmber)
-                        .padding(.top, 1)
+                HStack(alignment: .firstTextBaseline, spacing: GruxSpacing.s) {
+                    Image(systemName: "pause.circle.fill").font(GruxType.caption).foregroundStyle(GruxTheme.warnAmber)
                     Text(approval.reason)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(GruxType.body)
+                        .foregroundStyle(GruxTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            // Approved before and it failed: what it answered, so the next tap
+            // is not a blind retry of something that cannot work yet.
+            if let failure = approval.lastFailure {
+                HStack(alignment: .firstTextBaseline, spacing: GruxSpacing.s) {
+                    Image(systemName: "exclamationmark.triangle.fill").font(GruxType.caption).foregroundStyle(GruxTheme.warnAmber)
+                    Text("Last try failed: \(failure)")
+                        .font(GruxType.body)
                         .foregroundStyle(GruxTheme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -150,6 +162,20 @@ struct JaxApprovalCard: View {
         .foregroundStyle(GruxTheme.destructiveRose)
         .padding(.horizontal, 8).padding(.vertical, 4)
         .background(Capsule().fill(GruxTheme.destructiveRose.opacity(0.16)))
+    }
+
+    // P-R-6: shown only when the item was judged high risk when it was queued.
+    // A low score shows nothing: a card that says "low risk" reads as a nudge
+    // to approve, and the judgment may only ever add caution.
+    private var riskBadge: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 9, weight: .bold))
+            Text("HIGH RISK").font(GruxTheme.Font.microCaps).kerning(0.8)
+        }
+        .foregroundStyle(GruxTheme.warnAmber)
+        .padding(.horizontal, 8).padding(.vertical, 4)
+        .background(Capsule().fill(GruxTheme.warnAmber.opacity(0.16)))
+        .help("Judged hard to undo, costly, or reaching other people. Read it before you approve.")
     }
 
     private var personaChip: some View {

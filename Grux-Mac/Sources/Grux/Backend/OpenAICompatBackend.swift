@@ -32,8 +32,30 @@ actor OpenAICompatBackend: ModelBackend {
       + "spaces, for example http://localhost:11434."
     }
 
+    /// The window every call to an Ollama server asks for. See `speaksOllama`.
+    /// One number for every call, because Ollama reloads a model whenever a
+    /// call asks for a different window than the loaded one. A model trained
+    /// on less is capped by Ollama itself.
+    static let ollamaContextTokens = 32_768
+
+    /// The longest any one call may take, bytes or not.
+    static let requestResourceTimeout: TimeInterval = 600
+
+    /// How long a call may go without a byte from the server. A streamed call
+    /// sends nothing until the model has read the whole prompt, and a cold
+    /// read of a 22,000 token Grux prompt on a 16 GB Mac mini took longer than
+    /// 120 s, so the first turn after a relaunch timed out while the model was
+    /// still reading. A local server has no network to stall on, so it gets
+    /// five minutes; a hosted endpoint keeps 120 s.
+    static func requestIdleTimeout(baseURL: String) -> TimeInterval {
+        ModelRates.isLocalBaseURL(baseURL) ? 300 : 120
+    }
+
     private let baseURL: String
     private let session: URLSession
+    /// Where an OpenRouter response is reported for the credit (P-R-3). Nil is
+    /// the app's `CreditMonitor.shared`; a test passes its own.
+    private let credits: CreditMonitor?
 
     // Usage stats from the most recent completion, mirrors ClaudeClient's
     // last* caching pattern so usageSnapshot() behaves identically. Local
@@ -43,7 +65,11 @@ actor OpenAICompatBackend: ModelBackend {
     private(set) var lastCacheCreationTokens: Int = 0
     private(set) var lastCacheReadTokens: Int = 0
 
-    init(baseURL: String) {
+    /// Whether the server behind `baseURL` is Ollama, once it has answered.
+    private var ollamaNative: Bool?
+
+    /// `session` and `credits` exist for tests; the app passes neither.
+    init(baseURL: String, session: URLSession? = nil, credits: CreditMonitor? = nil) {
         // Normalize through the SINGLE source of truth (EndpointValidator) so
         // the live request URL agrees with the apiKey/custom-endpoint lookup,
         // which also normalizes via EndpointValidator. The old ad-hoc trim was
@@ -54,10 +80,15 @@ actor OpenAICompatBackend: ModelBackend {
         // which EndpointValidator already screened before construction.
         let trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         self.baseURL = EndpointValidator.normalizeBaseURL(baseURL) ?? trimmed
-        let cfg = URLSessionConfiguration.default
-        cfg.timeoutIntervalForRequest = 120   // local models can be slow to first token
-        cfg.timeoutIntervalForResource = 600
-        self.session = URLSession(configuration: cfg)
+        self.credits = credits
+        if let session {
+            self.session = session
+        } else {
+            let cfg = URLSessionConfiguration.default
+            cfg.timeoutIntervalForRequest = Self.requestIdleTimeout(baseURL: self.baseURL)
+            cfg.timeoutIntervalForResource = Self.requestResourceTimeout
+            self.session = URLSession(configuration: cfg)
+        }
     }
 
     func usageSnapshot() -> (input: Int, output: Int, cacheCreate: Int, cacheRead: Int) {
@@ -84,15 +115,246 @@ actor OpenAICompatBackend: ModelBackend {
         return url
     }
 
+    private func ollamaChatURL() throws -> URL {
+        guard let url = URL(string: "\(baseURL)/api/chat") else {
+            throw ClaudeError.localConfiguration(Self.invalidBaseURLMessage(baseURL))
+        }
+        return url
+    }
+
+    // MARK: - Ollama's native endpoint
+    //
+    // OLLAMA CLIPPED EVERY LOCAL CHAT PROMPT TO ITS FIRST 4 TOKENS AND ITS TAIL.
+    //
+    // Ollama sizes a model's window to the machine: 4096 tokens under 24 GB,
+    // measured on a 16 GB Mac mini with Ollama 0.22.0. A Grux chat prompt, the
+    // compiled system prompt plus the tool schemas, is 15,000 to 22,000 tokens,
+    // and the server log said so on every turn: `truncating input prompt
+    // limit=4096 prompt=21711 keep=4 new=4096`. So the model never saw who it
+    // was or what day it was, and answered "what day is it" with "the current
+    // date is not provided" and "what is two plus two" with "Okay.".
+    //
+    // `/v1/chat/completions` has no field for the window (probed on 0.22.0:
+    // `options`, `num_ctx`, `context_length` and `extra_body` are all ignored),
+    // and a `/v1` call reloads the model at the default even right after a
+    // native call loaded it bigger. So an Ollama server gets EVERY call on its
+    // native `/api/chat` with `options.num_ctx`, built from the same OpenAI body
+    // (`ollamaChatBody`) and read back into the same OpenAI shape
+    // (`openAIShape`), so the parsers below are the ones every server uses.
+
+    /// Asks a LOCAL server once whether it is Ollama (`GET /api/version`
+    /// answers `{"version": ...}` there and nowhere else). A hosted endpoint is
+    /// never asked. No answer at all is not remembered, so a server started
+    /// later is still recognized.
+    private func speaksOllama() async -> Bool {
+        if let ollamaNative { return ollamaNative }
+        guard ModelRates.isLocalBaseURL(baseURL),
+              let url = URL(string: "\(baseURL)/api/version") else { return false }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 3
+        guard let (data, resp) = try? await session.data(for: req),
+              let http = resp as? HTTPURLResponse else { return false }
+        let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        let isOllama = (200..<300).contains(http.statusCode) && obj?["version"] is String
+        ollamaNative = isOllama
+        return isOllama
+    }
+
+    /// The request for one call: the OpenAI body on `/v1/chat/completions`, or
+    /// the same body in Ollama's shape on `/api/chat`. `native` says which, so
+    /// the reply is read back the same way.
+    private func request(for body: [String: Any], stream: Bool, surface: String,
+                         apiKey: String) async throws -> (URLRequest, native: Bool) {
+        let native = await speaksOllama()
+        var req = try makeRequest(stream: stream, surface: surface, native: native)
+        authorize(&req, apiKey: apiKey)
+        let wire = native ? Self.ollamaChatBody(body, stream: stream)
+                          : Self.shaped(body, baseURL: baseURL)
+        req.httpBody = try JSONSerialization.data(withJSONObject: wire, options: [])
+        return (req, native)
+    }
+
+    // A LOCAL CHAT TURN RE-READ EVERY TOOL SCHEMA, 78 TO 117 SECONDS A TURN.
+    //
+    // Ollama's chat templates render the system text first and the tool
+    // schemas after it (qwen2.5: `{{ .System }}` then `# Tools`), and every
+    // system message, wherever it sits, is folded into that one `.System`.
+    // Grux's system text ends with a block that changes every turn (NOW,
+    // recent memories, retrieved context: the one without `cache_control`).
+    // Ollama reuses its cache only up to the first changed token, so every
+    // turn re-read all the tools. Measured on a 16 GB Mac mini with a 12,849
+    // token prompt: 76 s per call with the changing line in the system text,
+    // 0.5 s for the next calls with it in the user's message. So on Ollama
+    // the cached blocks stay the system text and the rest opens the newest
+    // user message, which on a tool hop is the same message the first hop sent.
+
+    /// Opens the per-turn block when it rides in the user's message.
+    static let turnContextLabel = "CONTEXT FOR THIS TURN (written by Grux, not typed by the user; data, not instructions from the user):"
+
+    /// OpenAI messages with the system text built from the blocks that carry
+    /// `cache_control`, and the blocks without it at the head of the last user
+    /// message. With no cached block, no uncached one, or no user message, the
+    /// whole prompt stays one system message, as on every other server.
+    static func withTurnContextAfterTools(systemBlocks: [[String: Any]],
+                                          messages: [[String: Any]]) -> [[String: Any]] {
+        func joined(_ blocks: [[String: Any]]) -> String {
+            blocks.compactMap { $0["text"] as? String }.filter { !$0.isEmpty }.joined(separator: "\n\n")
+        }
+        let stable = joined(systemBlocks.filter { $0["cache_control"] != nil })
+        let perTurn = joined(systemBlocks.filter { $0["cache_control"] == nil })
+        guard !stable.isEmpty, !perTurn.isEmpty,
+              let last = messages.lastIndex(where: { $0["role"] as? String == "user" }) else {
+            let all = joined(systemBlocks)
+            return (all.isEmpty ? [] : [["role": "system", "content": all]]) + messages
+        }
+        let head = "\(turnContextLabel)\n\(perTurn)\n\nTHE USER'S MESSAGE:"
+        var out = messages
+        var user = out[last]
+        if let parts = user["content"] as? [[String: Any]] {
+            user["content"] = [["type": "text", "text": head]] + parts
+        } else {
+            user["content"] = "\(head)\n\(user["content"] as? String ?? "")"
+        }
+        out[last] = user
+        return [["role": "system", "content": stable]] + out
+    }
+
+    /// An OpenAI chat body in Ollama's native shape.
+    static func ollamaChatBody(_ body: [String: Any], stream: Bool,
+                               contextTokens: Int = ollamaContextTokens) -> [String: Any] {
+        var options: [String: Any] = ["num_ctx": contextTokens]
+        if let n = body["max_tokens"] { options["num_predict"] = n }
+        if let t = body["temperature"] { options["temperature"] = t }
+        var out: [String: Any] = [
+            "model": body["model"] ?? "",
+            "messages": ollamaMessages(body["messages"] as? [[String: Any]] ?? []),
+            "stream": stream,
+            "options": options
+        ]
+        if let tools = body["tools"] { out["tools"] = tools }
+        return out
+    }
+
+    /// OpenAI messages in Ollama's native shape: tool call arguments as an
+    /// object, a tool result named for the tool it answers, and pictures as
+    /// `images` beside the words.
+    static func ollamaMessages(_ messages: [[String: Any]]) -> [[String: Any]] {
+        var toolNames: [String: String] = [:]
+        return messages.map { m in
+            var out = m
+            if let calls = m["tool_calls"] as? [[String: Any]] {
+                out["tool_calls"] = calls.map { call -> [String: Any] in
+                    var fn = call["function"] as? [String: Any] ?? [:]
+                    if let args = fn["arguments"] as? String {
+                        fn["arguments"] = (try? JSONSerialization.jsonObject(with: Data(args.utf8))) as? [String: Any] ?? [:]
+                    }
+                    if let id = call["id"] as? String { toolNames[id] = fn["name"] as? String }
+                    var c = call
+                    c["function"] = fn
+                    return c
+                }
+            }
+            if m["role"] as? String == "tool", let id = m["tool_call_id"] as? String, let name = toolNames[id] {
+                out["tool_name"] = name
+            }
+            if let parts = m["content"] as? [[String: Any]] {
+                out["content"] = parts.compactMap { $0["type"] as? String == "text" ? $0["text"] as? String : nil }
+                    .joined(separator: "\n")
+                let images = parts.compactMap { ($0["image_url"] as? [String: Any])?["url"] as? String }
+                    .map { url in url.range(of: ";base64,").map { String(url[$0.upperBound...]) } ?? url }
+                if !images.isEmpty { out["images"] = images }
+            }
+            return out
+        }
+    }
+
+    /// One native reply (a whole one, or one streamed line) as the OpenAI
+    /// object the parsers read: the message both as `message` and as `delta`,
+    /// tool calls numbered from `firstToolIndex` with arguments as a string,
+    /// and on the last line `finish_reason` and `usage`. `sawToolCalls` says an
+    /// earlier line already called a tool, so the turn ends as `tool_calls`.
+    static func openAIShape(ollama obj: [String: Any], firstToolIndex: Int = 0,
+                            sawToolCalls: Bool = false) -> [String: Any] {
+        let native = obj["message"] as? [String: Any] ?? [:]
+        var message: [String: Any] = ["role": "assistant", "content": native["content"] as? String ?? ""]
+        if let thinking = native["thinking"] as? String, !thinking.isEmpty { message["reasoning"] = thinking }
+        let calls = (native["tool_calls"] as? [[String: Any]] ?? []).enumerated().map { i, call -> [String: Any] in
+            let fn = call["function"] as? [String: Any] ?? [:]
+            let args = fn["arguments"].flatMap {
+                try? JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys, .withoutEscapingSlashes])
+            }.map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+            let index = firstToolIndex + i
+            let id = (call["id"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "call_\(index)"
+            return ["index": index, "id": id, "type": "function",
+                    "function": ["name": fn["name"] as? String ?? "", "arguments": args]]
+        }
+        if !calls.isEmpty { message["tool_calls"] = calls }
+        var choice: [String: Any] = ["index": 0, "message": message, "delta": message]
+        var out: [String: Any] = [:]
+        if obj["done"] as? Bool == true {
+            let reason = obj["done_reason"] as? String ?? "stop"
+            choice["finish_reason"] = reason == "stop" && (sawToolCalls || !calls.isEmpty) ? "tool_calls" : reason
+            out["usage"] = ["prompt_tokens": obj["prompt_eval_count"] as? Int ?? 0,
+                            "completion_tokens": obj["eval_count"] as? Int ?? 0]
+        }
+        out["choices"] = [choice]
+        return out
+    }
+
+    /// A whole native reply as OpenAI JSON bytes. Anything that is not a
+    /// native reply passes through unchanged, so the caller's own error
+    /// handling reads it.
+    private static func openAIReply(_ data: Data, native: Bool) -> Data {
+        guard native,
+              let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              obj["message"] != nil,
+              let shaped = try? JSONSerialization.data(withJSONObject: openAIShape(ollama: obj)) else { return data }
+        return shaped
+    }
+
     // Build the per-request URLRequest. apiKey is a placeholder for local
     // servers ("ollama"), they ignore it, but we send it as a Bearer token
     // anyway so OpenRouter / hosted compat endpoints also work.
-    private func makeRequest(stream: Bool) throws -> URLRequest {
-        var req = URLRequest(url: try chatCompletionsURL())
+    private func makeRequest(stream: Bool, surface: String = "chat", native: Bool = false) throws -> URLRequest {
+        var req = URLRequest(url: try native ? ollamaChatURL() : chatCompletionsURL())
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if stream { req.setValue("text/event-stream", forHTTPHeaderField: "Accept") }
+        // Every call says who it is. OpenRouter shows these on the activity
+        // page; a local server ignores them. The title names the surface.
+        req.setValue("https://gruxai.com", forHTTPHeaderField: "HTTP-Referer")
+        req.setValue("Grux OS: \(surface)", forHTTPHeaderField: "X-Title")
         return req
+    }
+
+    /// Endpoint-specific request shape. OpenRouter routes a model across
+    /// providers; for structured turns (tools, JSON) the pinned provider
+    /// order with no fallbacks and reasoning off is what keeps answers
+    /// complete and fast. Any other host gets the body untouched.
+    static func shaped(_ body: [String: Any], baseURL: String) -> [String: Any] {
+        guard isOpenRouter(baseURL) else { return body }
+        var b = body
+        if (b["model"] as? String)?.hasPrefix("deepseek/") == true {
+            b["provider"] = ["order": ["deepinfra", "fireworks", "together"], "allow_fallbacks": false, "sort": "latency"]
+            b["reasoning"] = ["enabled": false]
+        }
+        return b
+    }
+
+    /// Whether this backend talks to OpenRouter, the one host this backend
+    /// reaches that spends a prepaid credit. `shaped` and the credit read share it.
+    static func isOpenRouter(_ baseURL: String) -> Bool {
+        URL(string: baseURL)?.host?.hasSuffix("openrouter.ai") == true
+    }
+
+    /// P-R-3: one answered call, read for what it says about the OpenRouter
+    /// credit. A 2xx is a success on the key; anything else is marked out only
+    /// for OpenRouter's documented out of credit 402 (`CreditSignature`). A
+    /// local server has no credit and is never reported, and a transport
+    /// failure never gets here, because there is no response to read.
+    private func noteCredit(status: Int, body: Data) async {
+        guard Self.isOpenRouter(baseURL) else { return }
+        await CreditMonitor.observe(.openRouter, status: status, body: body, on: credits)
     }
 
     private func authorize(_ req: inout URLRequest, apiKey: String) {
@@ -114,6 +376,78 @@ actor OpenAICompatBackend: ModelBackend {
             out.append(["role": m.role, "content": m.content])
         }
         return out
+    }
+
+    /// The chat history, as `ChatService` keeps it (Anthropic content blocks),
+    /// in the shape an OpenAI compatible server reads. Plain string turns pass
+    /// through. An assistant `tool_use` becomes a `tool_calls` entry with its
+    /// input as a JSON string, each `tool_result` becomes its own `role: tool`
+    /// message, and an `image` block becomes an `image_url` data URL part.
+    ///
+    /// Before this the blocks went out as they were, and Ollama answered the
+    /// hop after every tool call with `HTTP 400 invalid message format`
+    /// (measured 2026-09-27 on qwen2.5:7b), so every tool call on the local
+    /// route ended in a failed reply.
+    static func openAIChatMessages(_ messages: [[String: Any]]) -> [[String: Any]] {
+        var out: [[String: Any]] = []
+        for m in messages {
+            let role = m["role"] as? String ?? "user"
+            guard let blocks = m["content"] as? [[String: Any]] else {
+                out.append(m)
+                continue
+            }
+            if role == "assistant" {
+                let text = blocks.filter { $0["type"] as? String == "text" }
+                    .compactMap { $0["text"] as? String }.joined(separator: "\n")
+                let calls: [[String: Any]] = blocks.filter { $0["type"] as? String == "tool_use" }.map { b in
+                    let input = b["input"] as? [String: Any] ?? [:]
+                    let args = (try? JSONSerialization.data(withJSONObject: input, options: [.sortedKeys]))
+                        .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+                    return ["id": b["id"] as? String ?? "", "type": "function",
+                            "function": ["name": b["name"] as? String ?? "", "arguments": args]]
+                }
+                var msg: [String: Any] = ["role": "assistant", "content": text]
+                if !calls.isEmpty { msg["tool_calls"] = calls }
+                out.append(msg)
+                continue
+            }
+            // Results first: the server wants them right after the call.
+            for b in blocks where b["type"] as? String == "tool_result" {
+                out.append(["role": "tool",
+                            "tool_call_id": b["tool_use_id"] as? String ?? "",
+                            "content": Self.toolResultText(b["content"])])
+            }
+            var parts: [[String: Any]] = []
+            for b in blocks {
+                switch b["type"] as? String {
+                case "text":
+                    parts.append(["type": "text", "text": b["text"] as? String ?? ""])
+                case "image":
+                    let source = b["source"] as? [String: Any] ?? [:]
+                    let media = source["media_type"] as? String ?? "image/png"
+                    let data = source["data"] as? String ?? ""
+                    parts.append(["type": "image_url", "image_url": ["url": "data:\(media);base64,\(data)"]])
+                default:
+                    continue
+                }
+            }
+            if parts.isEmpty { continue }
+            if parts.allSatisfy({ $0["type"] as? String == "text" }) {
+                out.append(["role": role, "content": parts.compactMap { $0["text"] as? String }.joined(separator: "\n")])
+            } else {
+                out.append(["role": role, "content": parts])
+            }
+        }
+        return out
+    }
+
+    /// A tool result's content is a string, or text blocks.
+    private static func toolResultText(_ content: Any?) -> String {
+        if let s = content as? String { return s }
+        if let blocks = content as? [[String: Any]] {
+            return blocks.compactMap { $0["text"] as? String }.joined(separator: "\n")
+        }
+        return ""
     }
 
     // systemBlocks [[String:Any]] -> a single concatenated system message.
@@ -143,18 +477,18 @@ actor OpenAICompatBackend: ModelBackend {
     func complete(apiKey: String, model: String, system: String?,
                   messages: [ClaudeMessage], maxTokens: Int = 1024, temperature: Double = 0.2,
                   spanName: String = "openai.complete", feature: String = "uncategorized") async throws -> String {
-        var req = try makeRequest(stream: false)
-        authorize(&req, apiKey: apiKey)
         let body: [String: Any] = [
             "model": model,
             "max_tokens": maxTokens,
             "temperature": temperature,
             "messages": openAIMessages(system: system, messages: messages)
         ]
-        req.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
+        let (req, native) = try await request(for: body, stream: false, surface: "completion", apiKey: apiKey)
 
-        let (data, resp) = try await session.data(for: req)
+        let (reply, resp) = try await session.data(for: req)
+        let data = Self.openAIReply(reply, native: native)
         guard let http = resp as? HTTPURLResponse else { throw ClaudeError.http(-1, "no response") }
+        await noteCredit(status: http.statusCode, body: data)
         guard (200..<300).contains(http.statusCode) else {
             let errBody = String(data: data, encoding: .utf8) ?? "<binary>"
             throw ClaudeError.http(http.statusCode, errBody)
@@ -300,8 +634,6 @@ actor OpenAICompatBackend: ModelBackend {
                         userText: String, imageJPEG: Data, mediaType: String = "image/jpeg",
                         maxTokens: Int = 500, temperature: Double = 0.15,
                         spanName: String = "openai.completeVision", feature: String = "vision") async throws -> String {
-        var req = try makeRequest(stream: false)
-        authorize(&req, apiKey: apiKey)
         // OpenAI multimodal content shape: a user message with an image_url block
         // (data URI) followed by a text block. Many local models lack vision and
         // will 400 / 422, and only those two surface as ClaudeError.http(400, ...)
@@ -325,7 +657,7 @@ actor OpenAICompatBackend: ModelBackend {
             "temperature": temperature,
             "messages": messages
         ]
-        req.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
+        let (req, native) = try await request(for: body, stream: false, surface: "chat", apiKey: apiKey)
 
         // NO `catch` HERE, DELIBERATELY, AND THAT IS PART OF THE FIX.
         //
@@ -338,8 +670,10 @@ actor OpenAICompatBackend: ModelBackend {
         // error speak for itself, which is how a refused connection reads as
         // "Could not connect to the server" instead of as a missing feature.
         // This path now matches its siblings.
-        let (data, resp) = try await session.data(for: req)
+        let (reply, resp) = try await session.data(for: req)
+        let data = Self.openAIReply(reply, native: native)
         guard let http = resp as? HTTPURLResponse else { throw ClaudeError.http(-1, "no response") }
+        await noteCredit(status: http.statusCode, body: data)
         guard (200..<300).contains(http.statusCode) else {
             throw Self.visionFailure(status: http.statusCode,
                                      body: String(data: data, encoding: .utf8) ?? "<binary>")
@@ -389,12 +723,17 @@ actor OpenAICompatBackend: ModelBackend {
                 // (Ollama sends usage when stream_options.include_usage is set).
                 var inTok = 0, outTok = 0
                 do {
-                    var req = try makeRequest(stream: true)
-                    authorize(&req, apiKey: apiKey)
-                    // Prepend the concatenated system blocks as a system message.
+                    // Prepend the concatenated system blocks as a system message,
+                    // except on Ollama, where the per-turn block rides in the
+                    // user's message so the tools after the system text stay cached.
                     var oaMessages: [[String: Any]] = []
-                    if let sys = systemMessageFromBlocks(systemBlocks) { oaMessages.append(sys) }
-                    oaMessages.append(contentsOf: messages)
+                    if await speaksOllama() {
+                        oaMessages = Self.withTurnContextAfterTools(systemBlocks: systemBlocks,
+                                                                    messages: Self.openAIChatMessages(messages))
+                    } else {
+                        if let sys = systemMessageFromBlocks(systemBlocks) { oaMessages.append(sys) }
+                        oaMessages.append(contentsOf: Self.openAIChatMessages(messages))
+                    }
                     var body: [String: Any] = [
                         "model": model,
                         "max_tokens": maxTokens,
@@ -406,7 +745,7 @@ actor OpenAICompatBackend: ModelBackend {
                     if !tools.isEmpty {
                         body["tools"] = openAITools(tools)
                     }
-                    req.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
+                    let (req, native) = try await request(for: body, stream: true, surface: "chat", apiKey: apiKey)
 
                     // ONE AT A TIME. There is one GPU, and six concurrent
                     // prompts against an 8B model were measured turning 0.38s of
@@ -422,8 +761,10 @@ actor OpenAICompatBackend: ModelBackend {
                     guard (200..<300).contains(http.statusCode) else {
                         var errBody = ""
                         for try await line in bytes.lines { errBody += line + "\n"; if errBody.count > 800 { break } }
+                        await noteCredit(status: http.statusCode, body: Data(errBody.utf8))
                         throw ClaudeError.http(http.statusCode, errBody)
                     }
+                    await noteCredit(status: http.statusCode, body: Data())
 
                     // SSE parser state. OpenAI streams text via choices[].delta.content
                     // and tool calls via choices[].delta.tool_calls[], where each
@@ -471,12 +812,22 @@ actor OpenAICompatBackend: ModelBackend {
 
                     for try await line in bytes.lines {
                         if Task.isCancelled { break }
-                        guard line.hasPrefix("data: ") else { continue }
-                        let payload = String(line.dropFirst(6))
-                        if payload == "[DONE]" { break }
-                        guard !payload.isEmpty,
-                              let data = payload.data(using: .utf8),
-                              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+                        let obj: [String: Any]
+                        if native {
+                            // Ollama streams one JSON object per line, no `data: ` frame.
+                            guard let raw = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any] else { continue }
+                            if let err = raw["error"] as? String { throw ClaudeError.http(http.statusCode, err) }
+                            obj = Self.openAIShape(ollama: raw, firstToolIndex: toolAccums.count,
+                                                   sawToolCalls: !toolAccums.isEmpty)
+                        } else {
+                            guard line.hasPrefix("data: ") else { continue }
+                            let payload = String(line.dropFirst(6))
+                            if payload == "[DONE]" { break }
+                            guard !payload.isEmpty,
+                                  let data = payload.data(using: .utf8),
+                                  let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+                            obj = parsed
+                        }
 
                         // Usage can arrive on its own final chunk (choices empty).
                         if let usage = obj["usage"] as? [String: Any] {
@@ -561,11 +912,9 @@ actor OpenAICompatBackend: ModelBackend {
                            messages: [[String: Any]], tools: [ClaudeTool],
                            maxTokens: Int = 2048, temperature: Double = 0.3,
                            spanName: String = "openai.completeWithTools", feature: String = "tool_use") async throws -> ClaudeToolsResponse {
-        var req = try makeRequest(stream: false)
-        authorize(&req, apiKey: apiKey)
         var oaMessages: [[String: Any]] = []
         if let system, !system.isEmpty { oaMessages.append(["role": "system", "content": system]) }
-        oaMessages.append(contentsOf: messages)
+        oaMessages.append(contentsOf: Self.openAIChatMessages(messages))
         var body: [String: Any] = [
             "model": model,
             "max_tokens": maxTokens,
@@ -573,10 +922,12 @@ actor OpenAICompatBackend: ModelBackend {
             "messages": oaMessages
         ]
         if !tools.isEmpty { body["tools"] = openAITools(tools) }
-        req.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
+        let (req, native) = try await request(for: body, stream: false, surface: "chat", apiKey: apiKey)
 
-        let (data, resp) = try await session.data(for: req)
+        let (reply, resp) = try await session.data(for: req)
+        let data = Self.openAIReply(reply, native: native)
         guard let http = resp as? HTTPURLResponse else { throw ClaudeError.http(-1, "no response") }
+        await noteCredit(status: http.statusCode, body: data)
         guard (200..<300).contains(http.statusCode) else {
             let errBody = String(data: data, encoding: .utf8) ?? "<binary>"
             throw ClaudeError.http(http.statusCode, errBody)

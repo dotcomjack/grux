@@ -2,9 +2,10 @@ import SwiftUI
 
 // Roster UI for enrolled voice profiles. Left: sortable list. Right: selected
 // profile detail with rename, delete, and cross-meeting stats (how many
-// meetings Grux has heard them in, last-heard timestamp). Lives under its own
-// sidebar tab; no equivalent existed before - speakers could only be managed
-// via Claude tool calls.
+// meetings Grux has heard them in, last-heard timestamp). Hosted as the
+// Speakers segment at the top of Meetings (Phase C fold); the locked
+// `speakers` tab key still opens it on its own. No equivalent existed before:
+// speakers could only be managed via Claude tool calls.
 struct SpeakersView: View {
     @ObservedObject private var store = SpeakerProfileStore.shared
     @State private var selection: UUID?
@@ -96,7 +97,7 @@ struct SpeakersView: View {
                     .background(Color.purple.opacity(0.15))
                     .clipShape(Capsule())
             }
-            Text("Enrolled voices Grux recognizes across meetings. Enroll new speakers from the Meetings tab: pick a cluster chip and give it a name.")
+            Text("Voices Grux recognizes across meetings. To add one, open a meeting, pick a speaker chip, and give it a name.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

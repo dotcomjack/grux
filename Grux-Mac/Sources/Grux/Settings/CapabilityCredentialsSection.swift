@@ -6,7 +6,7 @@ import SwiftUI
 /// This exists because the audit that preceded it found 8 of the 14 credential
 /// capabilities had NO field anywhere in the app. Their remediation sentence
 /// says to add the credential in Settings, and there was nowhere to add it:
-/// key.resend, key.godaddy, key.openai, key.openrouter, key.github,
+/// key.resend, key.openai, key.openrouter, key.github,
 /// key.appstoreconnect and key.reddit were all dead ends.
 ///
 /// Generated, so that cannot happen again. A capability added to the contract

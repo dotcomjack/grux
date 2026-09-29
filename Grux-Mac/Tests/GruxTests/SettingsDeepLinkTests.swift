@@ -25,6 +25,15 @@ final class SettingsDeepLinkTests: XCTestCase {
         }
     }
 
+    /// The Classic sidebar switch, by the three words somebody would use for
+    /// the old frame. Without the aliases the deep link lands at the top of
+    /// General and the switch sits below the fold.
+    func test_classicSidebarIsAddressable() {
+        for tag in ["classic", "sidebar", "legacy"] {
+            XCTAssertEqual(SettingsTabAliases.map[tag]?.anchor, "general.shell", tag)
+        }
+    }
+
     /// Tags are typed by a person, so casing and stray whitespace must not
     /// decide whether the deep link works.
     func testTagResolutionIsForgivingAboutCaseAndWhitespace() {

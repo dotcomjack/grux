@@ -33,8 +33,8 @@ extension GruxControlTools {
     ///
     /// `reads` is empty for the two nouns whose list nothing consumes. That was measured
     /// rather than assumed: nothing in this repository calls GitHub (`OnboardingModel`
-    /// records the same finding for `key.github`), and `DomainMonitor` sweeps every domain
-    /// on the GoDaddy account rather than reading `grux.uptime.targets`.
+    /// records the same finding for `key.github`), and nothing probes `grux.uptime.targets`
+    /// (the registrar-based domain monitor that used to stand beside it was ripped, C13).
     private struct AddNoun {
         let noun: String
         /// What follows the noun on the command line, for the usage line and the prompt.
@@ -691,9 +691,8 @@ extension GruxControlTools {
                 ? "\(entry) is on the monitoring list, which now has \(list.count)."
                 : "\(entry) was already on the monitoring list.",
             "touched": [addRow("Sites to monitor", "grux.uptime.targets", already: !added)],
-            "note": "Nothing on this Mac probes that list yet. The domain monitor watches "
-                + "renewal dates for every domain on your GoDaddy account instead, so it "
-                + "does not read this and does not need to.",
+            "note": "Nothing on this Mac probes that list yet, so adding a domain stores it "
+                + "and changes nothing else.",
             "verify": "grux config grux.uptime.targets",
         ]
         return MCPWire.textResult(jsonText(reply))

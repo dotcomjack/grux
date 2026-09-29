@@ -10,7 +10,7 @@ and a shell it can undo. Your own API key, or a local model and no key at all.
 
 **One agent for everything you run on your Mac.**
 
-Thirty nine features and one hundred sixteen tools in one native window.
+Thirty seven features and one hundred sixteen tools in one native window.
 
 Grux opens persistent terminal sessions in your project and can undo anything it
 did, because every command is snapshotted into a shadow git repository first. It
@@ -29,9 +29,18 @@ machine, your data.
 
 If it earns it, a star is the whole ask.
 
-**Status: shipping, currently 1.2.1.** 39 features ship, and a command line drives all of them. 25 are core and 14 are
-labelled BETA in the sidebar because they are real but rough. Nothing is hidden
+**Status: shipping, currently 3.0.** 37 features ship in 14 sidebar rows, and a command line drives all of them. 25 are
+core and 12 are labs: real, but rough at the edges, and labelled so. Those are
+two different counts on purpose. A feature is a capability the app has; a row is
+a place to click. 3.0 folded nine things into where they belonged, so the
+sidebar got shorter without anything being taken away. Speaker enrollment, for
+instance, lost its own row and kept every one of its tools. Nothing is hidden
 behind a waitlist. See [Feature tiers](#feature-tiers) for exactly which is which.
+
+![The Command Panel: one input, a Now list of what needs you, and the Optimize Grux card](docs/screenshots/command-panel.png)
+
+Grux 3.0 opens on the Command Panel: one input, a Now list of what needs you, and
+the Optimize Grux card. Anything you open slides in as one pane beside it.
 
 ![Local Models: hardware-aware model recommendations for this Mac, through Ollama](docs/screenshots/local-models.png)
 
@@ -55,7 +64,7 @@ those are not yours to look at.
 Developer ID, notarized by Apple and stapled, so it opens on a Mac that has never
 seen it without a right click and without a trip through System Settings.
 
-[**Download Grux 1.2.1 for Apple silicon**](https://github.com/dotcomjack/grux/releases/latest) (23 MB, macOS 14+)
+[**Download Grux 3.0 for Apple silicon**](https://github.com/dotcomjack/grux/releases/latest) (23 MB, macOS 14+)
 
 Unzip it, drag `Grux.app` to Applications, open it. There is no installer and no
 updater phoning home. To check what you got before you run it:
@@ -297,10 +306,10 @@ are asked for by a feature that still works without them, just with less in it.
 |---|---|---|
 | Microphone | Meetings | Voice input in Chat and Reactor |
 | System audio capture | Meetings | Nothing else. This is the other half of the call, not your mic |
-| Screen Recording | Focus log, Terminal Focus | Screen context in Chat |
-| Calendar | Calendar | The agenda on Home, calendar tools in Chat and Reactor |
+| Screen Recording | Focus log | Screen context in Chat |
+| Calendar | Calendar | The agenda on Today, calendar tools in Chat and Reactor |
 | Contacts | Contacts | Contact lookup in Chat |
-| Automation | Nothing | Commands, Terminal Focus, and app control from Chat |
+| Automation | Nothing | Commands, and app control from Chat |
 | Accessibility | Nothing | Window and selection awareness in Chat, and detail in Focus log |
 | Notifications | Nothing | Alerts from Schedules, Workflows and Focus log |
 | Full Disk Access | Nothing | Jax Command, one BETA surface, and nothing else anywhere |
@@ -339,28 +348,22 @@ sees what you send it. Grux redacts secrets it recognises before anything goes
 out, but a hosted model is a third party by definition. Run Ollama if that matters
 to you.
 
-What each hosted provider says it does with that traffic is written down here as
-it is added, quoted from the provider's own policy, so you can hold them to it.
-
-- **TypeSafe (Jev)**, the decision model behind intent routing and shell safety
-  from the next release: "We will not train or fine tune any artificial
-  intelligence or machine learning models on your prompts or other Input."
-  ([privacy policy](https://typesafe.ai/legal/privacy-policy), read 2026-09-20.)
-
 ## Feature tiers
 
-**Core (25).** Home, Chat, Approvals, Cognition Map, Projects, Task Stack,
+**Core (25).** Today, Chat, Approvals, Cognition Map, Projects, Task Stack,
 Mailbox, Calendar, Notes, Documents, Contacts, Schedules, Folders, Research,
 Skills, Compare, Local Models, Design Studio, Meetings, Speakers, Commands, Focus
 log, Integrations, Outbound Webhooks, Settings.
 
-**Labs (14), badged BETA in the sidebar.** Reactor, Jax Command, Feature Review,
-Agents, Compose and send, Media Studio, Social, Workflows, Terminal Focus,
-Self-Upgrade, Jax HQ, Meta Ads, Domain monitor, Phone companion.
+**Labs (12).** Reactor, Jax Command, Feature Review, Agents, Compose and send,
+Media Studio, Social, Workflows, Self-Upgrade, Jax HQ, Meta Ads, Phone
+companion.
 
 Labs does not mean broken. It means the surface is real and the edges are not
-sanded. A test asserts that every labs feature is badged and that no core feature
-is, so the label cannot quietly go stale.
+sanded. The sidebar says so once: the Labs door carries one BETA badge for the
+surfaces behind it, and a labs feature that lives elsewhere (Agents behind the
+Developer door, Meta Ads and Social once you add a brand) keeps its own. Tests
+assert both halves, so the label cannot quietly go stale.
 
 ## The phone companion
 
@@ -404,7 +407,7 @@ catches already happened here:
 
 ```sh
 cd Grux-Mac
-swift test                          # 2498 tests
+swift test                          # 3876 tests
 python3 scripts/check-contract.py   # the setup contract is frozen
 ```
 
@@ -424,8 +427,8 @@ that matters if you are deciding whether to spend an evening here:
 - **The MCP server is read only.** Writes go over a Unix socket instead. Making it a
   full bidirectional surface is a contained piece of work and it would let any agent
   drive the whole app.
-- **The 14 BETA surfaces.** Every one of them is real and none of them is finished.
-  Workflows and Agents are the two with the most left in them.
+- **The 12 features behind the Labs door.** Every one of them is real and none of
+  them is finished. Agents and Self-Upgrade are the two with the most left in them.
 - **Nothing here runs on an Intel Mac.** One arm64 slice, and no reason beyond nobody
   having needed it.
 
@@ -480,17 +483,20 @@ calendar, a terminal and four chat tabs that could not see any of it. So I built
 assistant I actually wanted: one that reads the window I am already in, handles the
 mail, and takes the meeting notes.
 
-Eight of the thirty-nine surfaces in here are literally the tooling that runs my
-businesses. They ship instead of getting deleted, because taking them out would
-misrepresent what you are downloading.
+Seven of the 37 features in here are literally the tooling that runs my
+businesses: Jax Command, Jax HQ, Meta Ads, Social, Feature Review, Self-Upgrade
+and Workflows. They ship instead of getting deleted, because taking them out
+would misrepresent what you are downloading. It was eight until 3.0 removed the
+Domain monitor, and they are named here rather than only counted so the number
+cannot drift away from the list again.
 
 It was a hobby project for six months. It is not a startup, there is no account, and
 there is nothing to buy. I am open sourcing it because it got useful enough to be
 worth somebody else's time, and because software that reads your screen and your mail
 should be readable back.
 
-Expect rough edges. Fourteen surfaces say BETA because they earned it. If something
-breaks, open an issue and tell me what you were doing.
+Expect rough edges. Twelve features sit behind the Labs door because they earned
+it. If something breaks, open an issue and tell me what you were doing.
 
 ## Security
 

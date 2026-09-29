@@ -94,14 +94,15 @@ final class OpenAICompatStreamFixtureTests: XCTestCase {
     /// half read would leave the gate held and hang every later streaming test
     /// at `acquire()`.
     private func runStream(frames: [String],
-                           tools: [ClaudeTool] = []) async throws
+                           tools: [ClaudeTool] = [],
+                           messages: [[String: Any]] = [["role": "user", "content": "fixture"]]) async throws
         -> (Drained, OpenAICompatBackend, SSEFixtureServer) {
         let server = SSEFixtureServer(frames: frames)
         try server.start()
         let backend = OpenAICompatBackend(baseURL: server.baseURL)
         let stream = await backend.streamCompleteWithTools(
             apiKey: "fixture", model: "fixture-model", systemBlocks: [],
-            messages: [["role": "user", "content": "fixture"]],
+            messages: messages,
             tools: tools, maxTokens: 64, temperature: 0,
             spanName: "test.stream", feature: "test")
 
@@ -114,6 +115,130 @@ final class OpenAICompatStreamFixtureTests: XCTestCase {
             }
         }
         return (out, backend, server)
+    }
+
+    // MARK: - The second hop goes out in the server's shape
+
+    /// The hop after a tool call, exactly as `ChatService` builds it: the
+    /// assistant's text plus a `tool_use` block, then a user turn carrying the
+    /// `tool_result`. Those are Anthropic content blocks.
+    private static let secondHop: [[String: Any]] = [
+        ["role": "user", "content": "make a folder called x in tmp"],
+        ["role": "assistant", "content": [
+            ["type": "text", "text": "On it."],
+            ["type": "tool_use", "id": "call_1", "name": "shell_run",
+             "input": ["command": "mkdir -p /tmp/x"]]
+        ]],
+        ["role": "user", "content": [
+            ["type": "tool_result", "tool_use_id": "call_1",
+             "content": "pending: waiting in the approval queue"]
+        ]]
+    ]
+
+    private static func sentMessages(_ server: SSEFixtureServer) throws -> [[String: Any]] {
+        let obj = try JSONSerialization.jsonObject(with: server.requestBody) as? [String: Any]
+        return try XCTUnwrap(obj?["messages"] as? [[String: Any]], "no messages array went on the wire")
+    }
+
+    /// Measured live on 2026-09-27 against Ollama (qwen2.5:7b): the local
+    /// model called `shell_run`, the tool answered, and the next hop came back
+    /// `HTTP 400 invalid message format`, because the Anthropic blocks went to
+    /// an OpenAI-shaped server as they were. Every tool call on the local route
+    /// ended in a failed reply. The server needs `tool_calls` on the assistant
+    /// turn and a `role: tool` message per result.
+    func test_secondHopAfterAToolCallGoesOutAsToolCallsAndToolMessages() async throws {
+        let (_, _, server) = try await runStream(
+            frames: [Self.frame(#"{"choices":[{"delta":{"content":"Done."},"finish_reason":"stop"}]}"#),
+                     Self.doneSentinel],
+            messages: Self.secondHop)
+        defer { server.stop() }
+        let sent = try Self.sentMessages(server)
+        XCTAssertEqual(sent.count, 3, "one message per turn: \(sent)")
+        guard sent.count == 3 else { return }
+
+        XCTAssertEqual(sent[0]["role"] as? String, "user")
+        XCTAssertEqual(sent[0]["content"] as? String, "make a folder called x in tmp")
+
+        XCTAssertEqual(sent[1]["role"] as? String, "assistant")
+        XCTAssertEqual(sent[1]["content"] as? String, "On it.")
+        let calls = sent[1]["tool_calls"] as? [[String: Any]] ?? []
+        XCTAssertEqual(calls.count, 1, "the assistant turn lost its tool call: \(sent[1])")
+        XCTAssertEqual(calls.first?["id"] as? String, "call_1")
+        XCTAssertEqual(calls.first?["type"] as? String, "function")
+        let fn = calls.first?["function"] as? [String: Any]
+        XCTAssertEqual(fn?["name"] as? String, "shell_run")
+        let args = (fn?["arguments"] as? String).flatMap {
+            try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any]
+        }
+        XCTAssertEqual(args?["command"] as? String, "mkdir -p /tmp/x",
+                       "arguments must be a JSON string, as the server sends them")
+
+        XCTAssertEqual(sent[2]["role"] as? String, "tool")
+        XCTAssertEqual(sent[2]["tool_call_id"] as? String, "call_1")
+        XCTAssertEqual(sent[2]["content"] as? String, "pending: waiting in the approval queue")
+    }
+
+    /// A user turn that holds both a tool result and words sends the result
+    /// first (the server wants it right after the call) and the words after it.
+    /// A result written as text blocks arrives as their text.
+    func test_toolResultWithBlocksAndTrailingWordsKeepsBoth() async throws {
+        var hop = Self.secondHop
+        hop[2] = ["role": "user", "content": [
+            ["type": "tool_result", "tool_use_id": "call_1",
+             "content": [["type": "text", "text": "made it"]]],
+            ["type": "text", "text": "thanks"]
+        ]]
+        let (_, _, server) = try await runStream(
+            frames: [Self.frame(#"{"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}"#),
+                     Self.doneSentinel],
+            messages: hop)
+        defer { server.stop() }
+        let sent = try Self.sentMessages(server)
+        XCTAssertEqual(sent.map { $0["role"] as? String ?? "?" }, ["user", "assistant", "tool", "user"])
+        guard sent.count == 4 else { return }
+        XCTAssertEqual(sent[2]["content"] as? String, "made it")
+        XCTAssertEqual(sent[3]["content"] as? String, "thanks")
+    }
+
+    /// A pasted picture is an Anthropic `image` block; the server reads an
+    /// `image_url` part with a data URL.
+    func test_imageAttachmentGoesOutAsImageURLPart() async throws {
+        let msgs: [[String: Any]] = [["role": "user", "content": [
+            ["type": "image", "source": ["type": "base64", "media_type": "image/png", "data": "AAAA"]],
+            ["type": "text", "text": "what is this"]
+        ]]]
+        let (_, _, server) = try await runStream(
+            frames: [Self.frame(#"{"choices":[{"delta":{"content":"a dot"},"finish_reason":"stop"}]}"#),
+                     Self.doneSentinel],
+            messages: msgs)
+        defer { server.stop() }
+        let sent = try Self.sentMessages(server)
+        let parts = sent.first?["content"] as? [[String: Any]] ?? []
+        XCTAssertEqual(parts.count, 2, "\(sent)")
+        guard parts.count == 2 else { return }
+        XCTAssertEqual(parts[0]["type"] as? String, "image_url")
+        XCTAssertEqual((parts[0]["image_url"] as? [String: Any])?["url"] as? String, "data:image/png;base64,AAAA")
+        XCTAssertEqual(parts[1]["type"] as? String, "text")
+        XCTAssertEqual(parts[1]["text"] as? String, "what is this")
+    }
+
+    /// The non-streaming tool call takes the same history and must send the
+    /// same shape.
+    func test_nonStreamingToolCallSendsTheSameShape() async throws {
+        let server = SSEFixtureServer(
+            frames: [#"{"choices":[{"message":{"content":"Done."},"finish_reason":"stop"}]}"#],
+            contentType: "application/json")
+        try server.start()
+        defer { server.stop() }
+        let backend = OpenAICompatBackend(baseURL: server.baseURL)
+        _ = try await backend.completeWithTools(
+            apiKey: "fixture", model: "fixture-model", system: nil,
+            messages: Self.secondHop, tools: [], maxTokens: 64, temperature: 0)
+        let sent = try Self.sentMessages(server)
+        XCTAssertEqual(sent.map { $0["role"] as? String ?? "?" }, ["user", "assistant", "tool"])
+        guard sent.count == 3 else { return }
+        XCTAssertEqual((sent[1]["tool_calls"] as? [[String: Any]])?.count, 1)
+        XCTAssertEqual(sent[2]["tool_call_id"] as? String, "call_1")
     }
 
     // MARK: - Plain text
@@ -449,9 +574,24 @@ final class OpenAICompatStreamFixtureTests: XCTestCase {
             // The stranger's surface. Asserted through the same function the
             // chat bubble renders with, so this cannot pass while the delivered
             // line still says the model cannot see.
+            // WAS an assertion that the shown sentence names the status.
+            // Status codes are banned from the face; the code was standing in
+            // for "this failure is reported as ITSELF". The caller still gets
+            // the real code (asserted above), and the shown line must be the
+            // specific sentence for that failure rather than a generic one.
             let shown = ChatService.humanMessage(for: error)
-            XCTAssertTrue(shown.contains("HTTP \(c.status)"),
-                          "the shown sentence does not name the status: \(shown)")
+            let expected: String
+            switch c.status {
+            case 401, 403: expected = "key"
+            case 429:      expected = "too many requests"
+            case 413:      expected = "too large"
+            case 500...599: expected = "provider"
+            default:       expected = "retry"
+            }
+            XCTAssertTrue(shown.lowercased().contains(expected),
+                          "HTTP \(c.status) is not reported as itself: \(shown)")
+            XCTAssertFalse(shown.contains("\(c.status)"),
+                           "a status code reached the face: \(shown)")
             XCTAssertFalse(shown.lowercased().contains("vision"),
                            "HTTP \(c.status) reads to the user as a vision problem: \(shown)")
         }
@@ -562,7 +702,10 @@ final class OpenAICompatStreamFixtureTests: XCTestCase {
         XCTAssertEqual(code, 401)
         XCTAssertEqual(text, "Unauthorized",
                        "the body was replaced rather than passed through")
-        XCTAssertTrue(ChatService.humanMessage(for: error).contains("HTTP 401"),
+        // The one fact it had is that the key was rejected, which is what the
+        // person can act on. The status itself stays out of the face and in
+        // the error the caller already holds.
+        XCTAssertTrue(ChatService.humanMessage(for: error).lowercased().contains("key"),
                       "a bodyless rejection lost the one fact it had")
     }
 
@@ -599,6 +742,236 @@ final class OpenAICompatStreamFixtureTests: XCTestCase {
         } catch {
             XCTFail("the raw parse error escaped instead of ClaudeError.decoding: \(error)")
         }
+    }
+
+    // MARK: - Ollama: the native endpoint, with a window that fits the prompt
+
+    /// Measured 2026-09-27 on this Mac mini (Ollama 0.22.0, qwen2.5:7b, 16 GB):
+    /// Ollama sizes the window to the machine, here 4096 tokens, and a Grux
+    /// chat prompt is 15,000 to 22,000 (server log: `truncating input prompt
+    /// limit=4096 prompt=21711 keep=4`). It keeps the first 4 tokens and the
+    /// tail, so the system prompt (who Grux is, today's date) never reached
+    /// the model: "what day is it" came back "the current date is not
+    /// provided", and "what is two plus two" came back "Okay.". The
+    /// `/v1/chat/completions` endpoint has no field for the window (probed:
+    /// `options`, `num_ctx`, `context_length`, `extra_body` all ignored), so
+    /// an Ollama server gets its native `/api/chat` with `options.num_ctx`.
+    private static let ollamaFrames = [
+        #"{"model":"m","message":{"role":"assistant","content":"It is "},"done":false}"# + "\n",
+        #"{"model":"m","message":{"role":"assistant","content":"Sunday."},"done":false}"# + "\n",
+        #"{"model":"m","message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","prompt_eval_count":21711,"eval_count":5}"# + "\n"
+    ]
+
+    private func runOllamaStream(frames: [String],
+                                 systemBlocks: [[String: Any]] = [["type": "text", "text": "Today is Sunday."]],
+                                 messages: [[String: Any]] = [["role": "user", "content": "what day is it"]])
+        async throws -> (Drained, OpenAICompatBackend, SSEFixtureServer) {
+        let server = SSEFixtureServer(frames: frames, contentType: "application/x-ndjson", ollamaVersion: "0.22.0")
+        try server.start()
+        let backend = OpenAICompatBackend(baseURL: server.baseURL)
+        let stream = await backend.streamCompleteWithTools(
+            apiKey: "ollama", model: "qwen2.5:7b",
+            systemBlocks: systemBlocks,
+            messages: messages, tools: [], maxTokens: 64, temperature: 0,
+            spanName: "test.stream", feature: "test")
+        var out = Drained()
+        for try await event in stream {
+            out.order.append(Self.label(event))
+            if case .textDelta(let t) = event { out.text += t }
+            if case .toolUseStop(let id, _, let input) = event {
+                out.toolInputs.append((id: id, input: input))
+            }
+        }
+        return (out, backend, server)
+    }
+
+    func test_ollamaChatGoesToTheNativeEndpointWithAWindowThatFitsTheprompt() async throws {
+        let (out, backend, server) = try await runOllamaStream(frames: Self.ollamaFrames)
+        defer { server.stop() }
+        XCTAssertTrue(server.requestLine.hasPrefix("POST /api/chat "),
+                      "an Ollama server must get its native chat endpoint: \(server.requestLines)")
+        let body = try XCTUnwrap(try JSONSerialization.jsonObject(with: server.requestBody) as? [String: Any])
+        let options = try XCTUnwrap(body["options"] as? [String: Any], "no options went on the wire: \(body)")
+        XCTAssertEqual(options["num_ctx"] as? Int, OpenAICompatBackend.ollamaContextTokens)
+        XCTAssertGreaterThanOrEqual(OpenAICompatBackend.ollamaContextTokens, 32_768,
+                                    "a Grux chat prompt is over 21,000 tokens")
+        XCTAssertEqual(options["num_predict"] as? Int, 64)
+        XCTAssertEqual(body["stream"] as? Bool, true)
+        let sent = body["messages"] as? [[String: Any]] ?? []
+        XCTAssertEqual(sent.first?["role"] as? String, "system")
+        XCTAssertEqual(sent.first?["content"] as? String, "Today is Sunday.")
+
+        XCTAssertEqual(out.text, "It is Sunday.")
+        XCTAssertEqual(out.order, ["textBlockStart", "textDelta(It is )", "textDelta(Sunday.)",
+                                   "textBlockStop", "messageStop(stop)"])
+        let usage = await backend.usageSnapshot()
+        XCTAssertEqual(usage.input, 21711)
+        XCTAssertEqual(usage.output, 5)
+    }
+
+    /// Native tool calls arrive whole, with arguments as an object.
+    func test_ollamaNativeToolCallStreamsAsOneToolUse() async throws {
+        let frames = [
+            #"{"message":{"role":"assistant","content":"","tool_calls":[{"id":"call_a","function":{"index":0,"name":"shell_run","arguments":{"command":"ls /tmp"}}}]},"done":false}"# + "\n",
+            #"{"message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","prompt_eval_count":10,"eval_count":3}"# + "\n"
+        ]
+        let (out, _, server) = try await runOllamaStream(frames: frames)
+        defer { server.stop() }
+        XCTAssertEqual(out.order, [#"toolUseStart(call_a,shell_run)"#, #"toolUseInputDelta({"command":"ls /tmp"})"#,
+                                   "toolUseStop(call_a,shell_run)", "messageStop(tool_calls)"])
+        XCTAssertEqual(out.toolInputs.first?.input["command"] as? String, "ls /tmp")
+    }
+
+    /// The hop after a tool call in the native shape: arguments as an object,
+    /// and the result named for the tool it answers.
+    func test_ollamaSecondHopSendsNativeToolCallsAndToolNames() async throws {
+        let (_, _, server) = try await runOllamaStream(frames: Self.ollamaFrames, messages: Self.secondHop)
+        defer { server.stop() }
+        let body = try XCTUnwrap(try JSONSerialization.jsonObject(with: server.requestBody) as? [String: Any])
+        let sent = body["messages"] as? [[String: Any]] ?? []
+        XCTAssertEqual(sent.map { $0["role"] as? String ?? "?" }, ["system", "user", "assistant", "tool"])
+        guard sent.count == 4 else { return }
+        let fn = (sent[2]["tool_calls"] as? [[String: Any]])?.first?["function"] as? [String: Any]
+        XCTAssertEqual(fn?["name"] as? String, "shell_run")
+        XCTAssertEqual((fn?["arguments"] as? [String: Any])?["command"] as? String, "mkdir -p /tmp/x",
+                       "native arguments are an object, not a string")
+        XCTAssertEqual(sent[3]["tool_name"] as? String, "shell_run")
+        XCTAssertEqual(sent[3]["content"] as? String, "pending: waiting in the approval queue")
+    }
+
+    /// A pasted picture goes to Ollama as `images`, beside the words.
+    func test_ollamaImageGoesOutAsImages() async throws {
+        let msgs: [[String: Any]] = [["role": "user", "content": [
+            ["type": "image", "source": ["type": "base64", "media_type": "image/png", "data": "AAAA"]],
+            ["type": "text", "text": "what is this"]
+        ]]]
+        let (_, _, server) = try await runOllamaStream(frames: Self.ollamaFrames, messages: msgs)
+        defer { server.stop() }
+        let body = try XCTUnwrap(try JSONSerialization.jsonObject(with: server.requestBody) as? [String: Any])
+        let user = (body["messages"] as? [[String: Any]] ?? []).last ?? [:]
+        XCTAssertEqual(user["content"] as? String, "what is this")
+        XCTAssertEqual(user["images"] as? [String], ["AAAA"])
+    }
+
+    /// Every call to the same model must ask for the same window, or Ollama
+    /// reloads the model at the other size on each switch.
+    func test_ollamaNonStreamingCallsUseTheSameWindow() async throws {
+        let server = SSEFixtureServer(
+            frames: [#"{"model":"m","message":{"role":"assistant","content":"four"},"done":true,"done_reason":"stop","prompt_eval_count":9,"eval_count":1}"#],
+            contentType: "application/json", ollamaVersion: "0.22.0")
+        try server.start()
+        defer { server.stop() }
+        let backend = OpenAICompatBackend(baseURL: server.baseURL)
+        let text = try await backend.complete(apiKey: "ollama", model: "qwen2.5:7b", system: "s",
+                                              messages: [ClaudeMessage(role: "user", content: "two plus two")],
+                                              maxTokens: 16, temperature: 0)
+        XCTAssertEqual(text, "four")
+        XCTAssertTrue(server.requestLine.hasPrefix("POST /api/chat "), server.requestLine)
+        let body = try XCTUnwrap(try JSONSerialization.jsonObject(with: server.requestBody) as? [String: Any])
+        XCTAssertEqual((body["options"] as? [String: Any])?["num_ctx"] as? Int, OpenAICompatBackend.ollamaContextTokens)
+        XCTAssertEqual(body["stream"] as? Bool, false)
+        let usage = await backend.usageSnapshot()
+        XCTAssertEqual(usage.input, 9)
+
+        let tools = try await backend.completeWithTools(
+            apiKey: "ollama", model: "qwen2.5:7b", system: nil,
+            messages: [["role": "user", "content": "hi"]], tools: [], maxTokens: 16, temperature: 0)
+        XCTAssertTrue(server.requestLine.hasPrefix("POST /api/chat "), server.requestLine)
+        XCTAssertEqual(tools.stopReason, "stop")
+        XCTAssertEqual(server.requestLines.filter { $0.hasPrefix("GET /api/version") }.count, 1,
+                       "the server is asked what it is once, not per call")
+    }
+
+    // MARK: - Ollama: the per-turn block rides after the tools
+
+    /// Measured 2026-09-27 on this Mac mini (Ollama 0.22.0, qwen2.5:7b): a
+    /// local chat turn took 78 to 117 s. Ollama's chat template renders the
+    /// whole system text BEFORE the tool schemas, and Grux's system text ends
+    /// with a block that changes every turn (NOW, recent memories, retrieved
+    /// context). Ollama reuses its cache only up to the first changed token, so
+    /// every turn re-read every tool. A probe with a 12,849 token prompt: 76 s
+    /// per call with the changing line in the system message, 0.5 s for the
+    /// second and third calls with it in the user message.
+    private static let turnBlocks: (String) -> [[String: Any]] = { now in [
+        ["type": "text", "text": "You are Grux.", "cache_control": ["type": "ephemeral"]],
+        ["type": "text", "text": "NOW: \(now)"]
+    ] }
+
+    func test_ollamaPerTurnBlockRidesWithTheLastUserMessageNotTheSystemText() async throws {
+        let (_, _, server) = try await runOllamaStream(frames: Self.ollamaFrames,
+                                                       systemBlocks: Self.turnBlocks("Sunday 6:30 AM"),
+                                                       messages: Self.secondHop)
+        defer { server.stop() }
+        let sent = try Self.sentMessages(server)
+        XCTAssertEqual(sent.map { $0["role"] as? String ?? "?" }, ["system", "user", "assistant", "tool"])
+        guard sent.count == 4 else { return }
+        XCTAssertEqual(sent[0]["content"] as? String, "You are Grux.",
+                       "the system text must hold only the blocks that stay the same turn to turn")
+        let user = sent[1]["content"] as? String ?? ""
+        XCTAssertTrue(user.contains("NOW: Sunday 6:30 AM"), "the per-turn block was dropped: \(user)")
+        XCTAssertTrue(user.hasSuffix("make a folder called x in tmp"), "the user's words must come last: \(user)")
+        XCTAssertTrue(user.hasPrefix(OpenAICompatBackend.turnContextLabel), user)
+    }
+
+    /// Two turns with a different clock: everything the server renders before
+    /// the new question (system text, tools, the earlier turn) is byte-identical.
+    func test_ollamaTwoTurnsShareTheSystemTextAndTheEarlierTurn() async throws {
+        let first = try await runOllamaStream(frames: Self.ollamaFrames,
+                                              systemBlocks: Self.turnBlocks("6:30 AM"),
+                                              messages: [["role": "user", "content": "hi"]])
+        let sentFirst = try Self.sentMessages(first.2)
+        first.2.stop()
+        let second = try await runOllamaStream(frames: Self.ollamaFrames,
+                                               systemBlocks: Self.turnBlocks("6:31 AM"),
+                                               messages: [["role": "user", "content": "hi"],
+                                                          ["role": "assistant", "content": "Hey."],
+                                                          ["role": "user", "content": "what time is it"]])
+        let sentSecond = try Self.sentMessages(second.2)
+        second.2.stop()
+        XCTAssertEqual(sentFirst.first?["content"] as? String, sentSecond.first?["content"] as? String)
+        XCTAssertEqual(sentSecond.map { $0["content"] as? String ?? "?" }.dropFirst().first, "hi",
+                       "only the newest user message carries the per-turn block")
+        XCTAssertTrue((sentSecond.last?["content"] as? String ?? "").contains("NOW: 6:31 AM"))
+    }
+
+    /// A picture keeps its place beside the words when the block rides along.
+    func test_ollamaPerTurnBlockKeepsAPictureBesideTheWords() async throws {
+        let msgs: [[String: Any]] = [["role": "user", "content": [
+            ["type": "image", "source": ["type": "base64", "media_type": "image/png", "data": "AAAA"]],
+            ["type": "text", "text": "what is this"]
+        ]]]
+        let (_, _, server) = try await runOllamaStream(frames: Self.ollamaFrames,
+                                                       systemBlocks: Self.turnBlocks("6:30 AM"), messages: msgs)
+        defer { server.stop() }
+        let user = try Self.sentMessages(server).last ?? [:]
+        let text = user["content"] as? String ?? ""
+        XCTAssertTrue(text.contains("NOW: 6:30 AM") && text.hasSuffix("what is this"), text)
+        XCTAssertEqual(user["images"] as? [String], ["AAAA"])
+    }
+
+    /// Another OpenAI-compatible server keeps the whole prompt in the system
+    /// message, as before: only Ollama's template was measured.
+    func test_serverThatIsNotOllamaKeepsThePerTurnBlockInTheSystemText() async throws {
+        let server = SSEFixtureServer(frames: [Self.frame(#"{"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}"#), Self.doneSentinel])
+        try server.start()
+        defer { server.stop() }
+        let backend = OpenAICompatBackend(baseURL: server.baseURL)
+        let stream = await backend.streamCompleteWithTools(
+            apiKey: "fixture", model: "fixture-model", systemBlocks: Self.turnBlocks("6:30 AM"),
+            messages: [["role": "user", "content": "hi"]], tools: [], maxTokens: 16, temperature: 0,
+            spanName: "test.stream", feature: "test")
+        for try await _ in stream {}
+        let sent = try Self.sentMessages(server)
+        XCTAssertEqual(sent.first?["content"] as? String, "You are Grux.\n\nNOW: 6:30 AM")
+        XCTAssertEqual(sent.last?["content"] as? String, "hi")
+    }
+
+    /// A local server that is not Ollama keeps the OpenAI endpoint.
+    func test_localServerThatIsNotOllamaStaysOnV1() async throws {
+        let (_, _, server) = try await runStream(
+            frames: [Self.frame(#"{"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}"#), Self.doneSentinel])
+        defer { server.stop() }
+        XCTAssertTrue(server.requestLine.hasPrefix("POST /v1/chat/completions "), server.requestLine)
     }
 }
 
@@ -643,6 +1016,12 @@ private final class SSEFixtureServer: @unchecked Sendable {
     private let lock = NSLock()
     private var listenFD: Int32 = -1
     private var storedRequestLine = ""
+    private var storedRequestBody = Data()
+    private var storedRequestLines: [String] = []
+    /// Set to answer `GET /api/version` the way Ollama does, so the backend
+    /// takes this fixture for an Ollama server. Nil answers it with `frames`,
+    /// like any server that is not Ollama.
+    private let ollamaVersion: String?
 
     private(set) var port: UInt16 = 0
 
@@ -653,11 +1032,25 @@ private final class SSEFixtureServer: @unchecked Sendable {
         return storedRequestLine
     }
 
+    /// Every request line, in order, the version probe included.
+    var requestLines: [String] {
+        lock.lock(); defer { lock.unlock() }
+        return storedRequestLines
+    }
+
+    /// The body the last connection sent, for asserting what went on the wire.
+    var requestBody: Data {
+        lock.lock(); defer { lock.unlock() }
+        return storedRequestBody
+    }
+
     /// Shaped for `OpenAICompatBackend(baseURL:)`, which appends
     /// `/v1/chat/completions` itself.
     var baseURL: String { "http://127.0.0.1:\(port)" }
 
-    init(frames: [String], statusCode: Int = 200, contentType: String = "text/event-stream") {
+    init(frames: [String], statusCode: Int = 200, contentType: String = "text/event-stream",
+         ollamaVersion: String? = nil) {
+        self.ollamaVersion = ollamaVersion
         self.frames = frames.map { Data($0.utf8) }
         self.statusCode = statusCode
         self.contentType = contentType
@@ -730,24 +1123,41 @@ private final class SSEFixtureServer: @unchecked Sendable {
         }
         guard let headEnd else { return }
         let head = String(decoding: request[..<headEnd.lowerBound], as: UTF8.self)
+        let line = head.split(separator: "\r\n").first.map(String.init) ?? ""
         lock.lock()
-        storedRequestLine = head.split(separator: "\r\n").first.map(String.init) ?? ""
+        storedRequestLines.append(line)
+        lock.unlock()
+        if let ollamaVersion, line.hasPrefix("GET /api/version") {
+            let json = Data(#"{"version":"\#(ollamaVersion)"}"#.utf8)
+            let head = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                + "Content-Length: \(json.count)\r\nConnection: close\r\n\r\n"
+            _ = writeAll(conn, Data(head.utf8)) && writeAll(conn, json)
+            return
+        }
+        lock.lock()
+        storedRequestLine = line
         lock.unlock()
 
-        // Drain the request body. Nothing here reads it, but leaving it in the
-        // socket can stall the client mid-send on a body larger than the kernel
-        // buffer, and a compiled system prompt is exactly that large.
+        // Drain the request body, kept for the tests that assert its shape.
+        // Leaving it in the socket can also stall the client mid-send on a body
+        // larger than the kernel buffer, and a compiled system prompt is exactly
+        // that large.
         var contentLength = 0
         for header in head.split(separator: "\r\n") where header.lowercased().hasPrefix("content-length:") {
             contentLength = Int(header.dropFirst("content-length:".count)
                 .trimmingCharacters(in: .whitespaces)) ?? 0
         }
         var bodyRead = request.count - headEnd.upperBound
+        var body = Data(request[headEnd.upperBound...])
         while bodyRead < contentLength {
             let n = read(conn, &buf, buf.count)
             if n <= 0 { break }
+            body.append(contentsOf: buf[0..<n])
             bodyRead += n
         }
+        lock.lock()
+        storedRequestBody = body
+        lock.unlock()
 
         var response = "HTTP/1.1 \(statusCode) OK\r\n"
         response += "Content-Type: \(contentType)\r\n"

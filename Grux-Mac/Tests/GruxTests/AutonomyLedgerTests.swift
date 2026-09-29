@@ -142,8 +142,9 @@ final class AutonomyLedgerTests: XCTestCase {
     // [audit-swarm]
     func testCorruptLedgerFileIsBackedUpNotSilentlyWiped() {
         let ledger = AutonomyLedger.shared
-        let dir = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux").appendingPathComponent("jax")
+        // The store's own folder, which under test is the suite's scratch
+        // directory. This test used to corrupt the operator's REAL ledger.
+        let dir = Persistence.gruxDir.appendingPathComponent("jax")
         let fileURL = dir.appendingPathComponent("autonomy-ledger.json")
         // Seed a real record, then corrupt the file on disk behind the store.
         let brand = freshBrand("corrupt")

@@ -25,7 +25,7 @@ import GruxAgentCore
 //
 // Execution mode: `.headless` is the implemented rail (SwarmWorker /
 // claude --print). `.interactive` is a RESERVED fallback flag for the
-// TerminalFocus rail; selecting it today logs the reservation and runs
+// interactive terminal rail; selecting it today logs the reservation and runs
 // headless. No new dependencies, no shared-file edits: shell access rides
 // the existing ShellRunner seam, claude sessions ride GruxAgentCore.
 
@@ -418,7 +418,7 @@ final class RDWorker: ObservableObject {
 
     enum Mode: String, Codable, Sendable {
         case headless     // SwarmWorker claude --print rail (implemented)
-        case interactive  // TerminalFocus rail, RESERVED fallback flag
+        case interactive  // interactive terminal rail, RESERVED fallback flag
     }
 
     struct Config {
@@ -599,7 +599,7 @@ final class RDWorker: ObservableObject {
         if config.mode == .interactive {
             await log.append(RDRunEvent(
                 kind: .info,
-                text: "interactive TerminalFocus rail is reserved as a fallback flag and not wired in Phase B; running headless claude --print rail"
+                text: "interactive terminal rail is reserved as a fallback flag and not wired in Phase B; running headless claude --print rail"
             ))
         }
 

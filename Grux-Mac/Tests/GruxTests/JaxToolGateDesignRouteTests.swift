@@ -5,28 +5,38 @@ import XCTest
 // ungated api route. Any non-api route (the subprocess-spawning subscriptionCLI
 // or localModel) must NOT proceed straight through, it must be short-circuited
 // into the approval queue. Read-only design tools stay ungated.
+//
+// The gate became async when the decision engine was added as a second opinion
+// on it. The assertions hoist the await out of XCTAssert's autoclosure rather
+// than asserting inside it.
 @MainActor
 final class JaxToolGateDesignRouteTests: XCTestCase {
 
-    private func proceeds(_ name: String, _ input: [String: Any]) -> Bool {
-        if case .proceed = JaxToolGate.evaluate(name: name, input: input) { return true }
+    private func proceeds(_ name: String, _ input: [String: Any]) async -> Bool {
+        if case .proceed = await JaxToolGate.evaluate(name: name, input: input) { return true }
         return false
     }
 
-    func testDesignGenerateApiRouteProceeds() {
-        XCTAssertTrue(proceeds("design_generate", ["project": "x", "brief": "y"]))
-        XCTAssertTrue(proceeds("design_generate", ["project": "x", "brief": "y", "route": "api"]))
-        XCTAssertTrue(proceeds("design_generate", ["project": "x", "brief": "y", "route": ""]))
+    private func assertProceeds(_ name: String, _ input: [String: Any],
+                                _ expected: Bool, line: UInt = #line) async {
+        let actual = await proceeds(name, input)
+        XCTAssertEqual(actual, expected, "\(name) \(input)", line: line)
     }
 
-    func testDesignGenerateSubprocessRouteDoesNotProceed() {
-        XCTAssertFalse(proceeds("design_generate", ["project": "x", "brief": "y", "route": "subscriptionCLI"]))
-        XCTAssertFalse(proceeds("design_generate", ["project": "x", "brief": "y", "route": "localModel"]))
+    func testDesignGenerateApiRouteProceeds() async {
+        await assertProceeds("design_generate", ["project": "x", "brief": "y"], true)
+        await assertProceeds("design_generate", ["project": "x", "brief": "y", "route": "api"], true)
+        await assertProceeds("design_generate", ["project": "x", "brief": "y", "route": ""], true)
     }
 
-    func testReadOnlyDesignToolsProceed() {
-        XCTAssertTrue(proceeds("design_list_projects", ["query": "z"]))
-        XCTAssertTrue(proceeds("design_create_project", ["title": "z"]))
-        XCTAssertTrue(proceeds("design_open_project", ["project": "z"]))
+    func testDesignGenerateSubprocessRouteDoesNotProceed() async {
+        await assertProceeds("design_generate", ["project": "x", "brief": "y", "route": "subscriptionCLI"], false)
+        await assertProceeds("design_generate", ["project": "x", "brief": "y", "route": "localModel"], false)
+    }
+
+    func testReadOnlyDesignToolsProceed() async {
+        await assertProceeds("design_list_projects", ["query": "z"], true)
+        await assertProceeds("design_create_project", ["title": "z"], true)
+        await assertProceeds("design_open_project", ["project": "z"], true)
     }
 }

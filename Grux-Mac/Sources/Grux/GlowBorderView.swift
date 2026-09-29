@@ -49,7 +49,7 @@ final class GlowEdgeWindow: NSWindow {
         self.isOpaque = false
         self.backgroundColor = .clear
         self.hasShadow = false
-        self.level = .popUpMenu
+        WindowFacade.setLevel(.popUpMenu, of: self)
         self.ignoresMouseEvents = true
         self.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
         self.isMovableByWindowBackground = false

@@ -46,6 +46,13 @@ enum EmailTool {
 
     static let toolNames: Set<String> = ["list_inbox", "compose_email"]
 
+    /// What the model hears for an email that now waits in Approvals, in the
+    /// words the person sees (Approvals, "you"), so an echo still reads right.
+    static func pendingResult(recipients: [String], fromName: String) -> String {
+        "pending: your email to \(recipients.joined(separator: ", ")) is waiting for your OK in Approvals. "
+            + "It would go out as \(fromName). Nothing is sent until you tap it."
+    }
+
     static func dispatch(name: String, input: [String: Any]) async -> String {
         switch name {
         case "list_inbox":
@@ -197,8 +204,9 @@ enum EmailTool {
             // actually sends it.
             pending.action.detail["__replay_tool"] = "compose_email"
             if let json = JaxToolGate.encodeInput(input) { pending.action.detail["__replay_input"] = json }
+            pending.action.detail[ApprovalQueue.askedInKey] = ApprovalQueue.askedInChat
             await MainActor.run { ApprovalQueue.shared.enqueue(pending) }
-            return "pending: this email is waiting in the Jax HQ approval queue for the user's one-tap approval (would send as \(prepared.identity.fromName) to \(prepared.recipients.joined(separator: ", "))). Nothing has been sent."
+            return pendingResult(recipients: prepared.recipients, fromName: prepared.identity.fromName)
         case .refuse(let reason):
             return "refused: \(reason). Nothing has been sent."
         }

@@ -101,9 +101,8 @@ extension GruxControlTools {
         // fresh install is a download of a few hundred megabytes and takes minutes. The CLI
         // says so before it calls, because a wait nobody explained looks like a hang.
         guard let kit = await AmbientListener.shared.sharedWhisperKit() else {
-            return MCPWire.textFailure("Grux could not load the speech model, so nothing was "
-                + "transcribed and nothing was sent anywhere. The first load fetches it and "
-                + "needs the network once. grux doctor checks the rest of the speech setup.")
+            return MCPWire.textFailure(speechModelUnavailable(
+                reason: AmbientListener.shared.whisperLoadFailure))
         }
 
         // The same decode settings the corpus ingester uses on files, prompt biasing
@@ -122,7 +121,7 @@ extension GruxControlTools {
         let began = Date()
         let results: [TranscriptionResult]
         do {
-            results = try await kit.transcribe(audioArray: samples, decodeOptions: options)
+            results = try await WhisperDecode.transcribe(kit, samples, options: options)
         } catch {
             return MCPWire.textFailure("Whisper stopped partway through \(name): "
                 + "\(error.localizedDescription). Nothing was written and nothing left this "
@@ -155,6 +154,23 @@ extension GruxControlTools {
             "model": "\(kit.modelVariant)",
         ]
         return MCPWire.textResult(jsonText(body))
+    }
+
+    /// The refusal when the model will not load. With a reason, that reason and nothing
+    /// else: measured 2026-09-27, a model folder Grux could not read was reported as a
+    /// network problem. The load is tried again on the next ask, so saying so is true.
+    static func speechModelUnavailable(reason: String?) -> String {
+        let head = "Grux could not load the speech model, so nothing was transcribed and "
+            + "nothing was sent anywhere."
+        guard let reason, !reason.isEmpty else {
+            return head + " The first load fetches it and needs the network once. grux "
+                + "doctor checks the rest of the speech setup."
+        }
+        let oneLine = reason.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        return head + " What stopped it: \(oneLine) Asking again loads it again."
     }
 
     /// What the file LOOKED like, for a refusal that has to say why without guessing.

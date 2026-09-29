@@ -198,7 +198,10 @@ final class ModelRegistry: ObservableObject {
     func modelId() -> String {
         switch resolvedProvider {
         case .anthropic: return AppState.shared.config.model      // claude-haiku-4-5-...
-        case .local, .custom: return AppState.shared.config.offlineLLMModel   // e.g. "llama3.1"
+        case .local: return AppState.shared.config.offlineLLMModel   // e.g. "llama3.1"
+        case .custom(let id):
+            return CustomEndpointStore.shared.endpoint(id: id)?.modelId
+                ?? AppState.shared.config.offlineLLMModel
         }
     }
 

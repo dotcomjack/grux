@@ -67,6 +67,12 @@ private func probeTapCallback(proxy: CGEventTapProxy,
 /// answered from a test host at all, because the test host is a different binary
 /// with its own TCC record: it is answered by `fire-screen-check`, and the test
 /// at the bottom is what stops that diagnostic being quietly deleted.
+///
+/// LIVE TESTS ARE OPT-IN. The tests that read Finder's real accessibility tree or
+/// post a real key event skip by default under XCTest, because asking an untrusted
+/// test host anything about Accessibility raises the system dialog. Run them with
+/// `GRUX_LIVE_AX_TESTS=1` on a Mac where the test host is trusted
+/// (`LiveAccessibility`); the skip message says so.
 @MainActor
 final class ScreenControlProofTests: XCTestCase {
 
@@ -83,8 +89,7 @@ final class ScreenControlProofTests: XCTestCase {
     /// path the new `await` sits in, and a hang or a dropped result there would
     /// have shown up as a silent no-op in the running app rather than a failure.
     func testListUIRunsEndToEndThroughTheToolWithBothGatesOpen() async throws {
-        try XCTSkipUnless(ScreenControlEngine.hasAccessibility(),
-                          "the test host has no Accessibility grant, so gate 2 cannot be opened")
+        try LiveAccessibility.require(self)
         try XCTSkipUnless(NSWorkspace.shared.runningApplications.contains { $0.localizedName == "Finder" },
                           "Finder is not running")
 
@@ -104,7 +109,7 @@ final class ScreenControlProofTests: XCTestCase {
     /// only property of that string the model depends on. A line that parses but
     /// points off every display is worse than no line.
     func testTheCoordinatesListUIReturnsLandOnARealDisplay() async throws {
-        try XCTSkipUnless(ScreenControlEngine.hasAccessibility(), "no Accessibility grant in the test host")
+        try LiveAccessibility.require(self)
         try XCTSkipUnless(NSWorkspace.shared.runningApplications.contains { $0.localizedName == "Finder" },
                           "Finder is not running")
         let saved = AppState.shared.config.screenControlEnabled
@@ -235,8 +240,7 @@ final class ScreenControlProofTests: XCTestCase {
     /// land in whatever the person at the machine has open, and no other key
     /// they press is affected.
     func testPressKeyPostsARealShiftedEventIntoTheHIDStream() throws {
-        try XCTSkipUnless(ScreenControlEngine.hasAccessibility(),
-                          "an event tap needs the Accessibility grant")
+        try LiveAccessibility.require(self)
 
         let box = TapBox()
         let installed = DispatchSemaphore(value: 0)
@@ -320,9 +324,35 @@ final class ScreenControlProofTests: XCTestCase {
                        "it prompts on the way out with the grant already held")
     }
 
-    /// And the prompt is raised from EXACTLY ONE place. A second call site is
-    /// how a prompt ends up firing at launch, which is the failure the truth
-    /// table above cannot see on its own.
+    /// And the prompt is raised from EXACTLY the places a person presses a
+    /// button: the Screen control switch, and `CapabilityRequest.openSystemSettings`
+    /// for Accessibility (every caller of it is a button: the set up card,
+    /// first-run, Settings > Permissions; `AccessibilityCTARegistersTests` pins
+    /// that it asks only for Accessibility). A new call site is how a prompt
+    /// ends up firing at launch, which the truth table above cannot see.
+    /// Every door that can raise the Accessibility dialog. `requestWithPrompt()` is the
+    /// one under `promptAccessibility()`; calling it directly skipped this scan (RV23).
+    /// `AXIsProcessTrustedWithOptions` itself is held to `AccessibilityTrust.swift` by
+    /// `AccessibilityTrustGuardTests`.
+    static let promptDoors = ["promptAccessibility()", "requestWithPrompt()"]
+
+    /// The doors a line of code calls: code, not comments, not the declarations.
+    static func promptDoorsCalled(_ raw: String) -> [String] {
+        let line = raw.trimmingCharacters(in: .whitespaces)
+        if line.hasPrefix("//") || line.hasPrefix("///") { return [] }
+        return promptDoors.filter { door in
+            line.contains(door) && !line.contains("func " + door.dropLast(2))
+        }
+    }
+
+    func testThePromptScanSeesEveryDoor() {
+        XCTAssertEqual(Self.promptDoorsCalled("        _ = AccessibilityTrust.requestWithPrompt()"), ["requestWithPrompt()"])
+        XCTAssertEqual(Self.promptDoorsCalled("        ScreenControlEngine.promptAccessibility()"), ["promptAccessibility()"])
+        XCTAssertEqual(Self.promptDoorsCalled("    static func requestWithPrompt() -> Bool {"), [])
+        XCTAssertEqual(Self.promptDoorsCalled("    static func promptAccessibility() -> Bool {"), [])
+        XCTAssertEqual(Self.promptDoorsCalled("    // requestWithPrompt() raises it"), [])
+    }
+
     func testNothingButTheSwitchEverRaisesThePrompt() throws {
         let sources = repoRoot().appendingPathComponent("Sources")
         guard let walker = FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil) else {
@@ -334,25 +364,20 @@ final class ScreenControlProofTests: XCTestCase {
         for case let url as URL in walker where url.pathExtension == "swift" {
             scanned += 1
             let src = try String(contentsOf: url, encoding: .utf8)
-            for (i, raw) in src.components(separatedBy: "\n").enumerated() {
-                let line = raw.trimmingCharacters(in: .whitespaces)
-                if line.hasPrefix("//") { continue }
-                // The declaration itself is not a call site.
-                if line.contains("func promptAccessibility") { continue }
-                if line.contains("promptAccessibility()") {
-                    // File, not file:line. A line number here would break on any
-                    // edit above it, and the property under test is "one place,
-                    // and it is the switch", which a line number does not carry.
-                    callSites.append(url.lastPathComponent)
-                    _ = i
-                }
+            for raw in src.components(separatedBy: "\n") {
+                // File and door, not file:line. A line number here would break on any
+                // edit above it, and the property under test is "one place, and it is
+                // the switch", which a line number does not carry.
+                for door in Self.promptDoorsCalled(raw) { callSites.append("\(url.lastPathComponent) \(door)") }
             }
         }
 
         XCTAssertGreaterThan(scanned, 100, "the walk found almost no Swift files, so it proved nothing")
-        XCTAssertEqual(callSites, ["SettingsView.swift"],
+        XCTAssertEqual(callSites.sorted(), ["CapabilityRequest.swift promptAccessibility()",
+                                            "ScreenControlEngine.swift requestWithPrompt()",
+                                            "SettingsView.swift promptAccessibility()"],
                        "the Accessibility prompt is raised from somewhere other than the Screen control "
-                       + "switch, or from more than one place: \(callSites)")
+                       + "switch and the Accessibility button, or from more places: \(callSites)")
     }
 
     // MARK: - 3. The shipped app's own grant, via the diagnostic
@@ -363,13 +388,17 @@ final class ScreenControlProofTests: XCTestCase {
     /// own TCC record, so its Accessibility grant says nothing about whether the
     /// re-signed `Grux.app` kept its own. `fire-screen-check` answers it from
     /// inside the shipped process, and this test exists so the diagnostic cannot
-    /// be deleted while the claim that rests on it stays in the notes.
+    /// be deleted while the claim that rests on it stays in the notes. The trigger
+    /// table moved out of GruxApp.swift in P-R-7, so this reads where it lives now.
+    /// The two names are matched as quoted LITERALS: the comment above the trigger
+    /// names both, so a bare match stayed green with the trigger renamed.
     func testTheShippedAppCanReportItsOwnScreenControlState() throws {
         let app = try String(
-            contentsOf: repoRoot().appendingPathComponent("Sources/Grux/GruxApp.swift"), encoding: .utf8)
+            contentsOf: repoRoot().appendingPathComponent("Sources/Grux/Triggers/AppTriggers.swift"),
+            encoding: .utf8)
 
-        XCTAssertTrue(app.contains("fire-screen-check"), "the trigger is gone")
-        XCTAssertTrue(app.contains("screen-control-status.json"), "it no longer writes anywhere readable")
+        XCTAssertTrue(app.contains("\"fire-screen-check\""), "the trigger is gone")
+        XCTAssertTrue(app.contains("\"screen-control-status.json\""), "it no longer writes anywhere readable")
         for key in ["accessibilityGranted", "resolvedTarget", "onScreenFrontToBack", "plusTypes"] {
             XCTAssertTrue(app.contains("\"\(key)\""),
                           "the dump no longer reports \(key), which is one of the things only the "
@@ -383,10 +412,56 @@ final class ScreenControlProofTests: XCTestCase {
     func testTheDiagnosticAgreesWithWhatTheToolWouldTarget() async throws {
         let target = ScreenControlEngine.currentTarget(appHint: "Finder")
         try XCTSkipUnless(target != nil, "Finder is not running")
-        try XCTSkipUnless(ScreenControlEngine.hasAccessibility(), "no Accessibility grant in the test host")
+        try LiveAccessibility.require(self)
 
         let read = await ScreenControlEngine.listUIElements(appHint: "Finder", maxCount: 5)
         XCTAssertEqual(target?.name, read?.app,
                        "the diagnostic names a different app than the one list_ui actually reads")
+    }
+}
+
+/// Off-screen Accessibility frames are not click targets.
+final class ScreenControlOffScreenElementTests: XCTestCase {
+    func test_aFrameFarAboveEveryDisplayIsNotClickReady() throws {
+        try XCTSkipIf(NSScreen.screens.isEmpty, "no displays attached to this host")
+        var bounds = CGRect.null
+        for s in NSScreen.screens { bounds = bounds.union(s.frame) }
+        // The shape measured on a scrolled Finder list: a row 7,000 points above
+        // the top of the screen space, reported with a normal size.
+        let scrolledAway = CGRect(x: bounds.midX, y: -(bounds.height + 5_000), width: 200, height: 24)
+        XCTAssertFalse(ScreenControlEngine.isOnADisplay(scrolledAway))
+
+        let onScreen = CGRect(x: bounds.midX, y: 40, width: 200, height: 24)
+        XCTAssertTrue(ScreenControlEngine.isOnADisplay(onScreen))
+    }
+
+    /// The shape that got through: a row a little ABOVE the display, well
+    /// inside the span the first flip wrongly accepted.
+    func test_aRowJustAboveTheDisplayIsNotClickReady() {
+        let one = [CGRect(x: 0, y: 0, width: 2681, height: 2557)]
+        XCTAssertFalse(ScreenControlEngine.isOnADisplay(CGRect(x: 724, y: -2011, width: 181, height: 18), screens: one),
+                       "a row scrolled 2,000 points above the display was click-ready")
+        XCTAssertFalse(ScreenControlEngine.isOnADisplay(CGRect(x: 724, y: -30, width: 181, height: 18), screens: one))
+        XCTAssertTrue(ScreenControlEngine.isOnADisplay(CGRect(x: 724, y: -10, width: 181, height: 18), screens: one),
+                      "a row half on screen at the top edge was dropped")
+        XCTAssertTrue(ScreenControlEngine.isOnADisplay(CGRect(x: 724, y: 1200, width: 181, height: 18), screens: one))
+        XCTAssertFalse(ScreenControlEngine.isOnADisplay(CGRect(x: 724, y: 2600, width: 181, height: 18), screens: one))
+    }
+
+    func test_aSecondDisplayAboveTheMainOneIsNegativeYAndStillADisplay() {
+        let main = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+        let above = CGRect(x: 0, y: 1080, width: 2560, height: 1440)   // Cocoa: stacked on top
+        XCTAssertEqual(ScreenControlEngine.topLeftFrames([main, above])[1], CGRect(x: 0, y: -1440, width: 2560, height: 1440))
+        XCTAssertTrue(ScreenControlEngine.isOnADisplay(CGRect(x: 100, y: -500, width: 50, height: 20), screens: [main, above]))
+        XCTAssertFalse(ScreenControlEngine.isOnADisplay(CGRect(x: 100, y: -1500, width: 50, height: 20), screens: [main, above]))
+    }
+
+    func test_theGapBesideAShorterDisplayIsNotADisplay() {
+        let main = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+        let side = CGRect(x: 1920, y: 200, width: 1920, height: 880)   // shorter, raised
+        // Top-left: the side display spans y -200 to 680, so y = 900 to its right is the gap.
+        XCTAssertFalse(ScreenControlEngine.isOnADisplay(CGRect(x: 2500, y: 900, width: 50, height: 20), screens: [main, side]),
+                       "the union of the displays counted the gap beside the shorter one")
+        XCTAssertTrue(ScreenControlEngine.isOnADisplay(CGRect(x: 2500, y: 300, width: 50, height: 20), screens: [main, side]))
     }
 }

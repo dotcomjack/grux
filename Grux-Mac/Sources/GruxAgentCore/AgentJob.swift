@@ -86,8 +86,17 @@ public struct AgentJob: Codable, Identifiable, Sendable {
         self.pausedReason = pausedReason
     }
 
-    public var isTerminal: Bool {
-        switch status {
+    public var isTerminal: Bool { status.isTerminal }
+
+    /// A failed job whose worker stopped on an expired Claude sign-in.
+    public var failedOnSignIn: Bool {
+        status == .failed && workers.contains { $0.interruption?.kind == .signInExpired }
+    }
+}
+
+public extension AgentJob.Status {
+    var isTerminal: Bool {
+        switch self {
         case .done, .failed, .cancelled: return true
         case .queued, .running, .waiting, .paused: return false
         }
@@ -106,6 +115,9 @@ public struct WorkerInterruption: Codable, Sendable, Equatable {
         case authLimitHit
         case ttl
         case userCancel
+        // The Claude CLI's sign-in expired (`SignInExpiry`). The worker
+        // failed; this only says why, so the job can offer a sign-in.
+        case signInExpired
     }
     public let kind: Kind
     public let detectedAt: Date

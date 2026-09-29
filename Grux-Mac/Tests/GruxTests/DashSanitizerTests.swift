@@ -72,13 +72,6 @@ final class DashSanitizerTests: XCTestCase {
         XCTAssertTrue(out.contains("e-mail"), "ASCII hyphens must survive: got \(out)")
     }
 
-    func testCloneExtractorStripDashesRemovesDashesAndKeepsHyphens() {
-        let out = CloneExtractor.stripDashes("a \u{2013} b, well-known, 2-pack")
-        XCTAssertFalse(out.unicodeScalars.contains("\u{2013}"))
-        XCTAssertTrue(out.contains("well-known"), "ASCII hyphens must survive: got \(out)")
-        XCTAssertTrue(out.contains("2-pack"), "ASCII hyphens must survive: got \(out)")
-    }
-
     // Feature Review renders model-written prose directly into the tab, and had
     // no scrubbing at all. Observed live as "catch regressions<em dash>so you can
     // trust the autonomy layer".

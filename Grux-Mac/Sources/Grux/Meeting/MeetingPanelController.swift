@@ -19,7 +19,7 @@ final class MeetingPanelController {
 
     func show() {
         if let existing = panel {
-            existing.orderFrontRegardless()
+            WindowFacade.orderFrontRegardless(existing)
             return
         }
         build()
@@ -43,7 +43,7 @@ final class MeetingPanelController {
             backing: .buffered,
             defer: false
         )
-        panel.level = .floating
+        WindowFacade.setLevel(.floating, of: panel)
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
@@ -83,7 +83,7 @@ final class MeetingPanelController {
 
         self.panel = panel
         self.hostingController = hc
-        panel.orderFrontRegardless()
+        WindowFacade.orderFrontRegardless(panel)
     }
 
     private func restoredFrame(defaultSize: NSSize) -> NSRect {

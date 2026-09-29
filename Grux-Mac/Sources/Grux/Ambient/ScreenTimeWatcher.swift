@@ -17,10 +17,15 @@ private let kScreenTimeIdleThreshold: TimeInterval = 60
 // ~/Library/Application Support/Grux/, but screen-time NDJSON is intentionally
 // surface-level so `tail -F ~/.grux/ambient/screentime-*.ndjson` works.
 //
-// Permissions: window title needs Accessibility. On first start() we trigger
-// the system AX prompt via AXIsProcessTrustedWithOptions. Until the user toggles
-// Grux on in Settings | Privacy | Accessibility, window_title stays empty and
-// per-app dwell still works from NSWorkspace alone.
+// Permissions: window title needs Accessibility. start() only READS the trust
+// state (AXIsProcessTrusted). It never raises the system dialog: a watcher that
+// starts by itself would put that dialog on screen at every launch until the
+// person said yes, and on a rebuilt app even after they did (measured
+// 2026-09-27). Asking is the Set up card's job (CapabilityRequest opens the
+// Accessibility pane) and the Screen control switch's (ScreenControlEngine.
+// promptAccessibility). Until Grux is on in Settings | Privacy & Security |
+// Accessibility, window_title stays empty and per-app dwell still works from
+// NSWorkspace alone.
 //
 // Idle: reuses the CGEventSource.secondsSinceLastEventType pattern from
 // StuckDetector. Zero permissions required for that path.
@@ -37,20 +42,15 @@ final class ScreenTimeWatcher {
 
     private let queue = DispatchQueue(label: "grux.screentime", qos: .utility)
     private var timer: DispatchSourceTimer?
-    private var didPromptForAX = false
-
     private init() {}
 
     func start() {
         guard timer == nil else { return }
         try? FileManager.default.createDirectory(
             at: Self.screentimeDir, withIntermediateDirectories: true)
-        // System AX prompt is non-blocking and idempotent. Returns current
-        // trust state, not the user's eventual choice.
-        if !didPromptForAX {
-            didPromptForAX = true
-            _ = Self.requestAccessibilityPermission()
-        }
+        // Read only. Window titles switch on by themselves once trust is
+        // granted, because tick() checks AXIsProcessTrusted() each sample.
+        _ = Self.hasAccessibility()
         let t = DispatchSource.makeTimerSource(queue: queue)
         t.schedule(
             deadline: .now() + 0.5,
@@ -102,6 +102,7 @@ final class ScreenTimeWatcher {
     // MARK: - Window title via Accessibility
 
     nonisolated private static func activeWindowTitle(pid: pid_t) -> String? {
+        guard AccessibilityTrust.isGranted() else { return nil }
         let app = AXUIElementCreateApplication(pid)
         var focusedRaw: CFTypeRef?
         let r1 = AXUIElementCopyAttributeValue(
@@ -116,10 +117,10 @@ final class ScreenTimeWatcher {
         return title
     }
 
-    nonisolated private static func requestAccessibilityPermission() -> Bool {
-        let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
-        let opts: [String: Any] = [key: true]
-        return AXIsProcessTrustedWithOptions(opts as CFDictionary)
+    /// Non-prompting trust check, the same posture as
+    /// `ScreenControlEngine.hasAccessibility()`.
+    nonisolated private static func hasAccessibility() -> Bool {
+        AccessibilityTrust.isGranted()
     }
 
     // MARK: - Idle (mirrors StuckDetector.systemIdleSeconds)
@@ -138,8 +139,7 @@ final class ScreenTimeWatcher {
     // MARK: - NDJSON layout
 
     nonisolated static var screentimeDir: URL {
-        URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux", isDirectory: true)
+        Persistence.gruxDir
             .appendingPathComponent("ambient", isDirectory: true)
     }
 

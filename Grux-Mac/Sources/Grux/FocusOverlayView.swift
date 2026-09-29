@@ -20,18 +20,48 @@ struct FocusOverlayView: View {
             if overlay.isCollapsed {
                 collapsedOrb
                     .transition(.asymmetric(
-                        insertion: .scale(scale: 0.6).combined(with: .opacity),
-                        removal: .scale(scale: 0.85).combined(with: .opacity)
+                        insertion: .scale(scale: 0.6, anchor: anchor).combined(with: .opacity),
+                        removal: .scale(scale: 0.85, anchor: anchor).combined(with: .opacity)
                     ))
             } else {
                 expandedCard
                     .transition(.asymmetric(
-                        insertion: .scale(scale: 0.9, anchor: .topTrailing).combined(with: .opacity),
-                        removal: .scale(scale: 0.85, anchor: .topTrailing).combined(with: .opacity)
+                        insertion: .scale(scale: 0.9, anchor: anchor).combined(with: .opacity),
+                        removal: .scale(scale: 0.85, anchor: anchor).combined(with: .opacity)
                     ))
             }
         }
+        // Shadow breathing room; the panel is sized to this whole view.
+        .padding(6)
+        .background(GeometryReader { geo in
+            Color.clear
+                .onAppear { overlay.contentSize = geo.size }
+                .onChange(of: geo.size) { _, size in overlay.contentSize = size }
+        })
+        // Pinned to the corner nearest the screen edge, so while the panel is
+        // larger than the content (the collapse transition) the content sits
+        // where its outer corner was rather than centred in an invisible box.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
         .animation(.spring(response: 0.34, dampingFraction: 0.82), value: overlay.isCollapsed)
+    }
+
+    /// The outer corner: the transition scales from it and the content pins to it.
+    private var anchor: UnitPoint {
+        switch (overlay.side, overlay.vertical) {
+        case (.left, .top): return .topLeading
+        case (.left, .bottom): return .bottomLeading
+        case (.right, .top): return .topTrailing
+        case (.right, .bottom): return .bottomTrailing
+        }
+    }
+
+    private var alignment: Alignment {
+        switch (overlay.side, overlay.vertical) {
+        case (.left, .top): return .topLeading
+        case (.left, .bottom): return .bottomLeading
+        case (.right, .top): return .topTrailing
+        case (.right, .bottom): return .bottomTrailing
+        }
     }
 
     // MARK: - Expanded card
@@ -64,23 +94,14 @@ struct FocusOverlayView: View {
     }
 
     private var header: some View {
-        // Collapse on the LEFT, mic orb on the RIGHT. They started the other way
-        // round and were swapped deliberately: the collapse control sits where a
-        // macOS window's own close and minimise buttons sit, and the orb, which is
-        // a status indicator rather than a control, moves out of the corner a
-        // pointer goes to first.
+        // The orb sits on the OUTER edge, the one nearest the screen edge, so
+        // it stays put when the card collapses into it; the collapse control
+        // sits on the inner edge, where the rest of the desktop is. On the
+        // right half that reads collapse, title, orb; on the left half it is
+        // mirrored.
         HStack(spacing: 10) {
-            Button {
-                withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
-                    overlay.isCollapsed = true
-                }
-            } label: {
-                Image(systemName: "chevron.down.circle.fill")
-                    .font(.system(size: 16))
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .help("Collapse to Grux orb")
+            if overlay.side == .left { orbBadge }
+            else { collapseControl }
             VStack(alignment: .leading, spacing: 1) {
                 Text("FOCUS")
                     .font(.system(size: 10, weight: .black, design: .default))
@@ -91,9 +112,28 @@ struct FocusOverlayView: View {
                     .lineLimit(1)
             }
             Spacer()
-            PulseOrb(color: verdictColor, isMuted: appState.micMuted, size: 26)
+            if overlay.side == .left { collapseControl }
+            else { orbBadge }
         }
         .background(FocusOverlayDragHandle())
+    }
+
+    private var collapseControl: some View {
+        Button {
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                overlay.isCollapsed = true
+            }
+        } label: {
+            Image(systemName: "chevron.down.circle.fill")
+                .font(.system(size: 16))
+                .foregroundStyle(.secondary)
+        }
+        .buttonStyle(.plain)
+        .help("Collapse to Grux orb")
+    }
+
+    private var orbBadge: some View {
+        PulseOrb(color: verdictColor, isMuted: appState.micMuted, size: 26)
     }
 
     private var taskBlock: some View {
@@ -210,9 +250,10 @@ private struct PulseOrb: View {
     let isMuted: Bool
     let size: CGFloat
 
-    @State private var phase: Double = 0
-    @State private var breath: Double = 0
-
+    // The turn and the breathing ring are Core Animation (OrbLayers.swift).
+    // This pill is on screen on every Space all day, so a SwiftUI animation
+    // here was a per-frame main thread cost that never stopped; the render
+    // server does it for nothing.
     var body: some View {
         ZStack {
             // Soft halo
@@ -222,29 +263,10 @@ private struct PulseOrb: View {
                     center: .center,
                     startRadius: size * 0.15,
                     endRadius: size * 1.4))
-                .scaleEffect(1.0 + 0.06 * sin(breath * .pi * 2))
                 .blur(radius: 4)
 
             // Core
-            Circle()
-                .fill(AngularGradient(
-                    colors: [
-                        color,
-                        color.opacity(0.75),
-                        .indigo.opacity(0.7),
-                        color.opacity(0.9),
-                        color
-                    ],
-                    center: .center))
-                .rotationEffect(.degrees(phase * 18))
-                .mask(
-                    Circle().fill(RadialGradient(
-                        colors: [.white, .white.opacity(0.85), .clear],
-                        center: .center,
-                        startRadius: 0,
-                        endRadius: size * 0.55))
-                )
-                .scaleEffect(1.0 + 0.04 * sin(breath * .pi * 2))
+            OrbCoreLayer(spec: Self.coreSpec(color: color))
 
             // Inner highlight (natural 3D feel)
             Circle()
@@ -265,10 +287,8 @@ private struct PulseOrb: View {
 
             // Breathing ring - the "focus heartbeat"
             if !isMuted {
-                Circle()
-                    .stroke(color.opacity(0.45), lineWidth: 1.2)
-                    .scaleEffect(1.0 + breath * 0.4)
-                    .opacity(1.0 - breath)
+                OrbRingsLayer(rings: [Self.heartbeat(color: color)])
+                    .allowsHitTesting(false)
             }
 
             if isMuted {
@@ -279,26 +299,28 @@ private struct PulseOrb: View {
             }
         }
         .frame(width: size, height: size)
-        .onAppear { startAnimating() }
-        .onChange(of: isMuted) { _, _ in startAnimating() }
     }
 
-    private func startAnimating() {
-        // Decorative motion gate. This one matters more than most: the overlay
-        // is a `.canJoinAllSpaces` panel, so it follows the user onto every
-        // Space and is composited on all of them. Freeze at rest rather than
-        // wherever the cycle happened to be, so the ring reads as deliberate.
-        guard !GruxTheme.reduceMotion else {
-            phase = 0
-            breath = 0
-            return
-        }
-        withAnimation(.linear(duration: 9).repeatForever(autoreverses: false)) {
-            phase = 2 * .pi
-        }
-        withAnimation(.easeInOut(duration: 1.8).repeatForever(autoreverses: false)) {
-            breath = 1
-        }
+    /// The SwiftUI core ran 0 to 113 degrees every 9 seconds. Same speed, one
+    /// seamless turn.
+    static let turnSeconds: Double = 9 * 360 / (2 * .pi * 18)
+
+    static func coreSpec(color: Color) -> OrbCoreSpec {
+        let c = NSColor.orb(color), indigo = NSColor.orb(.indigo)
+        return OrbCoreSpec(
+            colors: [c, c.withAlphaComponent(c.alphaComponent * 0.75),
+                     indigo.withAlphaComponent(indigo.alphaComponent * 0.7),
+                     c.withAlphaComponent(c.alphaComponent * 0.9), c],
+            maskStops: [(1, 0), (0.85, 0.5), (0, 1)],
+            // endRadius was size * 0.55 on a radius of size / 2.
+            maskRadius: 1.1,
+            turnSeconds: turnSeconds)
+    }
+
+    static func heartbeat(color: Color) -> OrbRingSpec {
+        let c = NSColor.orb(color)
+        return OrbRingSpec(color: c.withAlphaComponent(c.alphaComponent * 0.45), lineWidth: 1.2,
+                           scale: 1.0...1.4, opacity: (1, 0), seconds: 1.8, easeInOut: true)
     }
 }
 
@@ -362,6 +384,12 @@ final class FocusOverlayState: ObservableObject {
             UserDefaults.standard.set(isVisible, forKey: "grux.focusOverlayVisible")
         }
     }
+    /// Which half of the screen the card is on. Written by the controller as
+    /// the panel moves; read by the view to mirror itself.
+    @Published var side: FocusOverlaySide = .right
+    @Published var vertical: FocusOverlayVerticalHalf = .top
+    /// The view's own size, reported every layout; the panel follows it.
+    @Published var contentSize: CGSize = .zero
 
     private init() {
         let d = UserDefaults.standard

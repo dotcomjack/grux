@@ -123,6 +123,44 @@ final class OnboardingModel: ObservableObject {
         // Application Support, so the common case for this branch is not a
         // veteran at all, it is somebody who never finished.
         case welcomeBack
+        // P-F-1: the question path, appended for the same reason.
+        /// "What do you want to do with Grux?", the front door.
+        case prompt
+        /// "Here's your Grux": what the answer picked, before anything is asked.
+        case yourGrux
+        /// What those features need, one thing at a time, in `SetupOrder`'s order.
+        case setup
+    }
+
+    /// Which front door the person came through. `rawValue` is persisted.
+    ///
+    /// Beside the level rather than a fourth level, because the question is a
+    /// different way in, not a bigger or smaller flow: the levels stay exactly
+    /// what they were, behind "I would rather pick from a list".
+    enum Path: String, Codable {
+        /// The question, then a flow built from the answer. New installs.
+        case question
+        /// The three levels. Chosen from the question screen, and what any
+        /// install written before the question existed decodes to.
+        case list
+    }
+
+    /// The question path, in order. Personal from the first answer: the
+    /// features it picks are shown before anything is asked, the name comes
+    /// before any credential, and setup asks only for what those features need,
+    /// one thing at a time, with listening planned beside them. The update
+    /// check asks for nothing and closes the flow, as it does on every level.
+    static let questionStages: [Stage] = [.prompt, .yourGrux, .identity, .modelKey, .howItWorks, .setup, .update, .done]
+
+    /// The stages a path runs, in order.
+    static func stages(path: Path, level: Level) -> [Stage] {
+        path == .question ? questionStages : stages(for: level)
+    }
+
+    /// What comes after `current` in `flow`, or nil when the flow is over.
+    static func stage(after current: Stage, in flow: [Stage]) -> Stage? {
+        guard let i = flow.firstIndex(of: current), i + 1 < flow.count else { return nil }
+        return flow[i + 1]
     }
 
     /// The stages a given level actually runs, in order.
@@ -188,6 +226,13 @@ final class OnboardingModel: ObservableObject {
         /// surface that cannot tell them apart either nags somebody who declined
         /// or silently drops something they meant to come back to.
         var skipped: Set<String>
+        /// Which front door. Absent in any file written before the question
+        /// existed, which decodes to `.list`: that install was mid-way through
+        /// the levels, and moving it to a different flow would lose its place.
+        var path: Path
+        /// The answer to the question, kept so a quit on a later screen resumes
+        /// with the same features and the flow can hand it to Chat at the end.
+        var answer: String
 
         /// NO DEFAULT ARGUMENTS, deliberately, and this is a fix rather than a
         /// style. The previous version defaulted every field but `stage`, which
@@ -197,20 +242,32 @@ final class OnboardingModel: ObservableObject {
         /// mention. Requiring all four means the compiler catches the next
         /// person who adds a field and forgets a writer, which no test can do as
         /// early.
-        init(stage: Stage, skippedFirstLook: Bool, level: Level, skipped: Set<String>) {
+        init(stage: Stage, skippedFirstLook: Bool, level: Level, skipped: Set<String>,
+             path: Path, answer: String) {
             self.stage = stage
             self.skippedFirstLook = skippedFirstLook
             self.level = level
             self.skipped = skipped
+            self.path = path
+            self.answer = answer
         }
 
-        /// A brand new install, before anything has been chosen.
-        static let initial = State(stage: .level,
-                                   skippedFirstLook: false,
+        /// A brand new install, before anything has been chosen: the question.
+        ///
+        /// `skippedFirstLook` starts TRUE on this path, and that is consent
+        /// rather than bookkeeping. On the levels a finished flow whose level
+        /// includes the first look means the frame was shown; on the question
+        /// path the first look is one setup item among many and may never
+        /// come up, so a frame counts as reviewed only once that screen has
+        /// actually said so (`recordFirstLookReviewed`).
+        static let initial = State(stage: .prompt,
+                                   skippedFirstLook: true,
                                    level: .plusPermissions,
-                                   skipped: [])
+                                   skipped: [],
+                                   path: .question,
+                                   answer: "")
 
-        enum CodingKeys: String, CodingKey { case stage, skippedFirstLook, level, skipped }
+        enum CodingKeys: String, CodingKey { case stage, skippedFirstLook, level, skipped, path, answer }
 
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -222,12 +279,16 @@ final class OnboardingModel: ObservableObject {
             // were never offered a choice about.
             level = try c.decodeIfPresent(Level.self, forKey: .level) ?? .plusPermissions
             skipped = try c.decodeIfPresent(Set<String>.self, forKey: .skipped) ?? []
+            path = try c.decodeIfPresent(Path.self, forKey: .path) ?? .list
+            answer = try c.decodeIfPresent(String.self, forKey: .answer) ?? ""
         }
     }
 
     @Published private(set) var stage: Stage = .done
     @Published private(set) var level: Level = .plusPermissions
     @Published private(set) var skipped: Set<String> = []
+    @Published private(set) var path: Path = .list
+    @Published private(set) var answer: String = ""
 
     /// Mirrors `State.skippedFirstLook` so callers outside this file can read it
     /// without decoding the persisted JSON. CapabilityResolver needs it to answer
@@ -260,6 +321,8 @@ final class OnboardingModel: ObservableObject {
             skippedFirstLook = loaded.skippedFirstLook
             level = loaded.level
             skipped = loaded.skipped
+            path = loaded.path
+            answer = loaded.answer
         } else if KeychainStore.exists(.anthropicApiKey) {
             // ASK, DO NOT ASSUME. Resolving this to `.done` did not merely drop
             // somebody in the shell: `.done` with `skippedFirstLook == false` at
@@ -270,7 +333,7 @@ final class OnboardingModel: ObservableObject {
             stage = .welcomeBack
             persist()
         } else {
-            stage = .level
+            apply(State.initial)
             persist()
         }
     }
@@ -288,8 +351,51 @@ final class OnboardingModel: ObservableObject {
 
     // MARK: - Transitions
 
-    /// The stage list this user's chosen level actually runs.
-    var stages: [Stage] { Self.stages(for: level) }
+    /// The stage list this user's path and level actually run.
+    var stages: [Stage] { Self.stages(path: path, level: level) }
+
+    /// The answer, and what it picked, recorded before the flow moves on, so a
+    /// quit on any later screen resumes with the same features.
+    func submitAnswer(_ text: String, features: [String]) {
+        answer = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        FeatureSelection.choose(features)
+        var config = AppState.shared.config
+        IntentToFeatures.apply(features, to: &config)
+        if config.developerSurfacesUnlocked != AppState.shared.config.developerSurfacesUnlocked {
+            AppState.shared.config = config
+            AppState.shared.saveConfig()
+        }
+        advance(from: .prompt)
+    }
+
+    /// "I would rather pick from a list": the three levels, as they were.
+    func pickFromAList() {
+        path = .list
+        skippedFirstLook = false
+        stage = .level
+        persist()
+    }
+
+    /// Back to the question from the levels, for somebody who changed their mind.
+    func backToTheQuestion() {
+        apply(State(stage: .prompt, skippedFirstLook: true, level: level, skipped: skipped,
+                    path: .question, answer: answer))
+        persist()
+    }
+
+    /// Change the features "Here's your Grux" shows, before going on.
+    func setFeatures(_ ids: [String]) {
+        FeatureSelection.choose(ids)
+    }
+
+    private func apply(_ s: State) {
+        stage = s.stage
+        skippedFirstLook = s.skippedFirstLook
+        level = s.level
+        skipped = s.skipped
+        path = s.path
+        answer = s.answer
+    }
 
     /// Choose a level and start. Recorded before anything else so that quitting
     /// on the second screen resumes into the flow that was chosen.
@@ -390,7 +496,7 @@ final class OnboardingModel: ObservableObject {
     /// have had to be threaded through by hand at every call site. Here a level
     /// that does not include a stage simply never lands on it.
     func advance(from current: Stage) {
-        guard let next = Self.stage(after: current, at: level) else {
+        guard let next = Self.stage(after: current, in: stages) else {
             finish(skippedFirstLook: skippedFirstLook)
             return
         }
@@ -447,10 +553,37 @@ final class OnboardingModel: ObservableObject {
     /// Finish, whether the user reviewed the first frame or declined it.
     /// Declining is a legitimate answer, not a failure: the focus loop simply
     /// stays in `needs-setup` and says why.
-    func finish(skippedFirstLook: Bool) {
+    ///
+    /// `sendFirstExchange: false` is for a finish nobody clicked (the
+    /// `fire-first-run-finish` trigger): the first-run answer is the person's
+    /// to send, so a script ends the flow without speaking for them.
+    func finish(skippedFirstLook: Bool, sendFirstExchange: Bool = true) {
         stage = .done
         self.skippedFirstLook = skippedFirstLook
         persist()
+        // Decision 13: a first exchange already done, waiting in the chat
+        // thread. Never from a test, which must not send a turn from
+        // somebody's install.
+        if sendFirstExchange, !DecisionEngine.isUnderTest,
+           let first = Self.firstExchange(path: path, answer: answer,
+                                          modelReady: ChatReadiness.current() == .ready) {
+            Task { @MainActor in await ChatService.shared.send(userText: first) }
+        }
+        // First run lands with Optimize open, exchange or not. The classic
+        // sidebar needs a landing tab; the panel with no pane IS the landing,
+        // and a surface asked for during the flow must still open after it.
+        if AppState.shared.config.legacyShell { AppState.shared.requestedTab = "chat" }
+        OptimizeHubState.shared.isExpanded = true
+    }
+
+    /// The first chat turn at the end of the question path: the person's own
+    /// answer, in their words, once a model can take it. Nothing is sent on the
+    /// levels, for an empty answer, or when no model is ready, because a turn
+    /// that fails is a worse first exchange than none.
+    static func firstExchange(path: Path, answer: String, modelReady: Bool) -> String? {
+        let said = answer.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard path == .question, modelReady, !said.isEmpty else { return nil }
+        return said
     }
 
     /// "I am already set up": leave the flow without walking it.
@@ -474,9 +607,8 @@ final class OnboardingModel: ObservableObject {
     /// into a run they explicitly started would be answering a question they did
     /// not ask.
     func reset() {
-        stage = .level
+        apply(State.initial)
         keyError = nil
-        skipped = []
         persist()
     }
 
@@ -492,7 +624,9 @@ final class OnboardingModel: ObservableObject {
             State(stage: stage,
                   skippedFirstLook: skippedFirstLook,
                   level: level,
-                  skipped: skipped),
+                  skipped: skipped,
+                  path: path,
+                  answer: answer),
             to: Self.stateURL)
     }
 

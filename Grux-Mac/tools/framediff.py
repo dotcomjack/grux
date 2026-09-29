@@ -44,9 +44,10 @@ tuned at the floor. Chasing that with a smaller percentage just moves the
 failure to the next window size. The count does not move: a stale frame measures
 exactly 0 and every real tab switch measured here is above 100,000.
 
-Returns a large sentinel when the frames cannot be compared (unreadable file, or
-mismatched sizes because the window was resized mid-sweep), so the caller treats
-them as different rather than spinning until it times out.
+Returns a large sentinel when the frames differ in size (the window was resized
+mid-sweep), so the caller treats them as different rather than spinning until
+it times out. An unreadable frame exits non-zero instead: it is a broken
+capture, not a change.
 """
 import sys
 
@@ -62,11 +63,14 @@ UNCOMPARABLE = 10 ** 9
 try:
     ia = Image.open(a).convert("RGB")
     ib = Image.open(b).convert("RGB")
-except Exception:
-    # No baseline yet, or an unreadable capture. Report "totally different" so
-    # the caller accepts the frame rather than spinning until it times out.
-    print(UNCOMPARABLE)
-    sys.exit(0)
+except Exception as e:
+    # An unreadable frame is a failure, never a change. It used to print
+    # UNCOMPARABLE here, so a garbage capture cleared every threshold and could
+    # be certified as the tab asked for. grux-sweep.sh only compares frames it
+    # captured, so this is a broken capture or a broken reader: say so and exit
+    # non-zero, and the sweep stops (fdiff).
+    print("framediff.py: cannot read a frame: %s" % e, file=sys.stderr)
+    sys.exit(3)
 
 if ia.size != ib.size:
     print(UNCOMPARABLE)

@@ -27,10 +27,9 @@ enum MicConsent {
         Grux holds the microphone the whole time this is on, and macOS shows the \
         orange microphone dot in the menu bar while it does.
 
-        Music and video can sound worse while it listens. Apple's voice processing \
-        narrows system output to a call codec, so Music, Safari and YouTube go tinny \
-        unless you have turned voice processing off or whitelisted your microphone \
-        in Settings.
+        Your music and video keep full quality. Background listening does not turn on \
+        Apple's voice processing, so it does not change how anything else on this Mac \
+        sounds.
 
         You can mute it any time from the orb or the menu bar, which releases the \
         microphone immediately. It stays off until you turn it back on.
@@ -41,7 +40,7 @@ enum MicConsent {
     ///
     /// Ambient transcribes with Whisper on this Mac. The wake word uses Apple's
     /// speech recogniser with `requiresOnDeviceRecognition = false`
-    /// (`WakeWord.swift:179`), a deliberate choice its own comment explains:
+    /// (`WakeWord.swift:224`), a deliberate choice its own comment explains:
     /// on-device has a smaller language model and mishears a novel word like
     /// "grux". So wake-word audio can leave the machine.
     ///
@@ -49,6 +48,18 @@ enum MicConsent {
     /// this Mac", and a test asserted that sentence was present, which locked
     /// the false claim in. Review caught it. Consent copy that is wrong about
     /// where a person's voice goes is worse than no consent copy.
+    ///
+    /// IT HAPPENED A SECOND TIME AND THE SAME MECHANISM HID IT, 2026-09-24.
+    /// This dialog told everyone that Apple's voice processing "narrows system
+    /// output to a call codec, so Music, Safari and YouTube go tinny". That was
+    /// never measured, and on 2026-09-23 it was measured and is false: a 12 kHz
+    /// tone survived 73 dB above the noise floor while voice processing ran,
+    /// the output device stayed 48000 Hz 2ch 32bit, and a playback-only app saw
+    /// no disruption at all. `MicConsentTests` asserted the dialog contained
+    /// "codec" or "tinny", so correcting the claim turned the suite red, which
+    /// is exactly the trap described in the paragraph above. Background
+    /// listening also no longer enables voice processing at all, so the
+    /// paragraph was wrong twice over by the time it was removed.
     static func body(for feature: Feature) -> String {
         switch feature {
         case .ambient:
@@ -68,7 +79,7 @@ enum MicConsent {
     /// Shown under the toggle once the feature is running, so the cost stays
     /// visible rather than being explained once and forgotten.
     static let runningNote =
-        "The microphone is open while this is on, and system audio drops to a call codec. "
+        "The microphone is open while this is on. Your music and video are unaffected. "
       + "Mute from the orb to release it."
 }
 
@@ -156,7 +167,7 @@ extension MicConsent {
         alert.buttons.first?.setAccessibilityIdentifier("mic-consent-accept")
         // Ambient can be switched on from the menu bar while Grux is in the
         // background. An alert behind another window is an alert nobody answers.
-        NSApp.activate(ignoringOtherApps: true)
+        WindowFacade.activateGrux()
         return alert.runModal() == .alertFirstButtonReturn
     }
 

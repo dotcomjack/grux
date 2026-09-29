@@ -97,11 +97,69 @@ enum PaletteActionProvider {
             systemImage: "plus.bubble.fill"
         ) {
             _ = AppState.shared.newThread()
+            nameThePaletteAsTheDoor(for: "chat")
             AppDelegate.shared?.openLaunchWindow(tab: "chat")
         })
 
-        // Mic, contextual on current mute state.
-        if AppState.shared.micMuted {
+        out.append(PaletteAction(
+            id: "tuning",
+            title: TuningCopy.title,
+            subtitle: "How Grux acts, interrupts, spends and remembers",
+            systemImage: "slider.horizontal.3"
+        ) {
+            nameThePaletteAsTheDoor(for: "tuning")
+            AppDelegate.shared?.openLaunchWindow(tab: "tuning")
+        })
+
+        out.append(PaletteAction(
+            id: "optimize-grux",
+            title: OptimizeCopy.title,
+            subtitle: "Write a work order for your coding agent",
+            systemImage: "wand.and.stars"
+        ) {
+            if AppState.shared.config.legacyShell {
+                // The tab it already shows, so opening the popover moves nothing.
+                AppDelegate.shared?.openLaunchWindow(tab: AppState.shared.requestedTab)
+                OptimizeState.shared.isOpen = true
+            } else {
+                // The panel's Optimize is the hub card; the popover's anchor
+                // is not on screen there. Closing the pane shows the card.
+                AppState.shared.requestedTab = PanelKeys.none
+                AppDelegate.shared?.openLaunchWindow(tab: PanelKeys.none)
+                OptimizeHubState.shared.isExpanded = true
+            }
+        })
+
+        // Mic, contextual on the same tell the orb shows. Listening switched
+        // off in Settings is not the same thing as a muted microphone, and
+        // offering "unmute" to someone who turned listening off does nothing.
+        switch ListeningTell.resolve(mode: AppState.shared.config.listeningModeInEffect,
+                                     micMuted: AppState.shared.micMuted,
+                                     isSpeaking: false, isThinking: false,
+                                     notHearing: MicHealth.shared.notHearing) {
+        case .notHearing:
+            out.append(PaletteAction(
+                id: "mic-retry",
+                title: "Listen again",
+                subtitle: "The microphone sent no sound; try it now",
+                systemImage: "mic.badge.xmark"
+            ) {
+                MicController.toggle(source: "command palette")
+            })
+        case .off:
+            out.append(PaletteAction(
+                id: "listening-on",
+                title: "Turn on listening",
+                subtitle: "Grux hears you without a wake word",
+                systemImage: "waveform"
+            ) {
+                Task { @MainActor in
+                    AppState.shared.config.listeningMode = .alwaysOn
+                    AppState.shared.saveConfig()
+                    await ListeningController.shared.apply()
+                }
+            })
+        case .muted:
             out.append(PaletteAction(
                 id: "mic-start",
                 title: "Start listening",
@@ -110,14 +168,14 @@ enum PaletteActionProvider {
             ) {
                 MicController.unmute()
             })
-        } else {
+        case .armed, .speaking, .thinking:
             out.append(PaletteAction(
                 id: "mic-stop",
                 title: "Stop listening",
                 subtitle: "Mute the mic",
                 systemImage: "mic.slash.fill"
             ) {
-                MicController.mute()
+                MicController.mute(source: "command palette")
             })
         }
 
@@ -130,30 +188,86 @@ enum PaletteActionProvider {
             FocusOverlayController.shared.toggle()
         })
 
-        // Recent tabs. Most-recent-first, recorded by LaunchRootView on
-        // every selection change. Distinct ids ("recent-...") so the same
-        // tab can also appear in the full list below without colliding.
-        for key in SidebarStateStore.shared.recents {
+        // Surfaces, named as the rail names them. Recents first, most recent
+        // first; every other key once after them in sidebar order, so a
+        // surface is listed exactly once, as "recent-" or as "tab-".
+        let recents = SidebarStateStore.shared.recents
+        for key in recents {
             guard let item = SidebarIA.item(forKey: key) else { continue }
             out.append(PaletteAction(
                 id: "recent-\(item.key)",
-                title: "Open \(item.label)",
-                subtitle: "Recent tab",
+                title: SidebarIA.railLabel(forKey: item.key),
+                subtitle: "Recent",
                 systemImage: item.icon
             ) {
+                nameThePaletteAsTheDoor(for: item.key)
+                AppDelegate.shared?.openLaunchWindow(tab: item.key)
+            })
+        }
+        for item in SidebarIA.allItems where !recents.contains(item.key) {
+            out.append(PaletteAction(
+                id: "tab-\(item.key)",
+                title: SidebarIA.railLabel(forKey: item.key),
+                subtitle: "Open",
+                systemImage: item.icon
+            ) {
+                nameThePaletteAsTheDoor(for: item.key)
                 AppDelegate.shared?.openLaunchWindow(tab: item.key)
             })
         }
 
-        // Tabs, every destination in sidebar order.
-        for item in SidebarIA.allItems {
+        // The destinations that are not a rail key of their own.
+        out.append(PaletteAction(
+            id: "labs-shelf",
+            title: "Labs",
+            subtitle: "The shelf of experiments",
+            systemImage: "flask.fill"
+        ) {
+            nameThePaletteAsTheDoor(for: "labs")
+            AppDelegate.shared?.openLaunchWindow(tab: "labs")
+        })
+
+        out.append(PaletteAction(
+            id: "approvals",
+            title: ApprovalsTray.panelTitle,
+            subtitle: ApprovalsTray.help,
+            systemImage: "checkmark.seal.fill"
+        ) {
+            // The tray hangs off the panel's foot, which shows with a pane
+            // open, so neither shell leaves the pane or tab it shows.
+            AppDelegate.shared?.openLaunchWindow(tab: AppState.shared.requestedTab)
+            ApprovalsTrayState.shared.isOpen = true
+        })
+
+        out.append(PaletteAction(
+            id: "pair-iphone",
+            title: "Pair iPhone",
+            subtitle: "The phone companion",
+            systemImage: "iphone"
+        ) {
+            AppDelegate.shared?.openPhonePairingWindow()
+        })
+
+        out.append(PaletteAction(
+            id: "hud-toggle",
+            title: AmbientState.shared.hudVisible ? "Hide the HUD" : "Show the HUD",
+            subtitle: "The ambient panel",
+            systemImage: "rectangle.on.rectangle"
+        ) {
+            AmbientState.shared.toggleHUD()
+        })
+
+        // Each Settings pane. The panel shell opens the Settings window
+        // there; the classic shell opens its Settings tab there.
+        for pane in SettingsPane.allCases {
             out.append(PaletteAction(
-                id: "tab-\(item.key)",
-                title: "Open \(item.label)",
-                subtitle: "Go to tab",
-                systemImage: item.icon
+                id: "settings-\(pane.rawValue)",
+                title: "Settings: \(pane.label)",
+                subtitle: "Open Settings there",
+                systemImage: pane.systemImage
             ) {
-                AppDelegate.shared?.openLaunchWindow(tab: item.key)
+                AppState.shared.requestedSettingsTab = pane.rawValue
+                WindowOpener.openSettings()
             })
         }
 
@@ -177,12 +291,23 @@ enum PaletteActionProvider {
                     subtitle: "Needs parameters, opens Workflows",
                     systemImage: "flowchart"
                 ) {
+                    nameThePaletteAsTheDoor(for: "workflows")
                     AppDelegate.shared?.openLaunchWindow(tab: "workflows")
                 })
             }
         }
 
         return out
+    }
+
+    /// Names the palette as the door for the open that follows, so the panel
+    /// counts it as a palette open; the palette never records an open itself.
+    /// Skipped in the classic shell, which counts nothing, and for the pane
+    /// already open, which the panel never sees as a request: either would
+    /// leave the door pending for a later, unrelated open to inherit.
+    private static func nameThePaletteAsTheDoor(for key: String) {
+        guard !AppState.shared.config.legacyShell, AppState.shared.requestedTab != key else { return }
+        OpensLog.shared.nextVia = .palette
     }
 }
 
@@ -205,13 +330,19 @@ enum PaletteHotkeyConfig {
         let stored = UserDefaults.standard.integer(forKey: modifiersDefaultsKey)
         return stored > 0 ? UInt32(stored) : defaultModifiers
     }
+
+    /// The shortcut as a person says it. An override is only ever set by hand
+    /// in defaults, so a changed shortcut is named as the person's own rather
+    /// than spelled out from a Carbon key code.
+    static var spokenShortcut: String {
+        keyCode == defaultKeyCode && modifiers == defaultModifiers ? "Command-Shift-P" : "the shortcut you set"
+    }
 }
 
 // MARK: Dedicated Carbon hotkey
 //
-// GlobalHotkey.shared owns exactly one registration slot (Terminal Focus).
-// The palette takes its own Carbon registration under a distinct signature
-// and id so the two never clobber each other.
+// The palette takes its own Carbon registration under its own signature
+// and id (GRXP/2), so no other hotkey owner in the process can clobber it.
 
 @MainActor
 private final class PaletteCarbonHotkey {
@@ -279,8 +410,8 @@ private final class PaletteCarbonHotkey {
             )
             guard getStatus == noErr else { return OSStatus(eventNotHandledErr) }
             let instance = Unmanaged<PaletteCarbonHotkey>.fromOpaque(userData).takeUnretainedValue()
-            // Only fire for the palette's own signature so GlobalHotkey's
-            // GRUX registration and this one stay independent.
+            // Only fire for the palette's own signature, so any other Carbon
+            // hotkey owner in the process stays independent of this one.
             guard hkID.signature == instance.signature else { return OSStatus(eventNotHandledErr) }
             DispatchQueue.main.async {
                 instance.handler?()
@@ -319,8 +450,7 @@ final class OrbCommandPaletteController {
 
     var isShowing: Bool { panel?.isVisible == true }
 
-    /// Register the summon hotkey. Call once at launch, right after the
-    /// existing GlobalHotkey registration in GruxApp.
+    /// Register the summon hotkey. Call once at launch, from GruxApp.
     func registerHotkey() {
         hotkey.register(
             keyCode: PaletteHotkeyConfig.keyCode,
@@ -358,7 +488,7 @@ final class OrbCommandPaletteController {
             backing: .buffered,
             defer: false
         )
-        p.level = .floating
+        WindowFacade.setLevel(.floating, of: p)
         p.isOpaque = false
         p.backgroundColor = .clear
         p.hasShadow = true
@@ -391,7 +521,7 @@ final class OrbCommandPaletteController {
 
         self.panel = p
         self.hostingController = hc
-        p.makeKeyAndOrderFront(nil)
+        WindowFacade.makeKeyAndOrderFront(p)
     }
 
     func hide() {
@@ -457,11 +587,11 @@ struct OrbCommandPaletteView: View {
     private var searchField: some View {
         HStack(spacing: 8) {
             Image(systemName: "sparkle.magnifyingglass")
-                .font(.system(size: 14))
+                .font(GruxType.field)
                 .foregroundStyle(GruxTheme.textSecondary)
             TextField("Type a command", text: $query)
                 .textFieldStyle(.plain)
-                .font(.system(size: 14))
+                .font(GruxType.field)
                 .foregroundStyle(GruxTheme.textPrimary)
                 .focused($fieldFocused)
                 .onSubmit { runSelected() }
@@ -521,17 +651,17 @@ struct OrbCommandPaletteView: View {
     private func row(_ action: PaletteAction, selected: Bool) -> some View {
         HStack(spacing: 10) {
             Image(systemName: action.systemImage)
-                .font(.system(size: 13))
+                .font(GruxType.body.weight(.regular))
                 .frame(width: 20)
                 .foregroundStyle(selected ? GruxTheme.accentPrimaryLight : GruxTheme.textSecondary)
             VStack(alignment: .leading, spacing: 1) {
                 Text(action.title)
-                    .font(.system(size: 13, weight: selected ? .semibold : .regular))
+                    .font(GruxType.body.weight(selected ? .semibold : .regular))
                     .foregroundStyle(GruxTheme.textPrimary)
                     .lineLimit(1)
                 if !action.subtitle.isEmpty {
                     Text(action.subtitle)
-                        .font(.system(size: 11))
+                        .font(GruxType.caption.weight(.regular))
                         .foregroundStyle(GruxTheme.textSecondary)
                         .lineLimit(1)
                 }

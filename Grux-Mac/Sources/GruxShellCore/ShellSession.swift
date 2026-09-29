@@ -194,6 +194,16 @@ public actor ShellSession {
     public func run(command: String, timeoutSec: Int = 120) async throws -> ShellRunResult {
         commandIndex += 1
 
+        // Silent mode first: no confirm or trust mode lets a command reach the speaker.
+        if let refusal = ShellSilence.refusal(for: command) {
+            appendMirror("🔇 \(refusal)\n   command: \(command)\n\n")
+            return ShellRunResult(
+                sessionId: id, command: command, exitCode: -1, stdout: "", stderr: refusal,
+                durationMs: 0, cwdAfter: currentCwd, snapshotId: nil, gated: false, blocked: true,
+                blockedReason: refusal
+            )
+        }
+
         // Safety gate first - containment + allowlist + confirm signaling.
         let verdict = ShellSafety.evaluate(command: command, rootDir: rootDir, currentCwd: currentCwd, mode: mode)
         switch verdict.decision {
@@ -268,6 +278,14 @@ public actor ShellSession {
     public func runConfirmed(command: String, timeoutSec: Int = 120) async throws -> ShellRunResult {
         // Bypass network-gate by forcing trust-mode evaluation for containment only.
         commandIndex += 1
+        if let refusal = ShellSilence.refusal(for: command) {
+            appendMirror("🔇 \(refusal)\n   command: \(command)\n\n")
+            return ShellRunResult(
+                sessionId: id, command: command, exitCode: -1, stdout: "", stderr: refusal,
+                durationMs: 0, cwdAfter: currentCwd, snapshotId: nil, gated: false, blocked: true,
+                blockedReason: refusal
+            )
+        }
         let verdict = ShellSafety.evaluate(command: command, rootDir: rootDir, currentCwd: currentCwd, mode: .trust)
         switch verdict.decision {
         case .blockedOutsideRoot(let reason):

@@ -36,8 +36,7 @@ final class CorrectionLessonStore: ObservableObject {
     private let maxLessons = 60
 
     static var rootDir: URL {
-        URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux")
+        Persistence.gruxDir
             .appendingPathComponent("jax")
     }
     private static var fileURL: URL { rootDir.appendingPathComponent("correction-lessons.json") }

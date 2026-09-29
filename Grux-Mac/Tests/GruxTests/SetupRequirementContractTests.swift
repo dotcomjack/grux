@@ -106,9 +106,11 @@ final class SetupRequirementContractTests: XCTestCase {
     /// key capabilities: a provider key is not a slot on the app, it is one key
     /// per user-added endpoint held by CustomEndpointStore, and no feature and no
     /// blueprint had declared either since CR-31 removed them from `chat`.
-    func testAllFortyOneCapabilitiesArePresent() throws {
+    /// 40 on 2026-09-27: the terminal hook step left with the overlay it gated, and
+    /// `key.typesafe` joined so the credential door could store the Decisions key.
+    func testAllFortyCapabilitiesArePresent() throws {
         let rows = try contractRows()
-        XCTAssertEqual(rows.count, 41, "contract capability count changed, expected 41")
-        XCTAssertEqual(SetupRequirement.allCases.count, 41)
+        XCTAssertEqual(rows.count, 40, "contract capability count changed, expected 40 (hook step left and key.typesafe joined on 2026-09-27, 41 until CR-37)")
+        XCTAssertEqual(SetupRequirement.allCases.count, 40)
     }
 }

@@ -4,14 +4,14 @@ import Foundation
 // and dispatched by ChatService's tool switch, mirroring NotesTool's shape.
 // deep_research runs the full pipeline (plan + gather + synthesize) and
 // returns the executive summary plus the on-disk report path; the full cited
-// report lives in the Research tab.
+// report lives in Research, inside Studio.
 enum ResearchTool {
 
     static func claudeTools() -> [ClaudeTool] {
         [
             ClaudeTool(
                 name: "deep_research",
-                description: "Run a DEEP multi-source research job: decomposes the question into 3-6 angles, searches and reads the live web per angle in parallel, then synthesizes a structured report with inline numbered citations and a sources list. Takes 1-3 minutes and costs real tokens, so use it only when the user explicitly wants a thorough, cited report ('deep research X', 'full report on Y', 'research this properly'). For quick factual lookups keep using research_web. Returns the executive summary and the saved report path; tell them the summary and that the full cited report is in the Research tab.",
+                description: "Run a DEEP multi-source research job: decomposes the question into 3-6 angles, searches and reads the live web per angle in parallel, then synthesizes a structured report with inline numbered citations and a sources list. Takes 1-3 minutes and costs real tokens, so use it only when the user explicitly wants a thorough, cited report ('deep research X', 'full report on Y', 'research this properly'). For quick factual lookups keep using research_web. Returns the executive summary and the saved report path; tell them the summary and that the full cited report is in Research, inside Studio.",
                 inputSchema: [
                     "type": "object",
                     "properties": [
@@ -58,7 +58,7 @@ enum ResearchTool {
                 Title: \(job.displayTitle)
                 Executive summary: \(summary.isEmpty ? "(see report)" : summary)
                 Report path: \(path)
-                Full cited report is in the Research tab.
+                Full cited report is in Research, inside Studio.
                 """
             }
 

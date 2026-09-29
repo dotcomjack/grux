@@ -48,8 +48,7 @@ final class DecisionLog {
     // MARK: - Paths
 
     nonisolated static var rootDir: URL {
-        let url = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux", isDirectory: true)
+        let url = Persistence.gruxDir
             .appendingPathComponent("decisions", isDirectory: true)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
@@ -274,8 +273,7 @@ final class DecisionLog {
             return DecisionExtractionResult(records: [], provider: providerUsed)
         }
 
-        var saved: [DecisionRecord] = []
-        var index = Self.loadIndex()
+        var fresh: [DecisionRecord] = []
 
         for d in decisions {
             guard let summary = (d["summary"] as? String)?
@@ -300,13 +298,22 @@ final class DecisionLog {
                 source: "ambient_transcript"
             )
 
-            if Self.isDuplicate(rec, in: existing + saved) {
+            if Self.isDuplicate(rec, in: existing + fresh) {
                 continue
             }
+            fresh.append(rec)
+        }
 
+        // P-R-6: file the untagged ones under a project the person already
+        // has, in one decision call for the whole pass, before anything is
+        // written. The extractor's own tag is the floor and is never replaced.
+        let saved = await Self.attributeProjects(fresh, options: ProjectAttribution.liveOptions(),
+                                                 engine: DecisionEngine.shared,
+                                                 threshold: AppState.shared.config.listeningThreshold)
+        var index = Self.loadIndex()
+        for rec in saved {
             Self.saveDecision(rec)
             index[dayKey, default: []].append(rec.id)
-            saved.append(rec)
         }
 
         if !saved.isEmpty {
@@ -316,6 +323,27 @@ final class DecisionLog {
             WakeLog.shared.log("decisionLog: 0 new decisions for \(dayKey) via \(providerUsed)")
         }
         return DecisionExtractionResult(records: saved, provider: providerUsed)
+    }
+
+    // MARK: - Project attribution (P-R-6)
+
+    /// ONE call for every untagged record in a pass, one choice question per
+    /// record, each carrying its own decision in front of its instructions.
+    /// A record the extractor already tagged is not asked and keeps its tag;
+    /// an untagged one gets a project only if a provider that read it picked
+    /// an existing project at or above the threshold. Without a key the
+    /// records come back exactly as they went in.
+    static let attributionState = "Decisions the person made today, logged from their own words."
+
+    static func attributeProjects(_ records: [DecisionRecord], options: [ProjectAttribution.Option],
+                                  engine: DecisionEngine, threshold: Double) async -> [DecisionRecord] {
+        let projects = await ProjectAttribution.fill(
+            projects: records.map(\.project),
+            prefixes: records.map { "The decision: \($0.summary).\($0.context.isEmpty ? "" : " \($0.context)")" },
+            noun: "decision", state: attributionState, options: options, engine: engine, threshold: threshold)
+        var out = records
+        for i in out.indices { out[i].project = projects[i] }
+        return out
     }
 
     // MARK: - Query

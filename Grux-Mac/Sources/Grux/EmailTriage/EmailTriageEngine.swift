@@ -659,16 +659,214 @@ final class EmailTriageEngine {
         return out
     }
 
-    private struct TriageResult {
+    /// What the rest of triage consumes. The classify step produces the first
+    /// three, the drafter the reply; this shape did not change when classify
+    /// moved onto the decision engine.
+    struct TriageResult: Equatable {
         let category: SupportCategory
         let urgency: SupportUrgency
         let needsReview: Bool
         let reply: String
     }
 
+    // MARK: - The classify step on the decision engine (P-R-5)
+    //
+    // This path used to spend one text-model round trip on classify AND draft
+    // together. The classification (category, urgency, whether a person must
+    // read it first) is three typed questions in ONE engine call; drafting
+    // stays on the text model. Keyless, or when the engine cannot judge, or is
+    // unsure of the category, the old combined call runs exactly as before.
+
+    /// The engine's reading of an incoming email, before any reply exists.
+    struct EngineClassification: Equatable {
+        let category: SupportCategory
+        let urgency: SupportUrgency
+        let needsReview: Bool
+    }
+
+    static let classifySurface = "email.classify"
+
+    /// Under this category confidence the combined text-model call decides.
+    /// Calibrated 2026-09-21 against the live provider over 15 calls: nine of
+    /// ten invented emails came back at 0.99 or 1.0 and right; a missing order
+    /// with a chargeback threat split shipping 0.53 against refund 0.47
+    /// (confidence 0.37) until the refund criterion named the chargeback,
+    /// after which it read refund at 0.86.
+    static let classifyConfidenceFloor = 0.6
+    /// Under this, urgency is the ordinary "normal", the drafter's own default.
+    /// A change-of-address request split high 0.51 against normal 0.49.
+    static let urgencyConfidenceFloor = 0.6
+    /// At or above this the email is flagged for a careful human read. Only
+    /// ever ORed into the flag, never used to clear one.
+    static let reviewAbove = 0.5
+
+    static var classifyQuestions: [String: DecisionQuestion] {
+        [
+            "category": .choice(
+                instructions: "A customer emailed a brand's support inbox. What is the email about?",
+                criteria: [
+                    SupportCategory.refund.rawValue: "Wants money back, a refund or a return for credit, or threatens "
+                        + "a chargeback or a dispute with their bank, even if the email is also about an order.",
+                    SupportCategory.shipping.rawValue: "Where an order is, delivery, a lost, late or damaged package, "
+                        + "shipping options or changing an address.",
+                    SupportCategory.product.rawValue: "A question about a product itself: ingredients, use, sizing, "
+                        + "safety, stock or which one to choose.",
+                    SupportCategory.other.rawValue: "Anything else: thanks, partnerships, accounts, subscriptions, or "
+                        + "it is not clear."
+                ]),
+            "urgency": .choice(
+                instructions: "How soon does this customer need a person to answer?",
+                criteria: [
+                    SupportUrgency.high.rawValue: "Angry, upset, time-sensitive, a refund or chargeback, or legal-sounding.",
+                    SupportUrgency.normal.rawValue: "An ordinary question or request.",
+                    SupportUrgency.low.rawValue: "A thank-you, an FYI or nothing asked."
+                ]),
+            "review": .noul(instructions:
+                "Should a person read this email carefully before any reply goes out? Answer high if the customer is "
+                + "upset or angry, mentions money back, a chargeback, a lawyer, an injury, a reaction or a safety "
+                + "problem, or if a wrong answer could cost the brand. Answer low for a routine question or a thank-you.")
+        ]
+    }
+
+    /// What the engine reads: sender, subject and the message (the full thread
+    /// when there is one), capped, secrets scrubbed.
+    static func classifyState(msg: InboxMessage) -> String {
+        let conversation = (msg.body ?? "").isEmpty ? msg.preview : msg.body!
+        return SecretRedactor.redact("From: \(msg.fromName) <\(msg.fromEmail)>\nSubject: \(msg.subject)\n\n"
+                                     + String(conversation.prefix(1500)))
+    }
+
+    /// The classification a result supports, or nil when the combined call
+    /// should decide: a local answer (keyword overlap on the email itself is
+    /// not a classification), a missing answer, or an unsure category.
+    static func engineClassification(from result: DecisionResult) -> EngineClassification? {
+        guard result.provider != .local,
+              case .choice(let rawCategory, let confidence, _)? = result.answers["category"],
+              confidence >= classifyConfidenceFloor,
+              let category = SupportCategory(rawValue: rawCategory) else { return nil }
+        var urgency = SupportUrgency.normal
+        if case .choice(let raw, let c, _)? = result.answers["urgency"], c >= urgencyConfidenceFloor,
+           let u = SupportUrgency(rawValue: raw) {
+            urgency = u
+        }
+        var needsReview = false
+        if case .noul(let p)? = result.answers["review"] { needsReview = p >= reviewAbove }
+        return EngineClassification(category: category, urgency: urgency, needsReview: needsReview)
+    }
+
+    /// ONE engine call per email. Keyless it asks nothing at all, so no call
+    /// and no ledger row: the combined text-model call runs as it always did.
+    static func classifyOnEngine(msg: InboxMessage, engine: DecisionEngine) async -> EngineClassification? {
+        guard engine.hasRemoteKey else { return nil }
+        let result = await engine.decide(surface: classifySurface, state: classifyState(msg: msg),
+                                         questions: classifyQuestions)
+        return engineClassification(from: result)
+    }
+
+    /// Answers already given, so a message a later sweep sees again is not
+    /// asked again. A message stays unread, and is swept every hour, when its
+    /// category is filtered or its draft failed. Keyed by exactly what the
+    /// engine read (`classifyState`), so a follow-up with the same sender and
+    /// subject but new words is a new question. nil means "asked, the combined
+    /// call decides". Session only.
+    private var classifiedByState: [String: EngineClassification?] = [:]
+
+    /// ONE engine call per distinct email, then the cached answer. Keyless it
+    /// asks nothing and caches nothing, so a key added later is used.
+    func classifyOnce(msg: InboxMessage, engine: DecisionEngine) async -> EngineClassification? {
+        let key = Self.classifyState(msg: msg)
+        if let known = classifiedByState[key] { return known }
+        guard engine.hasRemoteKey else { return nil }
+        let c = await Self.classifyOnEngine(msg: msg, engine: engine)
+        if classifiedByState.count >= 2_000 { classifiedByState.removeAll() }
+        classifiedByState[key] = c
+        return c
+    }
+
+    /// The engine's classification plus the drafter's reply. The same rule the
+    /// combined path applies: a refund is always read by a person and is never
+    /// low urgency. Review is ORed, so the drafter flagging its own reply as
+    /// committing to something sensitive still counts.
+    static func merged(_ c: EngineClassification, reply: String, draftNeedsReview: Bool) -> TriageResult {
+        var urgency = c.urgency
+        var needsReview = c.needsReview || draftNeedsReview
+        if c.category == .refund {
+            needsReview = true
+            if urgency == .low { urgency = .normal }
+        }
+        return TriageResult(category: c.category, urgency: urgency, needsReview: needsReview, reply: reply)
+    }
+
+    /// The drafting prompt when the classification came from the engine: the
+    /// combined prompt's drafting half, told what the email was classified as.
+    static func draftOnlyPrompt(msg: InboxMessage, classification c: EngineClassification, lessonsBlock: String) -> String {
+        let hasThread = !(msg.body ?? "").isEmpty
+        let conversation = hasThread ? msg.body! : msg.preview
+        return """
+        An unread support email arrived. It has been classified as \(c.category.rawValue), urgency \(c.urgency.rawValue). Draft a reply.
+
+        From: \(msg.fromName) <\(msg.fromEmail)>
+        Subject: \(msg.subject)
+        \(hasThread
+          ? "FULL EMAIL THREAD below (the newest message is at the top; earlier quoted messages, usually prefixed with \">\", follow). Read the WHOLE thread before drafting:"
+          : "Message (inbox preview, may be truncated):")
+        \(conversation)
+        \(lessonsBlock)
+
+        Return ONLY a JSON object, no prose, no markdown fences:
+        {
+          "needs_review": true | false,
+          "reply": "the full reply body, ready to send, signed appropriately"
+        }
+        THREAD AWARENESS (critical): draft a reply that ADVANCES the conversation
+        given everything already said. Do NOT ask for information the customer has
+        already provided, and do NOT re-ask a question they already answered or
+        said they cannot answer. If they said they cannot find something (e.g. an
+        order number) and asked you to look it up, acknowledge that and offer the
+        next step you can actually take (look it up by their email address or name,
+        or escalate to a person), instead of repeating the request.
+
+        Set needs_review true whenever the reply commits to anything sensitive
+        (money, a refund, a legal point, an apology for a real failure), so a person
+        reads it carefully before send.
+        The reply must follow the brand voice rules in the system prompt. Do not
+        invent order numbers, tracking numbers, or policies you were not given;
+        if specifics are needed and not already refused, ask the customer politely.
+        Never use em dashes or en dashes.
+        """
+    }
+
+    private func draftClassified(_ c: EngineClassification, msg: InboxMessage, system: String,
+                                 lessonsBlock: String) async -> TriageResult? {
+        do {
+            let res = try await AmbientLLM.completeTagged(
+                system: system,
+                messages: [ClaudeMessage(role: "user", content: Self.draftOnlyPrompt(
+                    msg: msg, classification: c, lessonsBlock: lessonsBlock))],
+                maxTokens: 700,
+                temperature: 0.4,
+                featureTag: "support_triage"
+            )
+            guard let obj = Self.extractJSONObject(Self.stripThink(res.text)) else {
+                WakeLog.shared.log("emailTriage: could not parse JSON from drafter for \(msg.subject.prefix(40))")
+                return nil
+            }
+            let reply = (obj["reply"] as? String) ?? ""
+            guard !reply.isEmpty else { return nil }
+            return Self.merged(c, reply: reply, draftNeedsReview: (obj["needs_review"] as? Bool) ?? false)
+        } catch {
+            WakeLog.shared.log("emailTriage: drafter failed for \(msg.subject.prefix(40)): \(error.localizedDescription)")
+            return nil
+        }
+    }
+
     private func classifyAndDraft(inbox: SupportInbox, msg: InboxMessage) async -> TriageResult? {
         let voice = Self.brandVoice(inbox: inbox)
         let system = Self.systemPrompt(voice: voice)
+        if let classified = await classifyOnce(msg: msg, engine: DecisionEngine.shared) {
+            return await draftClassified(classified, msg: msg, system: system,
+                                         lessonsBlock: CorrectionLessonStore.shared.promptBlock(forBrand: voice, limit: 6) ?? "")
+        }
         // Prefer the full body (which includes the quoted thread) over the short
         // list preview, so the drafter can read the whole conversation.
         let hasThread = !(msg.body ?? "").isEmpty

@@ -71,8 +71,22 @@ final class CalendarService {
         await CalendarCorrelator.ensurePermission()
     }
 
+    /// THE SUITE NEVER READS THE OPERATOR'S CALENDAR.
+    ///
+    /// Every read here is gated on this one property, so one guard isolates
+    /// all of them. Measured during P-F-1: a test render of the first-run
+    /// flow drew the operator's real calendar events into a PNG, which is how
+    /// a private appointment ends up in an evidence folder. Calendar reads
+    /// never prompt once permission exists, so nothing else was stopping it.
+    ///
+    /// A test that wants events builds `EventSummary` values directly, which
+    /// is what the calendar tests already do; nothing in the suite needs the
+    /// operator's own diary to prove anything.
+    static let isUnderTest: Bool = NSClassFromString("XCTestCase") != nil
+
     var hasAccess: Bool {
-        CalendarCorrelator.currentPermissionState() == .granted
+        if Self.isUnderTest { return false }
+        return CalendarCorrelator.currentPermissionState() == .granted
     }
 
     // MARK: - Calendars

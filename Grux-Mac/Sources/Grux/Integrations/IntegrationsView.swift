@@ -13,28 +13,46 @@ import AppKit
 struct IntegrationsView: View {
     @EnvironmentObject var state: AppState
 
+    /// The folded child's anchor (C5): `integrations:webhooks`.
+    static let webhooksSection = "webhooks"
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                header
-                SlackSection()
-                Divider()
-                NotionSection()
-                Divider()
-                // Item 35: outbound webhooks with HMAC-signed deliveries.
-                WebhooksView()
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    header
+                    DecisionsSection()
+                    Divider()
+                    SlackSection()
+                    Divider()
+                    NotionSection()
+                    Divider()
+                    // Item 35: outbound webhooks with HMAC-signed deliveries.
+                    WebhooksView()
+                        .id(Self.webhooksSection)
+                }
+                .padding(24)
+                .frame(maxWidth: 760, alignment: .leading)
             }
-            .padding(24)
-            .frame(maxWidth: 760, alignment: .leading)
+            .onAppear { scrollToRequested(proxy) }
+            .onChange(of: state.requestedSection) { _, _ in scrollToRequested(proxy) }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func scrollToRequested(_ proxy: ScrollViewProxy) {
+        guard state.requestedSection == Self.webhooksSection else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(Self.webhooksSection, anchor: .top) }
+            state.requestedSection = nil
+        }
     }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Integrations")
                 .font(GruxType.title).foregroundStyle(GruxTheme.textPrimary)
-            Text("Connect Grux to the services you already use. Tokens are stored in your macOS Keychain. Nothing is sent to a server. Grux talks to Slack and Notion directly from your Mac.")
+            Text("Connect Grux to the services you already use. Tokens are stored in your macOS Keychain. Nothing is sent to a server. Grux talks to each service directly from your Mac.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }

@@ -12,7 +12,7 @@ final class SupportDraftsController {
 
     func present() {
         if let window {
-            window.makeKeyAndOrderFront(nil)
+            WindowFacade.makeKeyAndOrderFront(window)
         } else {
             let hosting = NSHostingController(rootView: SupportDraftsView())
             let w = NSWindow(contentViewController: hosting)
@@ -22,9 +22,9 @@ final class SupportDraftsController {
             w.setContentSize(NSSize(width: 700, height: 560))
             w.center()
             window = w
-            w.makeKeyAndOrderFront(nil)
+            WindowFacade.makeKeyAndOrderFront(w)
         }
-        NSApp.activate(ignoringOtherApps: true)
+        WindowFacade.activateGrux()
     }
 }
 

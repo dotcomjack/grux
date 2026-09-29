@@ -63,7 +63,7 @@ enum KnownProjects {
     // MARK: - Sources
 
     private static func fromRegistry(seen: inout Set<String>) -> [Entry] {
-        let path = NSHomeDirectory() + "/.grux/projects-registry.json"
+        let path = Persistence.gruxDir.appendingPathComponent("projects-registry.json").path
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let agents = obj["agents"] as? [String: [String: Any]]

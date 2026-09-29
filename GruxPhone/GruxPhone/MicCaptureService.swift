@@ -178,7 +178,7 @@ final class MicCaptureService: ObservableObject {
     private var syntheticPhase: Double = 0
 
     private func startSyntheticTone() {
-        let q = DispatchQueue(label: "com.dcj.gruxphone.synth")
+        let q = DispatchQueue(label: "com.gruxai.gruxphone.synth")
         let t = DispatchSource.makeTimerSource(queue: q)
         t.schedule(deadline: .now(), repeating: .milliseconds(10))
         t.setEventHandler { [weak self] in self?.tick() }

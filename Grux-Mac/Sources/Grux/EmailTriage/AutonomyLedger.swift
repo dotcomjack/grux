@@ -36,8 +36,7 @@ final class AutonomyLedger: ObservableObject {
     static let maxEditRate = 0.2
 
     static var rootDir: URL {
-        URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux")
+        Persistence.gruxDir
             .appendingPathComponent("jax")
     }
     private static var fileURL: URL { rootDir.appendingPathComponent("autonomy-ledger.json") }

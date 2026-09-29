@@ -66,9 +66,14 @@ final class MicMuteReleasesDeviceTests: XCTestCase {
     private func muteBody() throws -> String {
         let mic = try String(contentsOf: sourcesRoot().appendingPathComponent("MicController.swift"),
                              encoding: .utf8)
-        guard let r = mic.range(of: "static func mute()") else {
-            throw XCTSkip("MicController.mute() was renamed")
-        }
+        // FAILS, NEVER SKIPS. This threw XCTSkip when it could not find the
+        // function, so renaming `mute()` (it gained a `source:` label on
+        // 2026-09-22) turned the whole sweep green by turning it off: three
+        // tests reported "skipped" and nothing said the microphone owners
+        // were no longer being checked. A guard that fails open fails into
+        // the answer you were hoping for.
+        let r = try XCTUnwrap(mic.range(of: "static func mute(source:"),
+                              "MicController.mute(source:) was renamed, so this sweep is checking nothing")
         let rest = mic[r.upperBound...]
         let end = rest.range(of: "\n    static func ")?.lowerBound ?? rest.endIndex
         return Self.stripComments(String(rest[rest.startIndex..<end]))
@@ -281,5 +286,71 @@ final class MicMuteBehaviourTests: XCTestCase {
         MicController.mute()
         XCTAssertTrue(AppState.shared.micMuted)
         XCTAssertFalse(AmbientState.shared.isCapturing)
+    }
+}
+
+/// A SPOKEN "MUTE" IS THE SAME PROMISE AS A TAPPED ONE.
+///
+/// Found 2026-09-27 by the e2e loop: the voice router's `mute` command set
+/// `AppState.micMuted` directly. Every surface read MUTED while the ambient
+/// listener that had just heard the word kept the microphone, because only
+/// `MicController.mute()` stops the listeners. The same hole let `unmute`
+/// clear the flag without restarting anything.
+@MainActor
+final class SpokenMuteGoesThroughMicControllerTests: XCTestCase {
+
+    private var savedMuted = false
+
+    override func setUp() async throws {
+        try await super.setUp()
+        savedMuted = AppState.shared.micMuted
+    }
+
+    override func tearDown() async throws {
+        AppState.shared.micMuted = savedMuted
+        try await super.tearDown()
+    }
+
+    private func sourcesRoot() -> URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/Grux")
+    }
+
+    /// The router's own default, not a stub: the command the app runs.
+    func testTheSpokenMuteCommandStopsTheListener() async throws {
+        let e = DecisionEngine(keyLookup: { "" }, ledger: DecisionLedger(storeURL: nil))
+        let r = VoiceCommandRouter(engine: e, threshold: { 0.7 }, macros: { [] })
+        let mute = try XCTUnwrap(r.vocabulary().first { $0.id == "mute" })
+        AppState.shared.micMuted = false
+        AmbientState.shared.isEnabled = true
+        AmbientState.shared.isCapturing = true
+
+        let said = await mute.run()
+
+        XCTAssertEqual(said, "muted")
+        XCTAssertTrue(AppState.shared.micMuted)
+        XCTAssertFalse(AmbientState.shared.isCapturing,
+                       "the spoken mute left the ambient listener capturing")
+        XCTAssertFalse(AmbientState.shared.isEnabled,
+                       "the spoken mute left the ambient pill claiming it listens")
+    }
+
+    /// The class of bug: the flag written anywhere but the one place that also
+    /// moves the hardware. Comments are stripped so prose cannot trip it.
+    func testOnlyMicControllerWritesTheMuteFlag() {
+        let files = (FileManager.default.enumerator(at: sourcesRoot(), includingPropertiesForKeys: nil)?
+            .compactMap { $0 as? URL }
+            .filter { $0.pathExtension == "swift" }) ?? []
+        XCTAssertGreaterThan(files.count, 50, "control: the sweep found \(files.count) files")
+        var writers: [String] = []
+        for f in files where f.lastPathComponent != "MicController.swift" {
+            let text = MicMuteReleasesDeviceTests.stripComments((try? String(contentsOf: f, encoding: .utf8)) ?? "")
+            if text.range(of: #"micMuted\s*=[^=]|micMuted\.toggle\("#, options: .regularExpression) != nil {
+                writers.append(f.lastPathComponent)
+            }
+        }
+        XCTAssertTrue(writers.isEmpty,
+                      "\(writers) set micMuted without MicController, so MUTED shows while the microphone stays held")
     }
 }

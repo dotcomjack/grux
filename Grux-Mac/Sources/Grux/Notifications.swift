@@ -28,9 +28,10 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     // category's interrupt/batch/silent action (actionRequired upgrades
     // blockers; quiet hours downgrade interrupts), the log entry is the
     // timeline record, and only interrupts reach UNUserNotificationCenter.
-    func route(_ category: TriageCategory, actionRequired: Bool = false, _ env: TriageEnvelope) {
+    func route(_ category: TriageCategory, actionRequired: Bool = false, judged: TriageAction? = nil,
+               _ env: TriageEnvelope) {
         let action = TriagePolicyStore.shared.resolve(
-            category: category, actionRequired: actionRequired, at: Date()
+            category: category, actionRequired: actionRequired, judged: judged, at: Date()
         )
         TriagePolicyStore.shared.logTriage(category: category, action: action, title: env.title)
         switch action {
@@ -52,7 +53,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         let content = UNMutableNotificationContent()
         content.title = env.title
         content.body = env.body
-        content.sound = env.sound ? .default : nil
+        content.sound = AudioOutput.notificationSound(source: "NotificationManager.post", text: env.title, wanted: env.sound)
         if let cat = env.categoryIdentifier { content.categoryIdentifier = cat }
         if !env.userInfo.isEmpty { content.userInfo = env.userInfo }
         let req = UNNotificationRequest(identifier: env.identifier, content: content, trigger: nil)
@@ -150,19 +151,32 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     // The body deliberately stays generic, never includes ASC feedback
     // text, secrets, or run state, so glancing at the lock screen
     // doesn't leak production-sensitive data.
-    func notifyAgentPhaseTransition(
+    func deliverPhaseTransition(_ envelope: TriageEnvelope) {
+        route(.commandPhases, envelope)
+    }
+
+    /// The milestone banner, as the person reads it. `runName` is the run's
+    /// own name ("ship the iOS app"), `phaseName` the step's name, `step`
+    /// where it falls among the steps a person moves through (nil off that
+    /// path). `phaseIndex` and `totalPhases` are the definition's own
+    /// numbering, for the tap handler.
+    static func phaseTransitionEnvelope(
         commandId: String,
         runId: String,
+        runName: String,
         phaseName: String,
         phaseIndex: Int,
-        totalPhases: Int
-    ) {
+        totalPhases: Int,
+        step: (n: Int, total: Int)?
+    ) -> TriageEnvelope {
         // userInfo carries the same keys as the bridge envelope so the tap
         // handler in AppDelegate can deep-link straight to the run detail.
-        route(.commandPhases, TriageEnvelope(
+        TriageEnvelope(
             identifier: "v2.\(commandId).\(runId).phase\(phaseIndex)",
-            title: "Phase \(phaseIndex)/\(totalPhases): \(phaseName)",
-            body: "ship-ios-app run is at the \(phaseName) milestone.",
+            title: step.map { "Step \($0.n) of \($0.total): \(phaseName)" } ?? phaseName,
+            // The step's name after a colon, so an imperative one ("Build it
+            // with a team of agents") reads as naturally as a noun.
+            body: "\(runName.prefix(1).uppercased() + runName.dropFirst()) is now on this step: \(phaseName).",
             userInfo: [
                 "kind": "v2PhaseTransition",
                 "commandId": commandId,
@@ -171,7 +185,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
                 "phaseIndex": phaseIndex,
                 "totalPhases": totalPhases
             ]
-        ))
+        )
     }
 
     // Generic free-text entry point (domain expiry, ASC rejections, schedule
@@ -179,17 +193,52 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     // Haiku verdicts second. Genuinely unknown text defaults to BATCH right
     // now (never a synchronous model call on the hot path) while the Haiku
     // escalation seam classifies it in the background for next time.
+    //
+    // P-R-5: with a decision key and the triage switch on, the notification is
+    // first judged on what it says (`TriageClassifier.judge`): one call per
+    // distinct notification, cached by its words, so it lands a few hundred ms
+    // later. Keyless, this is the synchronous path above, unchanged.
     func sendInfo(title: String, body: String) {
         let env = TriageEnvelope(
             identifier: "grux.info.\(UUID().uuidString)",
             title: title,
             body: body
         )
-        if let verdict = TriageClassifier.shared.classify(kind: nil, title: title, body: body) {
-            route(verdict.category, actionRequired: verdict.actionRequired, env)
+        let classifier = TriageClassifier.shared
+        let engine = DecisionEngine.shared
+        guard classifier.judgesContent(engine: engine, enabled: TriagePolicyStore.shared.llmEscalationEnabled) else {
+            deliverInfo(env, judged: nil, contentJudged: false)
             return
         }
-        TriageClassifier.shared.scheduleEscalation(title: title, body: body)
+        if let cached = classifier.cachedContentVerdict(title: title, body: body) {
+            deliverInfo(env, judged: cached, contentJudged: true)
+            return
+        }
+        Task { @MainActor in
+            let judged = await classifier.judge(title: title, body: body, engine: engine)
+            self.deliverInfo(env, judged: judged, contentJudged: true)
+        }
+    }
+
+    /// The floor, with a content judgment laid over it when there is one. With
+    /// `judged` nil and `contentJudged` false this is byte for byte the old
+    /// `sendInfo` body. `contentJudged` means the engine was asked, whatever it
+    /// answered, so the background category seam is not asked as well: one
+    /// model call per notification.
+    private func deliverInfo(_ env: TriageEnvelope, judged: TriageAction?, contentJudged: Bool) {
+        let title = env.title, body = env.body
+        if let verdict = TriageClassifier.shared.classify(kind: nil, title: title, body: body) {
+            route(verdict.category, actionRequired: verdict.actionRequired, judged: judged, env)
+            return
+        }
+        if let judged {
+            // No keyword bucket, but a confident reading. The rules' blocker
+            // check still applies, so a judged "silent" can never swallow a
+            // failure the rules would have raised.
+            route(.system, actionRequired: TriageClassifier.urgent(title: title, body: body), judged: judged, env)
+            return
+        }
+        if !contentJudged { TriageClassifier.shared.scheduleEscalation(title: title, body: body) }
         TriagePolicyStore.shared.logTriage(category: .system, action: .batch, title: title)
         TriageBatchQueue.shared.enqueue(category: .system, title: title, body: body)
     }
@@ -220,7 +269,8 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 willPresent notification: UNNotification,
                                 withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
-        completionHandler([.banner, .sound])
+        completionHandler(AudioOutput.foregroundPresentation(for: notification.request.content,
+                                                             source: "NotificationManager.willPresent"))
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter,
@@ -245,4 +295,76 @@ extension Notification.Name {
     // LaunchRootView (which has the SwiftUI openWindow environment value
     // in scope) to open the AgentJobWindow scene for verification.
     static let gruxOpenAgentJobWindow = Notification.Name("GruxOpenAgentJobWindow")
+    /// The launch window's title bar button: close the open pane, or reopen the last one.
+    static let gruxTogglePane = Notification.Name("GruxTogglePane")
+}
+
+// MARK: - Voice decision banners
+//
+// One banner per executed decision, so a person who is not looking at Grux
+// still knows it acted. The rule that keeps this from being noise: only
+// things Grux actually DID, and never dictation the person can already see
+// landing in a window in front of them.
+//
+// The first banner on a device is preceded by one explanation, once, because
+// a Mac that starts doing things when you talk needs to say so before it
+// starts rather than after.
+
+enum VoiceDecisionBanner {
+    static func shouldBanner(_ event: VoiceDecisionEvent,
+                             showLastDecision: Bool,
+                             chatIsFrontmost: Bool) -> Bool {
+        guard showLastDecision else { return false }
+        // Asked-first already has a surface: it is sitting in Approvals.
+        // Chatter and refusals are things Grux did not do.
+        guard event.outcome == .executed else { return false }
+        if event.commandId == VoiceCommandRouter.sayToChat && chatIsFrontmost { return false }
+        return true
+    }
+
+    static func title(_ event: VoiceDecisionEvent) -> String {
+        let action = event.actionLine
+        guard let first = action.first else { return "Grux acted" }
+        return first.uppercased() + action.dropFirst()
+    }
+
+    static func body(_ event: VoiceDecisionEvent) -> String {
+        "Heard \"\(event.heardLine)\", decided in \(event.latencyMs) ms"
+    }
+
+    static let explainerTitle = "Grux acts on what you say"
+    static let explainerBody =
+        "Listening is on, so Grux does reversible things on the spot and tells you here. "
+        + "Anything that sends, deletes or spends stops to ask first. "
+        + "Turn these off in Tuning, under Acts on what I say."
+}
+
+extension NotificationManager {
+    /// Posts the one-time explanation if this device has never seen it, then
+    /// the decision itself. Returns whether a decision banner was posted, so
+    /// a caller (and a test) can tell silence from a dropped notification.
+    @discardableResult
+    /// `chatIsFrontmost` defaults to asking the app delegate. It is nil here
+    /// rather than an expression because a default argument is evaluated
+    /// outside the main actor and the window is main-actor state.
+    func sendVoiceDecision(_ event: VoiceDecisionEvent, chatIsFrontmost: Bool? = nil) -> Bool {
+        let front = chatIsFrontmost ?? (AppDelegate.shared?.launchWindowIsFrontmost ?? false)
+        let config = AppState.shared.config
+        guard VoiceDecisionBanner.shouldBanner(event,
+                                               showLastDecision: config.showLastDecision,
+                                               chatIsFrontmost: front) else { return false }
+        if !config.listeningBannerExplained {
+            AppState.shared.config.listeningBannerExplained = true
+            AppState.shared.saveConfig()
+            route(.system, TriageEnvelope(identifier: "grux.listening.explainer",
+                                          title: VoiceDecisionBanner.explainerTitle,
+                                          body: VoiceDecisionBanner.explainerBody,
+                                          sound: false))
+        }
+        route(.system, TriageEnvelope(identifier: "grux.decision.\(event.id.uuidString)",
+                                      title: VoiceDecisionBanner.title(event),
+                                      body: VoiceDecisionBanner.body(event),
+                                      sound: false))
+        return true
+    }
 }

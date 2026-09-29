@@ -89,7 +89,13 @@ final class InboxSyncEngine: ObservableObject {
             }
         }
 
+        // Judge what needs the person once per NEW message (and, on the first
+        // pass, the backlog the floor counts), after the sweep and inside its
+        // `syncing` guard so two passes never overlap. Keyless it asks nothing.
+        let judged = await MailStore.shared.judgeNeedsYou(engine: DecisionEngine.shared)
+
         var parts = ["synced \(accounts.count) account(s), \(totalNew) new"]
+        if judged > 0 { parts.append("\(judged) judged for needs-you") }
         if !errors.isEmpty { parts.append("errors: \(errors.joined(separator: " | "))") }
         lastSummary = parts.joined(separator: ", ")
         WakeLog.shared.log("inboxSync: \(lastSummary)")

@@ -95,6 +95,9 @@ struct TerminalSessionsSettingsView: View {
 
     var body: some View {
         Form {
+            // Anchored: `sessions.overview` and `sessions.credential` are what
+            // the search results and the `sessions` deep link scroll to, and
+            // neither id existed, so both landed at the top of the pane.
             Section("Terminal sessions") {
                 Text("""
                      Parts of Grux work by opening a headless terminal session on this Mac and \
@@ -106,29 +109,19 @@ struct TerminalSessionsSettingsView: View {
                 Toggle("I understand what a session runs and what it spends", isOn: $understood)
                     .onChange(of: understood) { _, on in
                         CapabilityResolver.markStepCompleted(.stepTerminalSessionsExplained, on)
-                        // `markStepCompleted` writes a defaults key and posts nothing, so
-                        // the one thing now waiting on this step has to be told directly.
-                        // Without this line, switching it on here would do nothing visible
-                        // until the next launch.
-                        TerminalFocusState.shared.startIfAllowed()
                     }
 
-                // THIS SENTENCE HAS BEEN WRONG TWICE, in opposite directions.
-                //
-                // It first read "Turning this off does not stop a session already running",
-                // which implied it stopped FUTURE ones. It stopped neither, so it was
-                // rewritten to say the flag was an acknowledgement that no spawn path
-                // consulted. That was true when it was written and is not true now: the step
-                // is one of the three conditions `TerminalFocusState.startIfAllowed()` waits
-                // for, which is how the four-terminal-window takeover on a fresh Mac got
-                // fixed. A step nothing reads is decoration; a sentence that still says
-                // nothing reads it is worse.
-                Text("Grux does not watch your terminal windows until this is on. It does not stop a session already running: quit Grux to end them.")
+                // THIS SENTENCE HAS BEEN WRONG TWICE, in opposite directions, so it
+                // now says only what the step does: the registry lists it as a setup
+                // step on every feature that drives the agent CLI, and nothing else
+                // reads it. It stops nothing that is already running.
+                Text("Features that start terminal sessions list this as a setup step until it is on. It does not stop a session already running: quit Grux to end them.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
+            .id("sessions.overview")
             Section("What will run") {
                 LabeledContent("Agent CLI") {
                     Text(resolvedBinary ?? "not found")
@@ -176,6 +169,7 @@ struct TerminalSessionsSettingsView: View {
                 }
             }
 
+            .id("sessions.credential")
             Section("Running more than one") {
                 Text("""
                      Running several sessions at once is what pushes a plan into its rate limits. \

@@ -80,9 +80,14 @@ Secrets. Resolved from Keychain only. See section 2.4.
 | `key.brave` | Web search API key | Add a Brave Search API key in Settings so Grux can search the web. The free tier is enough. |
 | `key.resend` | Email sending API key | Add your email provider API key in Settings so Grux can send mail. Grux has no SMTP client. |
 | `key.slack` | Slack token | Connect Slack in Settings so Grux can read and post in your workspace. |
-| `key.godaddy` | Domain registrar key | Add your registrar API key and secret in Settings so Grux can read your domains and DNS. |
 | `key.notion` | Notion token | Paste your Notion integration secret in Settings, and the database you want Grux to write to. |
 | `key.telegram` | Telegram bot token | Add a Telegram bot token and chat id in Settings so Grux can send alerts to your phone. Nothing is sent until you add both. |
+| `key.typesafe` | TypeSafe decision key | Optional. Add a TypeSafe key in Settings for faster decisions. Grux matches on this Mac without one. |
+
+**Amended 2026-09-27. `key.typesafe` is added.** The decision engine already read this
+Keychain slot, but only Settings and the first run could write it, so `grux connect` and
+the control socket refused it by name. It is optional everywhere: without it every
+decision is answered on this Mac.
 
 **Amended 2026-08-28, CR-34. The OpenAI and OpenRouter scalar key capabilities are
 DELETED.** Named in prose rather than as ids, following the analytics precedent below:
@@ -117,11 +122,22 @@ waiting on a switch that ships off, and as `optional` it would render a standing
 asking the user to add an analytics key, which inverts section 4 on the one surface where
 the private tree already ships the opposite. Removed 2026-08-09 on that reasoning.
 
-**Amended 2026-08-12, CR-9.** `key.godaddy` and `step.phone_paired` are added in the same amendment for a duller reason.
+**Amended 2026-08-12, CR-9.** The GoDaddy registrar key (retired by CR-37) and `step.phone_paired` are added in the same amendment for a duller reason.
 Both are already implemented and credential-gated in the private tree (`goDaddyApiKey` plus
 `goDaddyApiSecret`, and `phonePairingSecret` in the Keychain), and the closed vocabulary had
 no id for either, so they could not be expressed at all and would have kept a second,
 bespoke setup mechanism alive beside the registry.
+
+**Amended 2026-09-21, CR-37. The GoDaddy registrar key, added by CR-9, is REMOVED with the only
+feature that consumed it.** Grux 3.0 ripped the Domain monitor (Phase C, task C13): it was off
+by default, reachable only from a trigger-opened dashboard, and on the operator's own install
+had last swept on 2026-08-30. The registry row `domains`, its Settings switch, its trigger and
+the `DomainMonitor` code are deleted together, so the capability would otherwise be declared
+by zero features, which this contract treats as dead vocabulary. The two Keychain identifiers
+(`goDaddyApiKey`, `goDaddyApiSecret`) are deliberately KEPT and read by nothing: removing an
+identifier strands a stored item where nothing can find or remove it, and deleting a person's
+credential is not something a rip decides on its own. `step.phone_paired`, added in the same
+amendment, is unaffected.
 
 **Amended 2026-08-15, CR-10. The PostHog analytics read key added by CR-9 is REMOVED, and
 CR-9 is superseded rather than reversed.** CR-9's reasoning was sound on its own terms: the READ side genuinely was a
@@ -142,7 +158,7 @@ analytics read surface ever returns.
 **Amended 2026-08-15, CR-11. Three integrations reach the network with no capability at
 all.** `key.telegram`, `endpoint.microsoft_graph` and `step.youtube_transcripts_enabled`
 are added. Each was already implemented and already reaching outside the machine while the
-closed vocabulary had no id for it, which is the same gap CR-9 closed for `key.godaddy`: a
+closed vocabulary had no id for it, which is the same gap CR-9 closed for the GoDaddy registrar key: a
 capability the contract cannot name is a capability the registry cannot gate, and it keeps a
 bespoke setup path alive beside the one this document exists to be.
 
@@ -193,7 +209,7 @@ characters.
 | id | why |
 |---|---|
 | `perm.screen_recording` | Grux can see what you are working on, so it can keep you on the task you chose and answer questions about what is on screen. Decline and Grux is text only: focus tracking and screen questions stay off, everything else still works. |
-| `perm.microphone` | You can talk to Grux instead of typing, and it can transcribe meetings on this Mac. Decline and voice and meeting notes stay off, everything else still works. Continuous listening is a separate switch that ships off. |
+| `perm.microphone` | You can talk to Grux instead of typing, and it can transcribe meetings on this Mac. Decline and voice and meeting notes stay off, everything else still works. Listening is a separate choice, made in setup and changeable in Tuning. |
 | `perm.accessibility` | Grux can read which app and window you are in, which is how it knows what you are working on and how it clicks things for you. Decline and focus tracking and app control stay off. |
 | `perm.automation` | Grux can drive the apps you already have open instead of telling you which buttons to press. Decline and Grux can advise but not act. |
 | `perm.calendar` | Grux can line your meetings up with what it heard and put events in for you. Decline and the workday log has no meetings in it. |
@@ -201,6 +217,21 @@ characters.
 | `perm.notifications` | Grux can tell you something happened without you watching the window. Decline and you only see updates when you go looking. |
 | `perm.system_audio` | Grux can transcribe the other side of a call, not just your microphone. Decline and you get your half of the conversation. |
 | `perm.full_disk_access` | Grux can read your Messages history and answer questions about past conversations. Decline and Messages stays unreadable, nothing else changes. |
+
+**Amended 2026-09-22, CR-39. The microphone `why` no longer says continuous listening
+ships off, because it does not.**
+
+The sentence was true when it was written and 3.0 made it false: listening is ON by
+default in `GruxConfig`, held closed only until consent is given, and the wake word and
+ambient mode became ONE control with three settings. A permission explanation that
+understates what the app may do with the permission is the one kind of copy that has to
+be corrected rather than left to rot, so this is a CR and not an edit: the row is the
+contract's, and the Swift reads it back verbatim (`PermissionWhyContractTests`).
+
+The replacement says what is true in 3.0: the microphone is a separate choice, made in
+setup, changeable in Tuning, and Grux opens the microphone only once the person picks a
+listening mode. Found in the P-F-1 audit and carried on the operator's own list of small
+calls.
 
 **Amended 2026-08-16, CR-29. `why` is added for the `perm` class.** Filed after the operator
 granted all nine permissions on a fresh install and reported that nothing explained what any
@@ -492,19 +523,19 @@ declined it is a different sentence with a different remedy.
 | `not-chosen` | The owner did not select this feature | Hidden | Not mounted | None, except turning it on |
 
 **Absence of a selection means EVERYTHING IS ON.** An install that predates this amendment
-has no stored selection and must not silently lose thirty nine features on upgrade. Only an
+has no stored selection and must not silently lose any of its features on upgrade. Only an
 explicit choice can turn anything off.
 
 **This state does not weaken "nothing ships off and undiscoverable", it is the reason that
 rule now has teeth.** All three conditions still hold and are now the harder half of the
-work: every feature is NAMED at first run, because the CHOOSE screen lists all thirty nine
+work: every feature is NAMED at first run, because the CHOOSE screen lists every feature
 rather than a curated subset; every feature keeps a PERMANENT HOME in Settings and in
 `grux list features`, whether or not it was chosen; and its OFF STATE IS EXPLAINED, which is
 what the COST screen does from the other direction when it names what will never be asked
 for and why.
 
 Hidden from the sidebar rather than struck through, unlike `unavailable`. A stranger who
-chose twelve features should see twelve rows, not thirty nine with twenty seven crossed out,
+chose twelve features should see twelve rows, not the full list with the rest crossed out,
 and the complete list is one command and one Settings pane away.
 
 Rules that make the table binding:
@@ -576,7 +607,6 @@ one `degraded` note rather than one note per member.
 | `step.recording_consent_acknowledged` | Confirm you will tell people | Recording a call captures everyone on it, and some places require you to say so first. Confirm you will, then Grux can record. |
 | `step.speech_model_downloaded` | Fetch the speech model | Grux fetches a one time on-device speech model before it can transcribe. Connect to the internet and open Meetings once. |
 | `step.corpus_sources_confirmed` | Choose what gets indexed | Pick which of your messages, notes and sent mail Grux may index. Nothing is indexed until you choose. |
-| `step.terminal_focus_hook_installed` | Install the terminal hook | Grux adds one entry to your coding tool's settings and one script beside it. It removes nothing else. |
 | `step.terminal_sessions_explained` | Understand terminal sessions | Read what a headless session runs and which credential it spends, then turn terminal sessions on in Settings. |
 | `step.phone_paired` | Pair your iPhone | Open Pair iPhone in Settings and scan the code with the Grux phone app. The pairing secret never leaves your Mac and your phone. |
 | `step.youtube_transcripts_enabled` | Turn on YouTube transcripts | Grux reads YouTube captions with yt-dlp when you paste a video link. Turn it on in Settings, and off there whenever you want. |
@@ -737,7 +767,6 @@ sidebar key is not the id. **Lowercase the key, and every camelCase hump becomes
 | `cognitionMap` | `cognition.map` |
 | `featureReview` | `feature.review` |
 | `designStudio` | `design.studio` |
-| `terminalFocus` | `terminal.focus` |
 | `selfUpgrade` | `self.upgrade` |
 | `metaAds` | `meta.ads` |
 

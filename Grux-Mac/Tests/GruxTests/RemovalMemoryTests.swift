@@ -113,3 +113,34 @@ final class RemovalMemoryTests: XCTestCase {
         XCTAssertEqual(ids.count, 25)
     }
 }
+
+/// A rerun of `grux remove schedule <title>` refused as ambiguous once two removed schedules
+/// had shared that title (loop sweep 2). Both are already not tracked, so there is nothing to
+/// choose between and nothing to get wrong: the rerun reports what is already true.
+@MainActor
+final class RemovalOfTwoGoneThingsTests: XCTestCase {
+
+    private let key = GruxControlTools.removalMemoryKey("schedule")
+    private var before: Any?
+    private let title = "unit test twice removed \(UUID().uuidString)"
+
+    override func setUp() async throws {
+        before = UserDefaults.standard.object(forKey: key)
+    }
+
+    override func tearDown() async throws {
+        if let before { UserDefaults.standard.set(before, forKey: key) }
+        else { UserDefaults.standard.removeObject(forKey: key) }
+    }
+
+    func testTwoRememberedRemovalsWithOneTitleAnswerAlreadyNotTracked() {
+        for _ in 0..<2 {
+            GruxControlTools.removalRemember(noun: "schedule", id: title, label: title,
+                                             alias: UUID().uuidString)
+        }
+        let result = GruxControlTools.remove(noun: "schedule", value: title)
+        XCTAssertEqual(result["isError"] as? Bool, false, "\(result)")
+        let text = ((result["content"] as? [[String: Any]])?.first?["text"] as? String) ?? ""
+        XCTAssertTrue(text.contains("already not tracked"), text)
+    }
+}

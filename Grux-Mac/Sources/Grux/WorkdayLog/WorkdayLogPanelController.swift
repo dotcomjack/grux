@@ -14,7 +14,7 @@ final class WorkdayLogPanelController {
     private init() {}
 
     func present() {
-        if panel != nil { panel?.orderFrontRegardless(); return }
+        if let panel { WindowFacade.orderFrontRegardless(panel); return }
         build()
     }
 
@@ -47,7 +47,7 @@ final class WorkdayLogPanelController {
             backing: .buffered,
             defer: false
         )
-        p.level = .floating
+        WindowFacade.setLevel(.floating, of: p)
         p.isOpaque = false
         p.backgroundColor = .clear
         p.hasShadow = true
@@ -71,7 +71,7 @@ final class WorkdayLogPanelController {
         self.panel = p
         self.hostingController = hc
 
-        p.orderFrontRegardless()
+        WindowFacade.orderFrontRegardless(p)
         p.alphaValue = 1.0
         WakeLog.shared.log("workdayLog: panel presented")
     }

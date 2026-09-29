@@ -19,7 +19,7 @@ Grux is developed and BUILT from ONE clone on branch **`main`**. That clone owns
 cd Grux-Mac && ./build.sh
 ```
 
-`main` is the feature-complete tree: the section-grouped sidebar (COMMAND / WORKSPACE / INTELLIGENCE / System) with Home, Mailbox, Calendar, Notes, Documents, Contacts, Schedules, Research, Meta Ads, and the **Foundry / Self-Upgrade** engine.
+`main` is the feature-complete tree: the Command Panel shell (a 420pt panel that opens any surface as one pane beside it, with the section-grouped classic sidebar behind **Settings, General, Shell, Classic sidebar**) with Home, Mailbox, Calendar, Notes, Documents, Contacts, Schedules, Research, Meta Ads, and the **Foundry / Self-Upgrade** engine.
 
 **Do NOT work in or build from these (they are stale and WILL look like an old Grux):**
 - Any iCloud Drive mirror of this repo. iCloud mirrors of code trees are read-only history as far as Grux is concerned; they are never the build source.
@@ -45,11 +45,17 @@ across 42 files, including `Info.plist`, `Grux.entitlements` and `build.sh`.
 **This overrides the global `com.dcj.*` house default for this one app**, on the owner's explicit
 call. Do not "restore" it.
 
-**`com.dcj.gruxphone` is DELIBERATELY UNCHANGED**, all 7 occurrences. The never-change rule
-below still holds, and the rename script excludes it with a negative lookahead
-(`com\.dcj\.grux(?!phone)`) rather than by hand. A naive global replace turns
-`com.dcj.gruxphone` into `com.gruxai.gruxphone` and orphans the pairing. Whether the phone
-should follow later is the owner's call and has not been made.
+**`com.dcj.gruxphone` FOLLOWED on 2026-09-22**, on the owner's call: the phone is now
+`com.gruxai.gruxphone` (`project.yml`'s `PRODUCT_BUNDLE_IDENTIFIER` and `bundleIdPrefix`, the
+phone's Keychain service, one dispatch queue label). The rename script's negative lookahead
+(`com\.dcj\.grux(?!phone)`) is history: there is no `com.dcj` left in either app.
+
+**On iOS this is a RE-PAIR and cannot be a migration.** The Mac needed
+`KeychainServiceMigrator` because a login keychain keeps items across a service rename. iOS
+moves a renamed app into a different keychain access group, so the old pairing secret is
+unreachable whatever the service string says. Delete the old app, install the new one, pair
+again, grant the microphone again. Plan and the pocket-Grux roadmap:
+`docs/superpowers/plans/2026-09-22-grux-phone-pocket-grux.md`.
 
 **KEYCHAIN SERVICE STRINGS MOVED TOO, AND THAT IS THE PART THAT COULD HAVE LOST DATA.** Four
 services renamed: `com.dcj.grux` (every API key), plus `.webhooks`, `.graph` and `.vault`. A
@@ -165,13 +171,24 @@ reading source, the feature is not shipped, it is buried.
 mention and no Settings writer must FAIL a test. Skipping this rule produces no build error
 and no crash, which is exactly why it needs a test rather than good intentions.
 
-**The worst case in the tree today, as the reference for how bad this gets:** `Clone`
-(`Clone/CloneExtractor.swift`) reads chat threads, the ambient buffer and meeting captures
-and writes a voice-seed JSONL. It appears in four files and **not one of them is a view.** No
-tab, no Settings section, no menu item. It is not hidden on a page, it is on no page.
+**The worst case this rule was written against, as the reference for how bad this gets:**
+`Clone` (`Clone/CloneExtractor.swift`) read chat threads, the ambient buffer and meeting
+captures and wrote a voice-seed JSONL. It appeared in four files and **not one of them was a
+view.** No tab, no Settings section, no menu item. It was not hidden on a page, it was on no
+page. Its only caller was the `fire-clone-extractor-test` debug trigger, so it was RIPPED in
+P-R-7 (2026-09-21) with that trigger and its one test, rather than surfaced. The first-run
+voice step (`CloneStep`, backed by `CorpusCoordinator`) is a different path and is unaffected.
 
 **Do not read this rule as "default everything on".** It is the opposite: default to off,
 then earn the right to ship it off by making it findable and explained.
+
+## ABSOLUTE: live state, never a manual refresh (LOCKED 2026-09-27)
+
+Everything Grux shows that lives in a file, another process or the network is observed, not read once. A person never relaunches, reopens a tab, or asks an agent to "reload grux" to see the current truth. Watch the file (DispatchSource or FSEvents, with a slow poll as the fallback) or poll while the surface is visible, and publish the change. Settings edited on disk outside Grux apply without a relaunch.
+
+Every handoff Grux writes for a person's coding agent goes through the ONE work order line (`Sources/Grux/Optimize/WorkOrder.swift`, `WorkOrderStore`), never a second formatter. The line reports every station to the order's `progress.log`, and it ends at built, installed, relaunched and verified, with any temporary worktree and branch merged and removed, then `done`. A handoff that stops at a commit is not done, and a proposal whose change already exists stops showing by itself.
+
+Measured 2026-09-27 on the test Mac: the Optimize card's "Keep Grux on top" handoff was a second, thinner formatter. The agent stopped at a commit on a side branch in a fresh worktree, the person had to type "reload grux (merge it and run it)", nothing reached a progress log, the worktree and branch stayed behind, and the card kept offering the change it had just delivered.
 
 ## Deploy freely (Grux exception)
 
@@ -180,7 +197,7 @@ Per global rule: "Never deploy to production without explicit ask" applies to ev
 ## Build + deploy
 
 - **Mac:** `./build.sh` from the build worktree's `Grux-Mac` (releases to `/Applications/Grux.app`). build.sh quits + relaunches Grux. It pins a TCC-stable signing identity: that pin is load-bearing, because macOS keys every TCC permission grant to the signing identity, so signing with a different one silently revokes microphone, accessibility, automation and screen-recording access on the next launch. The concrete identity hash is per-machine and lives in `~/.grux/grux-mac-local.md`.
-- **Open a specific tab for verification:** `/Applications/Grux.app/Contents/MacOS/Grux --open-tab=metaAds`. Full key list (35 tabs, LOCKED strings): home, reactor, chat, jaxHQ, jaxCommand, cognitionMap, featureReview, projects, tasks, agents, meetings, calendar, documents, creative (Media Studio), designStudio (alias: design), compare, cookbook, folders, notes, research, skills, schedules, speakers, contacts, mailbox, roadmap, commands, workflows, metaAds, social, focus, terminalFocus, selfUpgrade (alias: foundry), integrations, settings.
+- **Open a specific tab for verification:** `/Applications/Grux.app/Contents/MacOS/Grux --open-tab=metaAds`. Full key list (36 tabs, LOCKED strings): home, reactor, chat, jaxHQ, jaxCommand, cognitionMap, featureReview, projects, tasks, agents, meetings, calendar, documents, creative (Media Studio), designStudio (alias: design), compare, cookbook, folders, notes, research, skills, schedules, speakers, contacts, mailbox, roadmap, commands, workflows, metaAds, social, focus, selfUpgrade (alias: foundry), integrations, settings, labs (the Labs door's shelf, added 2026-09-22), tuning (Tuning, the behaviour cards; no rail row, opened from the orb's right click, Today, the palette, the menu bar and the top of Settings, added 2026-09-22). One more key is not a tab: `panel` (3.0) closes the pane and leaves the Command Panel alone, and it is what `rendered-tab.txt` reads when no pane is open.
 
 The list above is the enum at `Sources/Grux/LaunchRootView.swift:33`, which is the only source of truth; this file said 35 and omitted `social` until 2026-08-11. Count it there before trusting a number here. Unknown keys silently fall back to chat, so verify the tab you actually got.
 - **iOS (GruxPhone):** the xcodegen project reads your Apple team id from the environment, so export it once before generating: `export GRUX_TEAM_ID=<your 10-char Apple team id> && cd GruxPhone && xcodegen`. With it unset, xcodegen still succeeds and the project carries no team id, so signing fails with Xcode's own no-team error rather than silently signing under somebody else's account. Then `xcodebuild ... -allowProvisioningUpdates CODE_SIGN_STYLE=Automatic` (a `DEVELOPMENT_TEAM=...` argument here overrides the generated value either way), and install via `xcrun devicectl device install app`.
@@ -197,9 +214,10 @@ xcrun xctrace list devices        # same devices, plus the ECID xcodebuild wants
 ```
 
 The phone target signs under your own Apple Developer team id with bundle
-`com.dcj.gruxphone`. **Never change that bundle id**: it is the shipping
-identifier, and changing it revokes every macOS and iOS permission grant the
-paired app holds and orphans the existing pairing.
+`com.gruxai.gruxphone` (renamed from `com.dcj.gruxphone` on 2026-09-22).
+**Do not change it again**: it is the shipping identifier, and changing it
+revokes every permission grant the paired app holds and orphans the pairing,
+which is why the rename was done once, before strangers had installed it.
 
 ## Auto-pair from CLI
 
@@ -214,15 +232,15 @@ The `chat=` param is a CLI-only e2e hook. Phone must be UNLOCKED for `devicectl`
 
 **The companion is gated OFF by default** (`config.phoneCompanionEnabled`, Settings → Data & Security → Grux Phone companion). With it off, `PhoneReceiverService.start()` is skipped at the single launch call site and no listener opens. Turn it on only to pair a phone; it takes effect on next launch.
 
-**There is no tunnel. `CloudflareTunnelManager` is an inert shell** as of 2026-08-12. It spawns no process, locates no binary, publishes no URL, and never retries. `start(forwardingTo:)` logs and returns; `stop()` does nothing. Pairing works when the phone is on the same network as the Mac and does not work from cellular or another network, and the pairing window says so in the `Reach` row rather than showing a spinner that never resolves.
+**There is no tunnel.** `CloudflareTunnelManager` went inert on 2026-08-12 (no spawn, no binary lookup, no URL, no retry) and was DELETED in P-R-7 on 2026-09-21, along with both of its call sites. Pairing works when the phone is on the same network as the Mac and does not work from cellular or another network, and the pairing window says so in the `Reach` row rather than showing a spinner that never resolves.
 
 `PhoneReceiverService` binds **all interfaces**, not loopback. This half is easy to lose and losing it kills the feature silently: the QR advertises the Mac's Bonjour `.local` name, so a loopback listener refuses every connection the QR can produce, with no crash and nothing failing. Verified on 2026-08-12 by `lsof`: `Grux ... TCP *:61497 (LISTEN)`. `PhoneTunnelInertTests` guards both halves and both were red-proven by planting.
 
 Net exposure went DOWN with this change, which is the opposite of how the old loopback comment read. Before: a public `*.trycloudflare.com` ingress meant anyone holding the ephemeral URL could open a TCP connection. Now: only devices on the same network can. What guards the socket is unchanged, a 32B pairing secret, a constant-time HMAC before any audio is accepted, one connection at a time, and growing delays on repeated AUTH_FAIL.
 
-Before this, the manager spawned an ephemeral quick tunnel (`cloudflared tunnel --no-autoupdate --url http://localhost:<port>`) and scraped a random `wss://<sub>.trycloudflare.com` host from stderr. An older version of this section instead described a named tunnel `grux` on a fixed `wss://grux.gruxai.com` that reaped stale connectors. **None of that was ever true in this file's code**: `git log -S "tunnel run grux"` on `CloudflareTunnelManager.swift` returns nothing. The claim was written in `5eba83f` and believed for months.
+Before this, the manager spawned an ephemeral quick tunnel (`cloudflared tunnel --no-autoupdate --url http://localhost:<port>`) and scraped a random `wss://<sub>.trycloudflare.com` host from stderr. An older version of this section instead described a named tunnel `grux` on a fixed `wss://grux.gruxai.com` that reaped stale connectors. **None of that was ever true in the manager's code**: `git log -S "tunnel run grux"` on `Sources/Grux/iPhone/CloudflareTunnelManager.swift` (deleted, still in history) returns nothing. The claim was written in `5eba83f` and believed for months.
 
-`applicationWillTerminate` still calls `CloudflareTunnelManager.shared.stop()`, but **that call is now a no-op and reaps nothing**, because nothing spawns a child to reap. The bug it was written for was real: nothing used to stop the child, so every quit reparented it to launchd and the next launch spawned another, and 30 orphans had accumulated by 2026-08-12, each holding a public ingress to a dead loopback port. Removing the spawn is the stronger fix, since a child you never create cannot be orphaned. The call stays so that re-enabling spawn cannot ship without its matching stop. Measured after the change: `pgrep -alx cloudflared` returns nothing.
+`applicationWillTerminate` used to call `CloudflareTunnelManager.shared.stop()`, a no-op from 2026-08-12 until the manager was deleted, so **there is no reap in `applicationWillTerminate` any more**. The bug that reap was written for was real: nothing used to stop the child, so every quit reparented it to launchd and the next launch spawned another, and 30 orphans had accumulated by 2026-08-12, each holding a public ingress to a dead loopback port. Removing the spawn is the stronger fix, since a child you never create cannot be orphaned. With the no-op gone, `PhoneTunnelInertTests.testNoCodeSpawnsATunnel` is what stops a spawn shipping without its matching stop: it fails if any code under `Sources/` names `cloudflared` or `trycloudflare`. Measured after the 2026-08-12 change: `pgrep -alx cloudflared` returns nothing.
 
 To re-dump the current pair URL (the secret rotates; the host is now a stable `ws://<mac>.local:<port>`, and only the kernel-assigned port moves between launches):
 
@@ -232,7 +250,9 @@ touch ~/.grux/fire-phone-pair-dump && sleep 1 && cat ~/.grux/phone-pair-url.txt
 
 Writes a fresh `grux-pair://v2?secret=…&wss=…` URL to `~/.grux/phone-pair-url.txt`, auto-shredded after 30s. Append `&autostart=1&chat=…` for CLI-driven flows.
 
-## CLI triggers (file-watcher in GruxApp.swift)
+## CLI triggers (file-watcher, table in Sources/Grux/Triggers/AppTriggers.swift)
+
+The table moved out of `GruxApp.swift` in P-R-7 (2026-09-21), unchanged and in the same order; `AppDelegate.startInjectChatWatcher()` still registers it and arms `TriggerWatcher`. The file names are locked.
 
 All under `~/.grux/`:
 
@@ -247,6 +267,17 @@ All under `~/.grux/`:
 | `fire-mic-mute` / `fire-mic-unmute` | Release or reclaim the microphone, then write `mic-status.json` |
 | `fire-mic-status` | Write `mic-status.json` with no side effects |
 | `fire-ambient-enable` / `fire-wake-enable` | Turn a listening feature on, which presents its consent dialog, then write `mic-status.json` |
+| `fire-optimize` (contents = the request) | Write an Optimize Grux work order to `~/.grux/work-orders/<id>/`, ack in `optimize-ack.json`. Never touches the clipboard |
+| `fire-first-run-reset` | Put the first-run flow back at its first screen and clear the feature selection. Keys, consent and permissions stay |
+| `fire-chat-status` | Write `chat-status.json` about the live Chat transcript, with no side effects |
+| `fire-chat-show-earlier` | Tap the transcript's Show earlier row, then write `chat-status.json` once the view settles |
+| `fire-chat-scroll` (contents = points, negative is up) | Scroll the transcript the way a trackpad scroll reaches Chat, then write `chat-status.json` |
+| `fire-chat-latest` | Tap the Latest chip (back to the newest message), then write `chat-status.json` |
+| `fire-pane-width` (contents = points) | Set the open pane's width through the Command Panel's window sizer, never under the pane's floor, then write `chat-status.json` |
+| `fire-workflow-open-run` (contents = run id) | Open that run's steps in Workflows the way Drill in does, then write `workflows-status.json` |
+| `fire-workflows-status` | Write `workflows-status.json` with no side effects: every workflow card's title and kind word and, when a run is open, its step titles and statuses |
+
+**The chat triggers** (`Triggers/ChatTriggers.swift`, SWEEP-12) act on the Chat most recently put in a window, through `ChatView.perform`: the same functions the Show earlier row and the Latest chip run. `chat-status.json` is written atomically after the view settles, with `chatOpen`, `totalMessages`, `shownCount`, `followsLatest`, `latestChipUp` (the chip's own state), `topVisibleMessageId`, `scrollOffset`, `scrollMax`, `transcriptWidth` and `writtenAt`. With no Chat open it says `chatOpen: false`.
 
 **Why the listening triggers exist.** Enabling ambient mode or the wake word puts
 up a modal consent dialog, and a modal is a mouse gesture by construction. This
@@ -265,7 +296,7 @@ after any work the triggering action started has finished.
 
 ```bash
 xcrun devicectl device copy from --device <UDID> \
-  --domain-type appDataContainer --domain-identifier com.dcj.gruxphone \
+  --domain-type appDataContainer --domain-identifier com.gruxai.gruxphone \
   --user mobile --source Documents/diag.log \
   --destination /tmp/gruxphone-diag.log
 ```
@@ -280,9 +311,9 @@ v3 = WebSocket + X25519 ECDHE + ChaCha20-Poly1305 AEAD + HMAC-SHA256. Receiver c
 
 Half done, and the half that is missing is the half that matters. **The account side IS real** (verified 2026-08-12): `cloudflared tunnel list` shows a named tunnel `grux`, id `8adc3c13-5425-4842-b696-c1c2e9f53e52`, created 2026-06-08, and `~/.cloudflared` holds both its credential JSON and `cert.pem`. So `tunnel login` and `tunnel create` genuinely happened.
 
-**The code switch never did.** `CloudflareTunnelManager.swift` only ever passed `--url`, so the `grux` tunnel has sat at zero connectors since the day it was created while the app spawned throwaway quick tunnels beside it. That is why the doc read as true to whoever wrote it and was false in the running app.
+**The code switch never did.** `CloudflareTunnelManager.swift` (deleted in P-R-7, 2026-09-21) only ever passed `--url`, so the `grux` tunnel has sat at zero connectors since the day it was created while the app spawned throwaway quick tunnels beside it. That is why the doc read as true to whoever wrote it and was false in the running app.
 
-**As of 2026-08-12 there is no spawn at all to switch.** The manager is inert (see Phone pairing above), so finishing the named tunnel is now a build, not an edit: teach the manager to run `tunnel run grux`, publish the fixed host, restore a matching reap in `applicationWillTerminate` before shipping any spawn, and confirm the DNS route (`cloudflared tunnel route dns grux grux.gruxai.com`, still unverified). `PhoneTunnelInertTests` will go red the moment a spawn returns, which is intended: it is the prompt to restore the reap in the same change.
+**There is no spawn at all to switch, and no manager.** It went inert on 2026-08-12 and was deleted on 2026-09-21 (see Phone pairing above), so finishing the named tunnel is now a build, not an edit: give the tunnel an owner that runs `tunnel run grux`, publish the fixed host, add a matching reap in `applicationWillTerminate` before shipping any spawn, and confirm the DNS route (`cloudflared tunnel route dns grux grux.gruxai.com`, still unverified). `PhoneTunnelInertTests` will go red the moment a spawn returns, which is intended: it is the prompt to add the reap in the same change.
 
 Note the hostname is contested. `grux.gruxai.com` currently returns 530 from this connector-less tunnel, and the OSS launch site is slated to take that hostname. Pick a different one for the phone (`phone.gruxai.com`) or the site and the tunnel will fight over the same record.
 
@@ -290,7 +321,9 @@ The lesson worth keeping: this file asserted a stable, reaping, named tunnel whi
 
 ## UI refresh rule: the Chat tab is the face (LOCKED 2026-06-14)
 
-Chat is the DEFAULT landing tab and the first surface seen on every launch. A GruxTheme refresh once styled the other tabs dramatically but left Chat as a light pass, so the app still looked old on open and read as "the update got reverted" even though it was fully deployed.
+**The Command Panel is the landing (3.0).** The window opens on a 420pt panel (head, one input, a Now list, the Optimize Grux card, the foot) and any surface opens as one pane beside it. `panel` is the rendered-tab value for "no pane". Today and Chat are panes. The pre-3.0 240pt sidebar stays for one release behind `legacyShell` in config.json, switched by **Settings, General, Shell, Classic sidebar**, which switches right away (no relaunch); the `classic`, `sidebar` and `legacy` settings tags jump to it. Under the classic sidebar the window opens on Today (`home`).
+
+Before 3.0 Chat was the DEFAULT landing tab and the first surface seen on every launch. A GruxTheme refresh once styled the other tabs dramatically but left Chat as a light pass, so the app still looked old on open and read as "the update got reverted" even though it was fully deployed.
 
 Rules for any Grux UI work:
 1. Always give the Chat tab the FULL design-language treatment, not a light pass. It is the face of the app; if Chat looks old, the whole app looks old regardless of what the other tabs got.
@@ -306,8 +339,9 @@ GRUX_SWEEP_OUT=/tmp/shots tools/grux-sweep.sh floor home chat mailbox calendar
 ```
 
 - **`winid.swift`** prints `<id>\t<W>x<H>\t<owner>\t<title>` for each real window, so `screencapture -o -x -l<id>` grabs exactly that window. It filters windows under 200x200 (every AppKit app carries 1x1 helpers) and reports size in POINTS.
-- **`framediff.py`** returns the COUNT of changed pixels, not a percentage, comparing only the DETAIL PANE. The nav rail is identical between tabs, so including it only dilutes the signal. A count rather than a percentage because a percentage divides by pane area and is therefore scale dependent: the same Speakers to Contacts switch measures 104,963 changed pixels (8%) at the 840pt floor and 168,950 (2%) at 2400pt, so it changes MORE pixels and scores LOWER. Pass the rail fraction explicitly at non-default window sizes; `grux-sweep.sh` derives it from the measured window width, because the 0.32 that is right at the 840pt floor discards a third of the pane at 2400pt.
+- **`framediff.py`** returns the COUNT of changed pixels, not a percentage, comparing only the DETAIL PANE. The fixed column to its left (the 420pt panel, `GruxLayout.panelWidth`, in the Command Panel shell; the 240pt rail, `GruxLayout.navRail`, under the classic sidebar) barely changes between tabs, so including it only dilutes the signal. A count rather than a percentage because a percentage divides by pane area and is therefore scale dependent: the same Speakers to Contacts switch measures 104,963 changed pixels (8%) at the 840pt floor and 168,950 (2%) at 2400pt, so it changes MORE pixels and scores LOWER. Pass the rail fraction explicitly at non-default window sizes; `grux-sweep.sh` derives it from the measured window width and the shell (`legacyShell` in config.json, or `GRUX_SWEEP_SHELL=panel|classic`), because the 0.32 that is right at the classic 840pt floor discards a third of the pane at 2400pt.
 - **`grux-sweep.sh`** drives the running app through `~/.grux/fire-open-tab`, roughly 0.6s per tab.
+- **Headless (`~/.grux/HEADLESS`)**: the sweep never runs `screencapture`, `winid.swift` or `open -b`. It finds the window in `~/.grux/headless-workspace/workspace.json` and captures through `fire-headless-snapshot` (Grux renders its own window with `cacheDisplay`, no Screen Recording permission), so the same diff and settle checks run on a Mac whose screen is someone else's. `GruxSweepHeadlessTests` runs the real script against a fake Grux.
 
 **Three traps, all of which have already produced a confidently mislabelled screenshot:**
 1. The ack file fires when `requestedTab` is set, which is BEFORE SwiftUI repaints. Waiting on the ack alone hands you the previous tab's pixels.
@@ -318,6 +352,12 @@ Grux is a menu-bar app, so it can be running with its window minimized, hidden, 
 
 **Firing the trigger is not enough on its own, and this is the part that is easy to get wrong twice.** With Grux running and no window, the trigger arrives, `openLaunchWindow` runs, and a window IS created: `CGWindowList` with `.optionAll` lists it at 1040x732 titled "Grux OS". It never becomes ON-SCREEN. It is neither hidden nor minimized, so unhiding and deminiaturizing do nothing; the cause is macOS activation policy, because a background app cannot pull itself to the front and `NSApp.activate` does not grant that. The sweep therefore runs `open -b com.gruxai.grux` as its last resort, which an external tool may do and the app may not. Verified: from a genuinely windowless Grux the sweep now resolves the window, prints `baseline on chat (switched)`, and captures every tab.
 
+**Every surface fits every width it can be shown at (2026-09-27).** A capture at one window size cannot see a layout that only breaks at another. The Command Panel hosts views built for the classic sidebar's wide detail area inside a pane that starts at `GruxLayout.detailContentMin`; measured on the test Mac at an 820 pt window, Settings overflowed both edges (its right side clipped at the window edge, its search field and a content block drawn over the panel column) and the panel's Recent chip row clipped. The guard is the pane-fit sweep (`PaneFitSweepTests`, landing with the flex fix on `design/flex-every-pane`): every surface hosted offscreen at each supported pane width, failing on any fitting width over its proposal, with the surface list taken from the same source as the panel so a new tab cannot escape it. Its offscreen PNGs in `docs/superpowers/visuals/flex-sweep/` are opened and looked at, not only counted.
+
 ## Meta Ads tab (ported to main 2026-06-14)
 
 `Sources/Grux/MetaAds/` renders the autonomous Meta ads engine snapshot (engine on port 3857, reads `~/.grux/meta-ads-snapshot.json`): Winners / Contenders / Graveyard lineage forest, spend pacing vs the $16/day and $140/week caps, mode control (SIMULATE / OBSERVE / live), kill switch, and the Qwen decision journal. Wired as the `metaAds` tab in the System sidebar group and as `MetaAdsOpsSection()` in the Empire dashboard. With no ad account configured the tab renders the snapshot in a posture that spends nothing, which is the correct unconfigured state and never an error.
+
+## Live Accessibility tests are opt-in
+
+The tests that read a real app's accessibility tree or post a real key event (`ScreenControlProofTests`, one in `ScreenControlTargetingTests`) skip by default under XCTest. On this macOS even the non-prompting `AXIsProcessTrusted()` from an untrusted test host raises the system "would like to control this computer" dialog (D-axprompt), so a plain run never asks: `AccessibilityTrust.isGranted()` answers `testAnswer`. To run them, set `GRUX_LIVE_AX_TESTS=1` in the test process's environment on a Mac where the test host is already trusted for Accessibility; `LiveAccessibility.require` then reads the real trust once and opens the door for that test. The skip message names the variable. `AccessibilityTrustGuardTests.testNoLiveTestSkipsOnTheTestAnswer` fails on a live test gated on `isGranted()` directly, which could never run.

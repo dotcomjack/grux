@@ -16,7 +16,7 @@ invents none of it.
 
 ## 0. The problem this solves, in one paragraph
 
-Grux asks a person for 43 different things across 39 features, and today every one of those
+Grux asks a person for many different things across its features, and today every one of those
 asks lives in its own screen with its own wording and its own idea of what happens if you
 say no. A CLI does not fix that by moving the asks to a terminal. It fixes it by making
 every ask arrive in the same shape, in the same order, with the same escape hatches, so

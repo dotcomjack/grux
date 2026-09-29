@@ -67,8 +67,7 @@ final class FeedbackStore: ObservableObject {
 
     private var loadSucceeded = false
     private let fileURL: URL = {
-        let dir = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".grux/creative", isDirectory: true)
+        let dir = Persistence.gruxDir.appendingPathComponent("creative", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("feedback.json")
     }()

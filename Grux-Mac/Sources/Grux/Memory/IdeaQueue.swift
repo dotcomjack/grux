@@ -31,11 +31,12 @@ public actor IdeaQueue {
 
     public init(
         rag: RAGClient = RAGClient(),
-        ideasDir: URL = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux")
-            .appendingPathComponent("ideas")
+        ideasDir: URL? = nil
     ) {
         self.rag = rag
+        // Nil is `~/.grux/ideas`, resolved here because a public default
+        // argument cannot reach the internal `Persistence`.
+        let ideasDir = ideasDir ?? Persistence.gruxDir.appendingPathComponent("ideas")
         self.ideasDir = ideasDir
         try? FileManager.default.createDirectory(at: ideasDir, withIntermediateDirectories: true)
     }

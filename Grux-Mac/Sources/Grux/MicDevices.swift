@@ -1,4 +1,5 @@
 import Foundation
+import AVFoundation
 import CoreAudio
 import AudioToolbox
 
@@ -6,6 +7,8 @@ import AudioToolbox
 //
 // Why this module exists: macOS silently degrades ALL system output (Music,
 // Safari, YouTube) to a narrow-band "communications" codec whenever the
+// (DISPROVEN 2026-09-23. Output is unaffected; the real cost is another
+// app's MICROPHONE capture stopping dead. See VoiceProcessingPolicy.)
 // active audio unit uses VoiceProcessingIO (kAudioUnitSubType_VoiceProcessingIO).
 // AVAudioEngine.inputNode.setVoiceProcessingEnabled(true) is exactly that
 // path. Fine for laptop built-in mics (echo cancel is worth it) but
@@ -113,6 +116,140 @@ enum MicDevices {
         return status == noErr
     }
 
+    /// Every input device with the transport class always-on listening cares
+    /// about. See `ListeningMicPolicy`.
+    static func listeningCandidates() -> [ListeningMicPolicy.Candidate] {
+        listInputs().map { dev in
+            ListeningMicPolicy.Candidate(uid: dev.uid, name: dev.name,
+                                         transport: ListeningMicPolicy.transport(rawValue: transportRaw(uid: dev.uid)))
+        }
+    }
+
+    /// Raw CoreAudio transport type, 0 when it cannot be read.
+    static func transportRaw(uid: String) -> UInt32 {
+        guard let id = deviceID(forUID: uid) else { return 0 }
+        return uint32Property(id, kAudioDevicePropertyTransportType, kAudioObjectPropertyScopeGlobal) ?? 0
+    }
+
+    /// The address a listener watches to hear the default OUTPUT device change
+    /// (AirPods connecting, headphones unplugged).
+    static var defaultOutputDeviceAddress: AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+    }
+
+    /// Where the system default OUTPUT goes right now, for
+    /// `VoiceProcessingPolicy`. Property reads only: nothing is opened.
+    /// `.unknown` when the device cannot be read.
+    static func defaultOutputRoute() -> VoiceProcessingPolicy.OutputRoute {
+        var addr = defaultOutputDeviceAddress
+        var id: AudioDeviceID = 0
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &id
+        ) == noErr, id != kAudioObjectUnknown else { return .unknown }
+        let defaultDevice = outputDevice(id)
+        // A virtual default (eqMac) forwards to a real device; see
+        // VoiceProcessingPolicy.resolve. Only then are the others read.
+        let isVirtual = defaultDevice.transport == kAudioDeviceTransportTypeVirtual
+            || defaultDevice.transport == kAudioDeviceTransportTypeAggregate
+        let others = isVirtual ? allDeviceIDs().filter { $0 != id && hasOutput($0) }.map(outputDevice) : []
+        let resolved = VoiceProcessingPolicy.resolve(defaultDevice: defaultDevice, others: others)
+        if isVirtual {
+            WakeLog.shared.log("audio: the default output \(defaultDevice.name) is virtual; "
+                + (resolved.through.map { "it plays through \($0), read as \(resolved.route)" }
+                   ?? "cannot tell what it plays through, read as unknown"))
+        }
+        return resolved.route
+    }
+
+    private static func outputDevice(_ id: AudioDeviceID) -> VoiceProcessingPolicy.OutputDevice {
+        let transport = uint32Property(id, kAudioDevicePropertyTransportType, kAudioObjectPropertyScopeGlobal) ?? 0
+        // Only a built-in device switches between speakers and the headphone
+        // port by data source; nothing else needs it read.
+        let dataSource = transport == kAudioDeviceTransportTypeBuiltIn
+            ? uint32Property(id, kAudioDevicePropertyDataSource, kAudioDevicePropertyScopeOutput)
+            : nil
+        let running = uint32Property(id, kAudioDevicePropertyDeviceIsRunningSomewhere, kAudioObjectPropertyScopeGlobal) ?? 0
+        return VoiceProcessingPolicy.OutputDevice(
+            name: stringProperty(deviceID: id, selector: kAudioObjectPropertyName) ?? "device \(id)",
+            transport: transport, dataSource: dataSource, isRunning: running != 0)
+    }
+
+    private static func allDeviceIDs() -> [AudioDeviceID] {
+        var addr = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDevices,
+                                              mScope: kAudioObjectPropertyScopeGlobal,
+                                              mElement: kAudioObjectPropertyElementMain)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size) == noErr,
+              size > 0 else { return [] }
+        var ids = [AudioDeviceID](repeating: 0, count: Int(size) / MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &ids) == noErr
+        else { return [] }
+        return ids
+    }
+
+    private static func hasOutput(_ id: AudioDeviceID) -> Bool {
+        var addr = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyStreams,
+                                              mScope: kAudioDevicePropertyScopeOutput,
+                                              mElement: kAudioObjectPropertyElementMain)
+        var size: UInt32 = 0
+        return AudioObjectGetPropertyDataSize(id, &addr, 0, nil, &size) == noErr && size > 0
+    }
+
+    /// Points an engine's input at ONE device, by UID, instead of letting it
+    /// pick. Returns false if the device or the unit cannot be found or the
+    /// call fails, and the caller logs that.
+    ///
+    /// WHY. Without voice processing, `AVAudioEngine`'s input unit is not
+    /// guaranteed to follow the device Grux chose. Measured 2026-09-21 with a
+    /// standalone probe, AirPods Max as the output: an engine created with
+    /// nothing bound opened the AirPods' own microphone (24 kHz mono, the
+    /// Bluetooth call profile), which is exactly the "music goes to call
+    /// quality" bug this whole path exists to prevent, and ambient heard
+    /// nothing (every VAD tick `buf=0.0s rms=0.0000`). Bound to the MacBook Pro
+    /// Microphone it opened at 48 kHz and delivered 96000 frames in 2 seconds.
+    /// Voice processing had been hiding this: it builds its own pairing of the
+    /// current defaults, so it never ran into it. Do not call this on an input
+    /// with voice processing enabled; that unit manages its own devices.
+    @discardableResult
+    static func bindInput(_ node: AVAudioInputNode, toUID uid: String) -> Bool {
+        guard !uid.isEmpty, var id = deviceID(forUID: uid), let unit = node.audioUnit else { return false }
+        return AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
+                                    &id, UInt32(MemoryLayout<AudioDeviceID>.size)) == noErr
+    }
+
+    /// The format to tap an input in. After `bindInput` the node's output
+    /// format still describes the device the engine was created on, and a tap
+    /// in that format receives nothing; the bound device's own input format is
+    /// the one that delivers.
+    static func tapFormat(for node: AVAudioInputNode, bound: Bool) -> AVAudioFormat {
+        bound ? node.inputFormat(forBus: 0) : node.outputFormat(forBus: 0)
+    }
+
+    /// The device an engine's input unit is actually on, by name, for the log.
+    static func boundInputName(_ node: AVAudioInputNode) -> String {
+        // With voice processing on, the unit's current device is the OUTPUT
+        // it pairs with, and the mic is the system default input. Measured
+        // 2026-09-21: every voice processing start logged "MacBook Pro
+        // Speakers" while it captured the MacBook Pro Microphone.
+        if node.isVoiceProcessingEnabled {
+            let mic = systemDefaultInputUID()
+                .flatMap { deviceID(forUID: $0) }
+                .flatMap { stringProperty(deviceID: $0, selector: kAudioObjectPropertyName) }
+            return "\(mic ?? "the default input") (voice processing)"
+        }
+        guard let unit = node.audioUnit else { return "(no unit)" }
+        var id: AudioDeviceID = 0
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioUnitGetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
+                                   &id, &size) == noErr else { return "(unreadable)" }
+        return stringProperty(deviceID: id, selector: kAudioObjectPropertyName) ?? "(device \(id))"
+    }
+
     /// UID of the Apple-internal built-in mic, used by "Revert to MacBook
     /// default". Matches on kAudioDevicePropertyTransportType == built-in;
     /// falls back to any device whose UID starts with "BuiltInMicrophone".
@@ -135,6 +272,18 @@ enum MicDevices {
     }
 
     // MARK: - Private helpers
+
+    private static func uint32Property(_ id: AudioObjectID,
+                                       _ selector: AudioObjectPropertySelector,
+                                       _ scope: AudioObjectPropertyScope) -> UInt32? {
+        var addr = AudioObjectPropertyAddress(mSelector: selector, mScope: scope,
+                                              mElement: kAudioObjectPropertyElementMain)
+        guard AudioObjectHasProperty(id, &addr) else { return nil }
+        var value: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &value) == noErr else { return nil }
+        return value
+    }
 
     private static func hasInputStreams(deviceID: AudioDeviceID) -> Bool {
         var addr = AudioObjectPropertyAddress(

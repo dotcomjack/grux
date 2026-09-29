@@ -2,7 +2,7 @@ import Foundation
 import CryptoKit
 
 // Canonical archival daily log artifact. One per 6am-anchored workday window.
-// Assembled from Focus events, Terminal Focus (Claude Code JSONLs), chat,
+// Assembled from Focus events, coding agent session logs (Claude Code JSONLs), chat,
 // ambient transcripts (via hourly summaries), and git history.
 //
 // Persisted as JSON locally and mirrored as Markdown in iCloud for reading

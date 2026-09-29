@@ -15,7 +15,7 @@ enum CommandV2Definitions {
     static func smokeHelloWorld() -> CommandV2Definition {
         CommandV2Definition(
             id: "smoke-hello-world",
-            displayName: "smoke: hello world",
+            displayName: "Hello world test",
             voiceTriggers: ["smoke v2", "v2 smoke", "test workflow"],
             description: "End-to-end smoke test of the Commands V2 engine. Speaks twice, mutates state, branches.",
             category: .system,
@@ -28,17 +28,17 @@ enum CommandV2Definitions {
                 ),
                 .init(
                     id: "stash",
-                    displayName: "Stash a value",
+                    displayName: "Save a note for later",
                     action: .setState(key: "color", valueExpr: .literal(.string("teal")))
                 ),
                 .init(
                     id: "echo",
-                    displayName: "Echo via builtin",
+                    displayName: "Repeat it back",
                     action: .builtin(name: "echo", args: ["text": .string("smoke world says hi")])
                 ),
                 .init(
                     id: "decide",
-                    displayName: "Branch on state",
+                    displayName: "Pick the path",
                     action: .branch(
                         condition: .stateEquals(key: "color", value: "teal"),
                         ifTrue: "celebrate",
@@ -47,12 +47,13 @@ enum CommandV2Definitions {
                 ),
                 .init(
                     id: "sad",
-                    displayName: "Sad path (only reachable via false branch)",
-                    action: .speak(text: "If you hear this, the branch evaluator is broken.", audioCueAfter: nil)
+                    displayName: "Take the other path",
+                    action: .speak(text: "If you hear this, the branch evaluator is broken.", audioCueAfter: nil),
+                    after: .endRun
                 ),
                 .init(
                     id: "celebrate",
-                    displayName: "Celebrate (took the true branch)",
+                    displayName: "Celebrate",
                     action: .speak(
                         text: "Engine is healthy. Branch and state and speech all working.",
                         audioCueAfter: AudioCue(kind: .successChime)
@@ -70,7 +71,7 @@ enum CommandV2Definitions {
     static func checkASCStatus() -> CommandV2Definition {
         CommandV2Definition(
             id: "check-asc-status",
-            displayName: "check ASC status",
+            displayName: "check App Store Connect status",
             voiceTriggers: [
                 "what's the status of {project}",
                 "check status of {project}",
@@ -89,7 +90,7 @@ enum CommandV2Definitions {
                 ),
                 .init(
                     id: "query",
-                    displayName: "Query ASC",
+                    displayName: "Ask App Store Connect",
                     action: .iosTool(name: "ios_check_asc_status", input: ["project": .string("${param.project}")])
                 ),
                 .init(
@@ -133,7 +134,7 @@ enum CommandV2Definitions {
                 ),
                 .init(
                     id: "screenshots-design",
-                    displayName: "Claude Design - marketing screenshots",
+                    displayName: "Design the marketing screenshots",
                     action: .claudeAgent(
                         systemPrompt: """
                         You are the Claude Design pass for ${param.project}'s App Store screenshots.
@@ -194,7 +195,7 @@ enum CommandV2Definitions {
             phases: [
                 .init(
                     id: "bootstrap-asc-credentials",
-                    displayName: "Bootstrap ASC credentials (autonomous)",
+                    displayName: "Set up App Store Connect access",
                     action: .claudeAgent(
                         systemPrompt: """
                         Autonomous ASC credentials bootstrap for ${param.project}.
@@ -247,7 +248,7 @@ enum CommandV2Definitions {
                 ),
                 .init(
                     id: "auto-fix-audit-blockers",
-                    displayName: "Auto-fix audit blockers (autonomous)",
+                    displayName: "Fix what the audit found",
                     action: .claudeAgent(
                         systemPrompt: """
                         Autonomous blocker remediation for ${param.project}.
@@ -320,7 +321,7 @@ enum CommandV2Definitions {
                 ),
                 .init(
                     id: "screenshots-design",
-                    displayName: "Claude Design - marketing screenshots + App Previews",
+                    displayName: "Design the marketing screenshots and App Previews",
                     action: .claudeAgent(
                         systemPrompt: """
                         You are the Claude Design pass for ${param.project}'s App Store assets.
@@ -375,7 +376,7 @@ enum CommandV2Definitions {
                 ),
                 .init(
                     id: "account-health-check",
-                    displayName: "ASC account health preflight",
+                    displayName: "Check your App Store Connect account",
                     action: .iosTool(
                         name: "ios_check_account_health",
                         input: ["project": .string("${param.project}")]
@@ -383,7 +384,7 @@ enum CommandV2Definitions {
                 ),
                 .init(
                     id: "branch-on-blocker",
-                    displayName: "Branch on account blocker",
+                    displayName: "See if the account needs you",
                     action: .branch(
                         condition: .stateEquals(key: "account_health_ok", value: "true"),
                         ifTrue: "fix-review-blockers",
@@ -392,24 +393,25 @@ enum CommandV2Definitions {
                 ),
                 .init(
                     id: "open-account-blocker",
-                    displayName: "Open ASC blocker URL in Safari",
+                    displayName: "Open the App Store Connect page that needs you in Safari",
                     action: .iosTool(
                         name: "ios_open_account_blocker",
                         input: [:]
-                    )
+                    ),
+                    after: .continueAt("await-blocker-resolution")
                 ),
                 .init(
                     id: "await-blocker-resolution",
-                    displayName: "Wait for user to resolve account blocker",
+                    displayName: "Wait for you to clear the account blocker",
                     action: .userApprovalGate(
-                        prompt: "Resolve the App Store Connect blocker (Safari is open at the right page) - accept any pending agreement, then reply 'done' so I can re-check and publish.",
+                        prompt: "App Store Connect needs you before I can publish. Safari is open at the page: accept any agreement waiting there, then reply done and I will check again.",
                         expectedReplies: ["done", "ok", "accepted", "ship it"]
                     ),
                     userApprovalRequired: true
                 ),
                 .init(
                     id: "recheck-account-health",
-                    displayName: "Re-check ASC account health",
+                    displayName: "Check your App Store Connect account again",
                     action: .iosTool(
                         name: "ios_check_account_health",
                         input: ["project": .string("${param.project}")]
@@ -417,7 +419,7 @@ enum CommandV2Definitions {
                 ),
                 .init(
                     id: "branch-recheck",
-                    displayName: "Branch on re-check",
+                    displayName: "See if the account is clear now",
                     action: .branch(
                         condition: .stateEquals(key: "account_health_ok", value: "true"),
                         ifTrue: "fix-review-blockers",
@@ -432,7 +434,7 @@ enum CommandV2Definitions {
                 // wastes a build slot.
                 .init(
                     id: "fix-review-blockers",
-                    displayName: "Resolve ASC review-readiness blockers (REST)",
+                    displayName: "Clear what blocks App Store review",
                     action: .iosTool(
                         name: "ios_fix_review_blockers",
                         input: ["project": .string("${param.project}")]
@@ -440,7 +442,7 @@ enum CommandV2Definitions {
                 ),
                 .init(
                     id: "app-privacy-fill",
-                    displayName: "Fill App Privacy questionnaire via claude-in-chrome",
+                    displayName: "Fill in the App Privacy questionnaire in Chrome",
                     action: .claudeAgent(
                         systemPrompt: """
                         Fill the App Privacy data-collection questionnaire for ${param.project} so the
@@ -479,7 +481,7 @@ enum CommandV2Definitions {
                 ),
                 .init(
                     id: "publish",
-                    displayName: "Publish to App Store (autonomous)",
+                    displayName: "Publish to the App Store",
                     action: .claudeAgent(
                         systemPrompt: """
                         Autonomous App Store submission for ${param.project}.
@@ -611,7 +613,7 @@ enum CommandV2Definitions {
                 ),
                 .init(
                     id: "check-status",
-                    displayName: "Check ASC status",
+                    displayName: "Check App Store Connect status",
                     action: .iosTool(
                         name: "ios_check_asc_status",
                         input: ["project": .string("${param.project}")]
@@ -672,9 +674,12 @@ enum CommandV2Definitions {
                 // burn ~$0.40/min thrashing on an empty workspace).
                 .init(
                     id: "brainstorm-approval-gate",
-                    displayName: "Confirm spec before launching build swarm",
+                    displayName: "Confirm the plan before building",
                     action: .userApprovalGate(
-                        prompt: "Spec ready? Reply 'go' / 'approved' / 'ship it' to fire the 5-agent build swarm. Reply 'more' to keep brainstorming. Do NOT auto-approve on the user's behalf - wait for them to actually type one of these words in chat.",
+                        // Only the person's own Chat or voice turn answers a
+                        // gate (ChatService.answerWaitingWorkflow), so this no
+                        // longer has to tell a model not to answer for them.
+                        prompt: "The plan is ready. Reply go to start building it, or tell me what to change.",
                         expectedReplies: ["go", "approved", "looks good", "ship it", "build it", "lgtm"]
                     ),
                     userApprovalRequired: true
@@ -688,7 +693,7 @@ enum CommandV2Definitions {
                 // sourced from the user's global config. After this phase, install can run.
                 .init(
                     id: "register-asc-app",
-                    displayName: "Register app on App Store Connect (Chrome)",
+                    displayName: "Register the app on App Store Connect",
                     action: .claudeAgent(
                         systemPrompt: """
                         Register ${param.project} on App Store Connect so install can proceed. Apple's REST API forbids POST /v1/apps (returns 403 FORBIDDEN_ERROR) - you MUST drive the web UI.
@@ -717,7 +722,7 @@ enum CommandV2Definitions {
                 ),
                 .init(
                     id: "build",
-                    displayName: "Swarm build (5 agents × up to 6 iterations)",
+                    displayName: "Build it with a team of agents",
                     action: .claudeAgentSwarm(
                         prompts: [
                             "Implement the spec slice owned by Agent 1 (e.g. Home).",
@@ -755,7 +760,7 @@ enum CommandV2Definitions {
                 ),
                 .init(
                     id: "screenshots-design",
-                    displayName: "Claude Design - marketing screenshots",
+                    displayName: "Design the marketing screenshots",
                     action: .claudeAgent(
                         systemPrompt: """
                         You are the Claude Design pass for ${param.project}'s App Store screenshots.
@@ -786,14 +791,14 @@ enum CommandV2Definitions {
                     action: .walkthrough(points: [
                         WalkthroughPoint(
                             title: "What's new in this build",
-                            body: "I'll narrate each change from the diff. Reply 'ship it' when ready, or tell me what to adjust."
+                            body: "I'll go through each change. Reply ship it when ready, or cancel the run in Workflows to stop."
                         )
                     ]),
                     userApprovalRequired: true
                 ),
                 .init(
                     id: "publish",
-                    displayName: "Publish to App Store",
+                    displayName: "Publish to the App Store",
                     action: .iosTool(
                         name: "ios_publish_to_appstore",
                         input: ["project": .string("${param.project}")]
@@ -813,7 +818,7 @@ enum CommandV2Definitions {
                 ),
                 .init(
                     id: "check-status",
-                    displayName: "Check ASC status",
+                    displayName: "Check App Store Connect status",
                     action: .iosTool(
                         name: "ios_check_asc_status",
                         input: ["project": .string("${param.project}")]
@@ -821,7 +826,7 @@ enum CommandV2Definitions {
                 ),
                 .init(
                     id: "decide-next",
-                    displayName: "Branch on review state",
+                    displayName: "See what Apple decided",
                     action: .branch(
                         condition: .anyOf([
                             .ascSubmissionState(equals: "READY_FOR_SALE"),
@@ -834,7 +839,7 @@ enum CommandV2Definitions {
                 ),
                 .init(
                     id: "still-pending-or-rejected",
-                    displayName: "Branch on rejection vs. still-pending",
+                    displayName: "Rejected, or still in review",
                     action: .branch(
                         condition: .anyOf([
                             .ascSubmissionState(equals: "REJECTED"),
@@ -848,7 +853,7 @@ enum CommandV2Definitions {
                 ),
                 .init(
                     id: "still-pending",
-                    displayName: "Still pending - wait another 24h",
+                    displayName: "Still in review, check again in 24h",
                     action: .speak(
                         text: "Apple is still reviewing ${param.project}. I'll check again tomorrow.",
                         audioCueAfter: nil
@@ -866,13 +871,15 @@ enum CommandV2Definitions {
                         tools: ["fs_read", "fs_write", "shell", "ios_build_verify"],
                         maxTokens: nil
                     ),
-                    userApprovalRequired: true
+                    userApprovalRequired: true,
+                    // The fix went back to Apple, so wait for its review again.
+                    after: .continueAt("wait-for-review")
                 ),
                 .init(
                     id: "celebrate",
-                    displayName: "Celebrate (interrupt-on-active)",
+                    displayName: "Celebrate",
                     action: .interruptOnNextActive(
-                        message: "Also, good news - ${param.project} is approved on the App Store. You shipped anotha one.",
+                        message: "Also, good news: ${param.project} is approved on the App Store. You shipped anotha one.",
                         audioCue: AudioCue(kind: .djKhaledAnotherOne, postSpeakDelay: 0.4)
                     )
                 )
@@ -923,34 +930,58 @@ enum CommandV2Definitions {
                     id: "ask-final-thoughts",
                     displayName: "Ask for final thoughts",
                     action: .userApprovalGate(
-                        prompt: "It's been a week since ${param.project} shipped. Any final thoughts on this project specifically - around design, audience, or product fit? Reply 'yes' to dictate, 'no' to proceed straight to localization, or 'skip' to defer the localization pass.",
+                        prompt: "It's been a week since ${param.project} shipped. Any last thoughts on its design, audience or fit? Reply yes to tell me, no to go straight to translating it, or skip to leave it in English for now.",
                         expectedReplies: ["yes", "no", "skip"]
                     ),
                     userApprovalRequired: true
                 ),
                 .init(
+                    id: "decide-skip",
+                    displayName: "Check whether you said skip",
+                    action: .branch(
+                        condition: .stateEquals(key: "user_reply", value: "skip"),
+                        ifTrue: "defer-localization",
+                        ifFalse: "incorporate-feedback"
+                    )
+                ),
+                .init(
                     id: "incorporate-feedback",
-                    displayName: "Incorporate week-later feedback (if any)",
+                    displayName: "Work in your week-later feedback",
                     action: .branch(
                         condition: .anyOf([
                             .stateEquals(key: "user_reply", value: "yes")
                         ]),
-                        ifTrue: "swarm-feedback-pass",
+                        ifTrue: "collect-feedback",
                         ifFalse: "translate"
                     )
                 ),
                 .init(
+                    id: "collect-feedback",
+                    displayName: "Take the final thoughts",
+                    action: .userApprovalGate(
+                        prompt: "Go ahead. What are your final thoughts on ${param.project}?",
+                        expectedReplies: nil
+                    ),
+                    userApprovalRequired: true
+                ),
+                .init(
+                    id: "keep-feedback",
+                    displayName: "Keep the final thoughts",
+                    action: .setState(key: "user_dictation", valueExpr: .fromState(key: "user_reply_text"))
+                ),
+                .init(
                     id: "swarm-feedback-pass",
-                    displayName: "Swarm: incorporate week-later feedback",
+                    displayName: "Work the feedback into the app",
                     action: .claudeAgent(
                         systemPrompt: "The user just shared week-later feedback on ${param.project}: ${state.user_dictation}. Open the project's CLAUDE.md and the live-on-App-Store version. Triage the feedback into a fix list. If the changes are non-trivial, draft them as a v.next bump and re-run ship-ios-app. If they're cosmetic, apply them inline now and proceed to translation.",
                         tools: ["fs_read", "fs_write", "shell", "ios_build_verify"],
                         maxTokens: nil
-                    )
+                    ),
+                    after: .continueAt("translate")
                 ),
                 .init(
                     id: "translate",
-                    displayName: "Localize to ja/de/fr/es/zh-Hans (asc-fix-07/08)",
+                    displayName: "Translate into Japanese, German, French, Spanish and Chinese",
                     action: .iosTool(
                         name: "ios_localize_app",
                         input: [
@@ -968,6 +999,15 @@ enum CommandV2Definitions {
                     action: .interruptOnNextActive(
                         message: "${param.project} is now live in 6 languages on the App Store.",
                         audioCue: AudioCue(kind: .djKhaledAnotherOne, postSpeakDelay: 0.4)
+                    ),
+                    after: .endRun
+                ),
+                .init(
+                    id: "defer-localization",
+                    displayName: "Defer the localization pass",
+                    action: .speak(
+                        text: "OK, ${param.project} stays in English for now. Say localize ${param.project} when you want the pass.",
+                        audioCueAfter: nil
                     )
                 )
             ]
@@ -1002,7 +1042,7 @@ enum CommandV2Definitions {
             phases: [
                 .init(
                     id: "fetch-feedback",
-                    displayName: "Fetch TestFlight feedback from ASC",
+                    displayName: "Get TestFlight feedback from App Store Connect",
                     action: .iosTool(
                         name: "ios_testflight_feedback",
                         input: ["project": .string("${param.project}")]
@@ -1010,7 +1050,7 @@ enum CommandV2Definitions {
                 ),
                 .init(
                     id: "speak-digest",
-                    displayName: "Narrate the triage digest",
+                    displayName: "Read you the TestFlight summary",
                     action: .speak(
                         text: "${param.project} TestFlight: ${state.tf_crash_count} crashes, ${state.tf_comment_count} tester comments. Top issue: ${state.tf_top_issue}.",
                         audioCueAfter: nil
@@ -1020,14 +1060,14 @@ enum CommandV2Definitions {
                     id: "triage-gate",
                     displayName: "Triage the feedback",
                     action: .userApprovalGate(
-                        prompt: "Should I incorporate this TestFlight feedback into a fix-pass before App Store submission? Reply 'fix' to spin up the fix swarm, 'ship' to skip and submit as-is, or 'hold' to wait for more tester input.",
+                        prompt: "Should I fix what your TestFlight testers reported before it goes to the App Store? Reply fix to have me fix it first, ship to send it as it is, or hold to wait for more feedback.",
                         expectedReplies: ["fix", "ship", "hold"]
                     ),
                     userApprovalRequired: true
                 ),
                 .init(
                     id: "decide-action",
-                    displayName: "Branch on triage decision",
+                    displayName: "Follow your choice",
                     action: .branch(
                         condition: .anyOf([
                             .stateEquals(key: "user_reply", value: "fix")
@@ -1038,7 +1078,7 @@ enum CommandV2Definitions {
                 ),
                 .init(
                     id: "decide-ship-or-hold",
-                    displayName: "Branch ship vs hold",
+                    displayName: "Ship or hold",
                     action: .branch(
                         condition: .anyOf([
                             .stateEquals(key: "user_reply", value: "ship")
@@ -1049,20 +1089,22 @@ enum CommandV2Definitions {
                 ),
                 .init(
                     id: "fix-swarm",
-                    displayName: "Spawn fix swarm against TestFlight feedback",
+                    displayName: "Fix what your testers reported",
                     action: .claudeAgent(
                         systemPrompt: "TestFlight feedback for ${param.project}: ${state.tf_full_report}. Open the project's CLAUDE.md, triage each issue, fix the code, bump build number, re-archive, re-upload to TestFlight. After upload, hand off to ship-ios-app.",
                         tools: ["fs_read", "fs_write", "shell", "ios_build_verify"],
                         maxTokens: nil
-                    )
+                    ),
+                    after: .endRun
                 ),
                 .init(
                     id: "trigger-asc-submit",
-                    displayName: "Hand off to ship-ios-app's publish phase",
+                    displayName: "Hand off to publishing",
                     action: .iosTool(
                         name: "ios_publish_to_appstore",
                         input: ["project": .string("${param.project}")]
-                    )
+                    ),
+                    after: .endRun
                 ),
                 .init(
                     id: "hold",
@@ -1106,7 +1148,7 @@ enum CommandV2Definitions {
             phases: [
                 .init(
                     id: "capture",
-                    displayName: "Write idea + dedup against prior captures",
+                    displayName: "Save the idea, skipping repeats",
                     action: .builtin(name: "capture-idea", args: [
                         "content": .string("${param.content}")
                     ])

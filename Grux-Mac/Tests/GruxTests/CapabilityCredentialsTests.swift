@@ -23,7 +23,7 @@ final class CapabilityCredentialsTests: XCTestCase {
         // 14 until CR-34 deleted the two scalar provider key capabilities on
         // 2026-08-28. A provider key is one key per user-added endpoint held by
         // CustomEndpointStore, not a slot on the app.
-        XCTAssertEqual(keyCapabilities.count, 12)
+        XCTAssertEqual(keyCapabilities.count, 12)  // 12 until CR-37 retired the registrar key, 11 until key.typesafe
     }
 
     /// Every credential must be reachable by a deep link, resolving to the pane,
@@ -52,7 +52,13 @@ final class CapabilityCredentialsTests: XCTestCase {
     /// The existing hand-written aliases must keep winning, so this addition
     /// cannot quietly re-route a tag somebody already depends on.
     func testExistingAliasesStillWin() {
-        XCTAssertEqual(SettingsTabAliases.resolve("fal").anchor, "data.fal")
+        // `fal` was dropped 2026-09-22: fal.ai is out of the business model,
+        // and the alias pointed at `data.fal`, an anchor no pane has drawn
+        // since the vendor was replaced. A deep link to nowhere is worse than
+        // no deep link, because it lands the reader at the top of a pane with
+        // no sign that anything was meant to be there.
+        XCTAssertNil(SettingsTabAliases.map["fal"], "the retired fal deep link is back")
+        XCTAssertNil(SettingsSearchRegistry.entries.first { $0.id == "data.fal" })
         XCTAssertEqual(SettingsTabAliases.resolve("models").pane, .models)
     }
 }

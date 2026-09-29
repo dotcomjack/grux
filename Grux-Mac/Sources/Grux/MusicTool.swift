@@ -27,6 +27,10 @@ enum MusicTool {
         let songTrim = song.trimmingCharacters(in: .whitespacesAndNewlines)
         let artistTrim = artist.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !songTrim.isEmpty else { return "error: empty song name" }
+        let wanted = artistTrim.isEmpty ? songTrim : "\(songTrim) by \(artistTrim)"
+        guard AudioOutput.permit(.music, source: "MusicTool.play", text: wanted) else {
+            return "error: silent mode is on (~/.grux/SILENT), so Grux will not play '\(wanted)'"
+        }
 
         // PRIMARY: MusicKit ApplicationMusicPlayer queues the EXACT track and
         // plays it in the app's own session, so there is no Music.app focus
@@ -77,6 +81,36 @@ enum MusicTool {
         // Both paths failed - combine for Claude to reason about.
         let label = artistTrim.isEmpty ? songTrim : "\(songTrim) by \(artistTrim)"
         return "miss: '\(label)' not found in the local library OR Apple Music catalog. Library said: \(libResult). Catalog said: \(catalogResult)"
+    }
+
+    // Polls Apple Music until current track name fuzzy-matches the requested
+    // song. Used after a macro's .playMusic so subsequent steps don't fire
+    // mid-spawn. Lives here so every Music script sits behind AudioOutput.
+    static func waitUntilPlaying(song: String, timeoutSec: Double = 8.0) async {
+        let deadline = Date().addingTimeInterval(timeoutSec)
+        let want = song.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        while Date() < deadline {
+            let s = """
+            tell application "Music"
+                if it is not running then return "notrunning"
+                if player state is not playing then return "notplaying"
+                try
+                    return name of current track
+                on error
+                    return "notrack"
+                end try
+            end tell
+            """
+            var err: NSDictionary?
+            let raw = (NSAppleScript(source: s)?.executeAndReturnError(&err).stringValue ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if raw == "notrunning" || raw == "notplaying" || raw == "notrack" {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                continue
+            }
+            if !raw.isEmpty && (raw.contains(want) || want.contains(raw)) { return }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
     }
 
     // Library candidate row, parsed out of the AppleScript fetch.
@@ -499,7 +533,7 @@ enum MusicTool {
         defer {
             if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.Music",
                let priorApp, priorApp.bundleIdentifier != "com.apple.Music" {
-                priorApp.activate()
+                WindowFacade.activate(priorApp)
             }
         }
         guard let hit = await searchCatalog(song: song, artist: artist) else {
@@ -692,7 +726,7 @@ enum MusicTool {
         guard let musicApp = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.Music").first else {
             return false
         }
-        return musicApp.activate(options: [])
+        return WindowFacade.activate(musicApp)
     }
 
     // Non-prompting Accessibility check. Deliberately NOT the
@@ -701,7 +735,7 @@ enum MusicTool {
     // returns false the catalog play path surfaces an honest "grant Accessibility"
     // partial instead of pressing a button it can't reach.
     private static func accessibilityGranted() -> Bool {
-        AXIsProcessTrusted()
+        AccessibilityTrust.isGranted()
     }
 
     // Walk Music.app's accessibility tree and AX-press the first Play button.
@@ -709,7 +743,8 @@ enum MusicTool {
     // the track/album page that `open location` navigated to.
     private static func pressMusicPlayButton() -> Bool {
         guard let musicApp = NSRunningApplication.runningApplications(
-            withBundleIdentifier: "com.apple.Music").first else { return false }
+            withBundleIdentifier: "com.apple.Music").first,
+              AccessibilityTrust.isGranted() else { return false }
         let axApp = AXUIElementCreateApplication(musicApp.processIdentifier)
 
         // Prefer searching the main window first - that's where the Play
@@ -729,6 +764,7 @@ enum MusicTool {
             withBundleIdentifier: "com.apple.Music").first else {
             return "ERROR: Music.app is not running - launch it first."
         }
+        guard AccessibilityTrust.isGranted() else { return "ERROR: Grux has no Accessibility grant." }
         let axApp = AXUIElementCreateApplication(musicApp.processIdentifier)
         var windowRef: CFTypeRef?
         AXUIElementCopyAttributeValue(axApp, kAXMainWindowAttribute as CFString, &windowRef)
@@ -895,6 +931,8 @@ enum MusicTool {
     static func listLibraryTracks(artist: String, limit: Int = 20) -> String {
         let artistTrim = artist.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !artistTrim.isEmpty else { return "error: empty artist" }
+        // Listing launches Music, and silent mode leaves Music alone.
+        guard !AudioOutput.isSilent else { return "error: silent mode is on (~/.grux/SILENT), so Grux will not open Music" }
 
         let clampedLimit = max(1, min(50, limit))
         let artistEsc = escapeForAppleScript(artistTrim)

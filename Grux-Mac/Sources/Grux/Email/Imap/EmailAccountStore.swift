@@ -82,8 +82,7 @@ struct EmailAccount: Codable, Identifiable, Equatable {
 // is the intended unconfigured state: a feature awaiting setup, never an error.
 enum EmailBrandRoutes {
     static var fileURL: URL {
-        URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux")
+        Persistence.gruxDir
             .appendingPathComponent("email")
             .appendingPathComponent("brand-routes.json")
     }
@@ -111,8 +110,7 @@ final class EmailAccountStore: ObservableObject {
     @Published private(set) var accounts: [EmailAccount] = []
 
     static var rootDir: URL {
-        URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux")
+        Persistence.gruxDir
             .appendingPathComponent("email")
     }
     private static var fileURL: URL { rootDir.appendingPathComponent("accounts.json") }

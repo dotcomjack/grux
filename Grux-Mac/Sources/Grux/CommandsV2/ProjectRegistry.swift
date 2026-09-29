@@ -42,8 +42,7 @@ enum ProjectRegistryStore {
     // triggers, and workflow-runs/. Shell users can inspect / edit it without
     // diving into Library/Application Support.
     static var registryURL: URL {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        return home.appendingPathComponent(".grux", isDirectory: true)
+        return Persistence.gruxDir
             .appendingPathComponent("projects.json")
     }
 

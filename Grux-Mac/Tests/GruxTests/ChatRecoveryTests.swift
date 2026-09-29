@@ -104,8 +104,13 @@ final class ChatRecoveryTests: XCTestCase {
         XCTAssertEqual(r.kind, .generic)
         XCTAssertFalse(r.message.contains("{"), "raw JSON reached the user: \(r.message)")
         XCTAssertFalse(r.message.contains("invalid_request_error"), "raw provider code reached the user: \(r.message)")
-        // Still has to say what happened and what to do about it.
-        XCTAssertTrue(r.message.contains("400"))
+        // Still has to say what happened and what to do about it. WAS an
+        // assertion that the status code appears. The 3.0 design bans status
+        // codes from the face (JargonInTheFaceTests enforces it), and the
+        // code was only ever a cheap proxy for "say what happened": nobody
+        // can act on 413. The actionable half is what must survive, and the
+        // status stays in the log where a developer looks for it.
+        XCTAssertFalse(r.message.contains("400"), "a status code reached the face: \(r.message)")
         XCTAssertTrue(r.message.lowercased().contains("retry"))
         XCTAssertEqual(r.retryText, "hi")
     }
@@ -116,7 +121,12 @@ final class ChatRecoveryTests: XCTestCase {
             let msg = ChatService.humanMessage(for: ClaudeError.http(code, body))
             XCTAssertFalse(msg.contains("do not print me"), "body leaked for \(code): \(msg)")
             XCTAssertFalse(msg.contains("{"), "JSON leaked for \(code): \(msg)")
-            XCTAssertTrue(msg.contains("\(code)"), "status not named for \(code): \(msg)")
+            XCTAssertFalse(msg.contains("\(code)"), "status code on the face for \(code): \(msg)")
+            // Actionable, which is what naming the status was standing in for.
+            let lower = msg.lowercased()
+            XCTAssertTrue(["retry", "settings", "shorten", "wait", "check", "pick another"]
+                .contains(where: { lower.contains($0) }),
+                "nothing to do about it for \(code): \(msg)")
         }
     }
 

@@ -19,31 +19,27 @@ struct SettingsView: View {
     @State private var model: String = ""
     @State private var interval: Double = 30
     @State private var drift: Double = 2
-    @State private var snooze: Double = 15
-    @State private var activeStart: Double = 6
-    @State private var activeEnd: Double = 23
     @State private var auto: Bool = true
     @State private var notify: Bool = true
     @State private var screen: Bool = true
     @State private var wakeWord: Bool = true
     @State private var autoSendWake: Bool = true
-    @State private var speakAloud: Bool = true
     @State private var useEleven: Bool = true
-    @State private var bargeIn: Bool = true
     @State private var elevenKey: String = ""
     @State private var elevenVoiceId: String = ""
     @State private var elevenModelId: String = ""
     @State private var showElevenKey: Bool = false
-    @State private var voiceSpeed: Double = 1.5
     @State private var voices: [ElevenLabsVoice] = []
     @State private var loadingVoices = false
     @State private var showKey: Bool = false
     @State private var savedAt: Date?
 
-    // Tier + memory + web + Brave key (formerly the Upgrades tab; the tier
-    // picker now lives in Models, the rest in Data & Security).
-    @State private var selectedTier: GruxTier = .tier4_hybrid_8s
-    @State private var memoryEnabled: Bool = true
+    // Web + Brave key (formerly the Upgrades tab, now in Data & Security).
+    // The tier and the memory switch moved to Tuning in P-E-2, and so did
+    // active hours, snooze, speak aloud and voice speed: no @State mirror of
+    // any of them may come back here, because save() writes every mirror it
+    // holds, and a mirror loaded before Tuning changed the value would put
+    // the old one back.
     @State private var webResearchEnabled: Bool = true
     @State private var premiumNoiseCancellation: Bool = true
     @State private var braveKey: String = ""
@@ -70,8 +66,9 @@ struct SettingsView: View {
     // transient on AppState (not persisted); the model + base URL persist in
     // config.json. Discovery state is read live from ModelRegistry.
     @State private var offlineMode: Bool = false
-    /// Transient "Copied" confirmation for the agent handoff prompt.
-    @State private var handoffCopied = false
+    /// What the last "Hand setup to your agent" press wrote, in the legacy
+    /// shell only (the panel shell opens the hub instead).
+    @State private var handoffNote: String? = nil
     @State private var offlineLLMModel: String = "llama3.1"
     @State private var ollamaBaseURL: String = "http://localhost:11434"
     @ObservedObject private var modelRegistry = ModelRegistry.shared
@@ -150,7 +147,7 @@ struct SettingsView: View {
             // that motivated the original change.
             ViewThatFits(in: .horizontal) {
                 panePicker.pickerStyle(.segmented)
-                panePicker.pickerStyle(.menu).frame(maxWidth: 260)
+                panePicker.pickerStyle(.menu).frame(maxWidth: GruxLayout.settingsMenuPickerMax)
             }
             .labelsHidden()
             .padding(.horizontal, GruxSpacing.l)
@@ -214,7 +211,11 @@ struct SettingsView: View {
         // SwiftUI alert to. Turning either feature OFF is never gated.
         .modifier(ClampToAvailableWidth())
         .frame(maxWidth: GruxLayout.contentMax, alignment: .top)
-        .frame(minWidth: 520, idealWidth: 680, maxWidth: .infinity,
+        // The floor is the Command Panel pane's floor, not the classic
+        // sidebar's: at 520 this overflowed a 360pt pane by 160pt and SwiftUI
+        // centred it, so the search field drew over the panel column and the
+        // toggles ran off the window edge (measured at an 820pt window).
+        .frame(minWidth: GruxLayout.detailContentMin, idealWidth: GruxLayout.paneWidth, maxWidth: .infinity,
                minHeight: 400, idealHeight: 620, maxHeight: .infinity,
                alignment: .top)
         .onAppear {
@@ -250,14 +251,31 @@ struct SettingsView: View {
         pendingAnchor = loc.anchor
     }
 
+    /// When a deep link's scroll is attempted, in seconds.
+    ///
+    /// MORE THAN ONCE, and that is the fix. One attempt at 80ms assumes the
+    /// destination pane has finished building its rows by then. A long pane
+    /// (Data and Capabilities is the longest in the app) has not, so
+    /// `scrollTo` addressed an id that did not exist yet, did nothing, and the
+    /// single attempt then cleared the request: the reader landed at the top
+    /// of the right pane with no sign that anything was meant to be there.
+    /// Reported against `settings:memory` and `settings:brands`.
+    ///
+    /// The later attempts are free when the first one worked, because
+    /// scrolling to where you already are moves nothing.
+    static let anchorScrollAttempts: [TimeInterval] = [0.08, 0.35, 0.8]
+
     private func scrollToPendingAnchor(_ proxy: ScrollViewProxy) {
         guard let anchor = pendingAnchor else { return }
-        // Small delay so the destination pane finishes layout first.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-            withAnimation(.easeOut(duration: 0.25)) {
-                proxy.scrollTo(anchor, anchor: .top)
+        for (i, delay) in Self.anchorScrollAttempts.enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                withAnimation(.easeOut(duration: 0.25)) {
+                    proxy.scrollTo(anchor, anchor: .top)
+                }
+                // Cleared only after the last attempt, so a pane that mounts
+                // late still has a request to honour.
+                if i == Self.anchorScrollAttempts.count - 1 { pendingAnchor = nil }
             }
-            pendingAnchor = nil
         }
     }
 
@@ -430,6 +448,12 @@ struct SettingsView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 Form {
+                    if sectionVisible("general.tuning") {
+                        Section(TuningCopy.title) {
+                            TuningPointer(text: TuningCopy.settingsLink)
+                        }
+                        .id("general.tuning")
+                    }
                     if sectionVisible("general.screen") {
                         Section("Screen awareness") {
                             Toggle("Enable screen analysis", isOn: $screen)
@@ -451,24 +475,7 @@ struct SettingsView: View {
                     }
                     if sectionVisible("general.hours") {
                         Section("Active hours") {
-                            // VStack, not HStack, and this is a layout fix rather
-                            // than a style change. A macOS Form reads a two-child
-                            // row as LABEL plus CONTENT and puts the label in a
-                            // leading column OUTSIDE the content area, so these
-                            // rows widened the whole form past the detail pane:
-                            // "Start: 5 AM" rendered to the left of the pane,
-                            // underneath the nav rail, and the form overflowed
-                            // both edges because SwiftUI centres an oversized
-                            // child. One child per row keeps it inside.
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Start: \(ClockFormat.hourLabel(Int(activeStart)))")
-                                Slider(value: $activeStart, in: 0...23, step: 1)
-                            }
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("End: \(ClockFormat.hourLabel(Int(activeEnd)))")
-                                Slider(value: $activeEnd, in: 1...24, step: 1)
-                            }
-                            Text("Grux only watches within these hours.").font(.caption).foregroundStyle(.secondary)
+                            TuningPointer()
                         }
                         .id("general.hours")
                     }
@@ -508,6 +515,58 @@ struct SettingsView: View {
                         }
                         .id("general.identity")
                     }
+                    if sectionVisible("general.doors") {
+                        Section("Sidebar doors") {
+                            // The Developer door had no switch anywhere: the
+                            // config key was read by the rail and written by
+                            // nothing, so a new install could never show the
+                            // five surfaces behind it. This is its permanent
+                            // home; first run opens it for somebody who says
+                            // they write code (`IntentToFeatures.apply`).
+                            Toggle(DoorsCopy.developer.title, isOn: Binding(
+                                get: { state.config.developerSurfacesUnlocked },
+                                set: { v in
+                                    state.config.developerSurfacesUnlocked = v
+                                    state.saveConfig()
+                                }
+                            ))
+                            Text(DoorsCopy.developer.body)
+                                .font(.caption).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .id("general.doors")
+                    }
+                    if sectionVisible("general.shell") {
+                        Section("Shell") {
+                            // The pre-3.0 frame, kept for one release. The
+                            // shell root reads legacyShell live, so the
+                            // switch rebuilds the window on the spot.
+                            Toggle("Classic sidebar", isOn: Binding(
+                                get: { state.config.legacyShell },
+                                set: { v in
+                                    state.config.legacyShell = v
+                                    state.saveConfig()
+                                }
+                            ))
+                            Text("The 240pt sidebar from before 3.0, in place of the Command Panel. Switches right away. Goes away in the release after this one.")
+                                .font(GruxType.caption).foregroundStyle(GruxTheme.textTertiary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            // Only the Command Panel floats (`LaunchWindowSizer.level`), so
+                            // the classic shell shows the row switched off with the reason.
+                            Toggle("Keep Grux on top", isOn: Binding(
+                                get: { state.config.keepOnTop && KeepOnTopRow.isEnabled(legacyShell: state.config.legacyShell) },
+                                set: { v in
+                                    state.config.keepOnTop = v
+                                    state.saveConfig()
+                                }
+                            ))
+                            .disabled(!KeepOnTopRow.isEnabled(legacyShell: state.config.legacyShell))
+                            Text(KeepOnTopRow.caption(legacyShell: state.config.legacyShell))
+                                .font(GruxType.caption).foregroundStyle(GruxTheme.textTertiary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .id("general.shell")
+                    }
                     if sectionVisible("general.handoff") {
                         Section("Hand setup to your agent") {
                             // Setup is nine credentials, eight permissions and a
@@ -518,28 +577,18 @@ struct SettingsView: View {
                             Text("Grux can write a prompt describing exactly what this Mac still needs. Paste it into your coding agent and it will do the parts it can.")
                                 .font(.caption).foregroundStyle(.secondary)
 
-                            HStack(spacing: 10) {
-                                Button("Copy the prompt") {
-                                    let pb = NSPasteboard.general
-                                    pb.clearContents()
-                                    pb.setString(AgentHandoff.prompt(), forType: .string)
-                                    handoffCopied = true
-                                    // Long enough to read, short enough that a
-                                    // stale "Copied" never sits there implying a
-                                    // copy that happened minutes ago.
-                                    Task {
-                                        try? await Task.sleep(nanoseconds: 2_500_000_000)
-                                        handoffCopied = false
-                                    }
-                                }
-                                if handoffCopied {
-                                    Label("Copied", systemImage: "checkmark")
-                                        .font(.caption)
-                                        .foregroundStyle(GruxTheme.successMint)
-                                        .transition(.opacity)
-                                }
+                            Button("Hand setup to your agent") {
+                                handoffNote = SettingsHandoff.run(legacyShell: state.config.legacyShell)
                             }
-                            .animation(.easeOut(duration: 0.15), value: handoffCopied)
+                            if let handoffNote {
+                                Text(handoffNote)
+                                    .font(GruxType.caption).foregroundStyle(GruxTheme.textSecondary)
+                                    .textSelection(.enabled)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            } else if !state.config.legacyShell {
+                                Text("Now under Optimize Grux, as the Hand it over door.")
+                                    .font(GruxType.caption).foregroundStyle(GruxTheme.textTertiary)
+                            }
 
                             // Live counts rather than a vague promise. It reads
                             // the same capability state the sidebar does, so it
@@ -618,22 +667,27 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Pane 2: Voice & Ambient (old Voice + Ambient + Focus + Terminal)
+    private var voiceAmbientSubPicker: some View {
+        Picker("", selection: $voiceAmbientSub) {
+            Text("Voice").tag("voice")
+            Text("Ambient").tag("ambient")
+            Text("Focus").tag("focus")
+            // The session engine spawns sessions and spends a credential, so it
+            // gets its own home.
+            Text("Sessions").tag("sessions")
+        }
+    }
+
+    // MARK: - Pane 2: Voice & Ambient (old Voice + Ambient + Focus)
 
     private var voiceAmbientPane: some View {
         VStack(spacing: 0) {
-            Picker("", selection: $voiceAmbientSub) {
-                Text("Voice").tag("voice")
-                Text("Ambient").tag("ambient")
-                Text("Focus").tag("focus")
-                Text("Terminal").tag("terminal")
-                // The session engine is a DIFFERENT feature from Terminal Focus.
-                // Focus is an overlay that watches sessions somebody else started.
-                // Sessions is the one that spawns them and spends a credential, so
-                // it gets its own home rather than hiding inside the overlay pane.
-                Text("Sessions").tag("sessions")
+            // Segmented where the segments fit, a menu where they do not: at
+            // the pane's 360pt floor the segmented row ran past both edges.
+            ViewThatFits(in: .horizontal) {
+                voiceAmbientSubPicker.pickerStyle(.segmented)
+                voiceAmbientSubPicker.pickerStyle(.menu).frame(maxWidth: GruxLayout.settingsMenuPickerMax)
             }
-            .pickerStyle(.segmented)
             .labelsHidden()
             .padding(.horizontal, GruxSpacing.l)
             .padding(.top, GruxSpacing.m)
@@ -641,8 +695,7 @@ struct SettingsView: View {
                 switch voiceAmbientSub {
                 case "ambient": ambientSub
                 case "focus": focusSub
-                case "terminal": terminalSub
-                case "sessions": TerminalSessionsSettingsView()
+                case "sessions": sessionsSub
                 default: voiceSub
                 }
             }
@@ -665,75 +718,16 @@ struct SettingsView: View {
                     }
 
                     if sectionVisible("voice.wake") {
-                        Section("Wake word") {
-                            // A COMPUTED BINDING, NOT A @State MIRROR, and the
-                            // difference is a bug review caught.
-                            //
-                            // This was `isOn: $wakeWord` with an onChange that
-                            // set `wakeWord = false` before presenting consent.
-                            // Assigning the observed value INSIDE its own
-                            // observer re-enters: the alert's confirm set it
-                            // true, onChange set it back to false and
-                            // re-presented the alert, and the resulting
-                            // true-to-false pass wrote wakeWordEnabled = false
-                            // to disk. The toggle could not be switched on at
-                            // all. Ambient never had the bug because it reads
-                            // config directly, so this now matches it.
-                            Toggle("Listen for \"Hey Grux\"", isOn: Binding(
-                                get: { state.config.wakeWordEnabled },
-                                set: { new in
-                                    Task { @MainActor in
-                                        if new { await WakeWordListener.shared.enable() }
-                                        else { WakeWordListener.shared.disable() }
-                                    }
-                                }
-                            ))
-                            if state.config.wakeWordEnabled {
-                                Text(MicConsent.runningNote)
-                                    .font(.caption).foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                            Toggle("Auto-send command after wake", isOn: $autoSendWake)
-                                .onChange(of: autoSendWake) { _, new in
-                                    state.config.autoSendOnWake = new
-                                    state.saveConfig()
-                                }
-                            HStack {
-                                Circle()
-                                    .fill(wake.isListening ? Color.green : Color.secondary)
-                                    .frame(width: 8, height: 8)
-                                Text(wake.isListening ? "Listening…" : "Paused")
-                                    .font(.caption)
-                                Spacer()
-                                if !wake.lastHeard.isEmpty {
-                                    Text("heard: \(wake.lastHeard.suffix(40))")
-                                        .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                                }
-                            }
-                            if let err = wake.error {
-                                Text(err).font(.caption).foregroundStyle(.orange)
-                            }
-                            Text("Say \"hey grux\" to open chat and dictate a command. Matches common mishearings (\"groks\", \"grooks\", \"gruks\"). Uses on-device recognition.")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                        .id("voice.wake")
+                        ListeningSection()
+                            .id("voice.wake")
                     }
 
                     if sectionVisible("voice.replies") {
                         Section("Spoken replies") {
-                            Toggle("Speak Grux's replies aloud", isOn: $speakAloud)
-                                .onChange(of: speakAloud) { _, new in
-                                    state.config.speakRepliesAloud = new
-                                    state.saveConfig()
-                                }
+                            TuningPointer(text: TuningCopy.spokenPointer)
                             Toggle("Use ElevenLabs voice (Jarvis-grade)", isOn: $useEleven)
                                 .onChange(of: useEleven) { _, new in
                                     state.config.useElevenLabs = new
-                                    state.saveConfig()
-                                }
-                            Toggle("Barge-in: interrupt when I speak over Grux", isOn: $bargeIn)
-                                .onChange(of: bargeIn) { _, new in
-                                    state.config.bargeInEnabled = new
                                     state.saveConfig()
                                 }
                             Toggle("Read me a briefing at 7 AM and 9 PM", isOn: Binding(
@@ -755,37 +749,6 @@ struct SettingsView: View {
                             ))
                             Text("Off by default, and takes effect on next launch. When on, Grux drops Music to 50% while it speaks and puts it back afterwards. The first time it does, macOS asks whether Grux may control Music, because changing another app's volume is done by sending that app an instruction.")
                                 .font(.caption).foregroundStyle(.secondary)
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack {
-                                    Text("Voice speed")
-                                    Spacer()
-                                    Text(String(format: "%.2f×", voiceSpeed))
-                                        .font(.caption.monospacedDigit())
-                                        .foregroundStyle(.secondary)
-                                    Button("Reset") {
-                                        voiceSpeed = 1.5
-                                        state.config.voicePlaybackRate = 1.5
-                                        SpeechEngine.shared.applyPlaybackRate(1.5)
-                                        state.saveConfig()
-                                    }
-                                    .buttonStyle(.borderless)
-                                    .font(.caption)
-                                }
-                                Slider(value: $voiceSpeed, in: 0.75...2.0, step: 0.05) {
-                                    Text("Voice speed")
-                                } minimumValueLabel: {
-                                    Text("0.75×").font(.caption2).foregroundStyle(.secondary)
-                                } maximumValueLabel: {
-                                    Text("2.0×").font(.caption2).foregroundStyle(.secondary)
-                                }
-                                .onChange(of: voiceSpeed) { _, new in
-                                    state.config.voicePlaybackRate = new
-                                    SpeechEngine.shared.applyPlaybackRate(new)
-                                    state.saveConfig()
-                                }
-                                Text("Controls how fast Grux / Coach speaks. 1.0× is natural pacing; 1.5× (default) reads briskly without pitch distortion.")
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
                             Button {
                                 SpeechEngine.shared.speak("Grux online. I'm listening, boss. Talk to me.")
                             } label: {
@@ -848,7 +811,7 @@ struct SettingsView: View {
                                 Text("Multilingual v2").tag("eleven_multilingual_v2")
                                 Text("Flash v2.5").tag("eleven_flash_v2_5")
                             }
-                            Text("Default voice ID `RPJ8nnVtuTgG8McXwW6M`. Paste your ElevenLabs API key to browse the full catalog and switch voices.")
+                            Text("Grux ships with one built-in voice. Paste your ElevenLabs key to browse the full catalogue and switch.")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         .id("voice.eleven")
@@ -867,43 +830,8 @@ struct SettingsView: View {
             ScrollView {
                 Form {
                     if sectionVisible("ambient.passive") {
-                        Section("Passive listening") {
-                            Toggle("Enable ambient mode", isOn: Binding(
-                                get: { state.config.ambientEnabled },
-                                set: { new in
-                                    Task { @MainActor in
-                                        if new { await ambient.enable() } else { ambient.disable() }
-                                    }
-                                }
-                            ))
-                            if state.config.ambientEnabled {
-                                Text(MicConsent.runningNote)
-                                    .font(.caption).foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                            HStack {
-                                Circle()
-                                    .fill(ambient.isCapturing ? Color.green : Color.secondary)
-                                    .frame(width: 8, height: 8)
-                                Text(ambient.status)
-                                    .font(.caption)
-                                Spacer()
-                                if ambient.isTranscribing {
-                                    Label("transcribing…", systemImage: "waveform")
-                                        .font(.caption2).foregroundStyle(.secondary)
-                                }
-                                if ambient.isExtracting {
-                                    Label("extracting…", systemImage: "sparkles")
-                                        .font(.caption2).foregroundStyle(.secondary)
-                                }
-                            }
-                            if let err = ambient.error {
-                                Text(err).font(.caption).foregroundStyle(.orange)
-                            }
-                            Text("Ambient mode continuously transcribes your voice on-device via Whisper, then extracts memories + action items and optionally has Grux speak contextual nudges when you drift. Replaces the wake word listener while active (same mic).")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                        .id("ambient.passive")
+                        ListeningSection()
+                            .id("ambient.passive")
                     }
 
                     if sectionVisible("ambient.behaviors") {
@@ -1103,6 +1031,19 @@ struct SettingsView: View {
         }
     }
 
+    /// The session engine's pane, wrapped the way every other deep-linkable
+    /// pane is: without the reader its two anchors could not be scrolled to
+    /// however many times the scroll was tried.
+    private var sessionsSub: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                TerminalSessionsSettingsView()
+            }
+            .onAppear { scrollToPendingAnchor(proxy) }
+            .onChange(of: pendingAnchor) { _, _ in scrollToPendingAnchor(proxy) }
+        }
+    }
+
     private var focusSub: some View {
         Form {
             Section("Cadence") {
@@ -1116,7 +1057,7 @@ struct SettingsView: View {
                     Text("every \(max(1, state.config.tier.cadenceSeconds))s")
                         .foregroundStyle(.secondary)
                 }
-                Text("Set by the intelligence tier, in Settings, Models. Higher tiers look more often.")
+                Text("Set by how often Grux looks, in Tuning. Higher tiers look more often.")
                     .font(.caption).foregroundStyle(.secondary)
                 HStack {
                     Text("Drift threshold: \(Int(drift)) checks")
@@ -1126,22 +1067,18 @@ struct SettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Snooze") {
-                HStack {
-                    Text("Snooze length: \(Int(snooze))m")
-                    Slider(value: $snooze, in: 5...120, step: 5)
-                }
+                TuningPointer()
             }
             saveBar
         }
         .modifier(SettingsFormChrome())
     }
 
-    // Task 9: Terminal sub-pane hosts the Claude-session mapping + hotkey
-    // recorder. TerminalFocusState is injected as an EnvironmentObject so the
-    // subview can call setSessionMapping / setHotkey directly.
-    private var terminalSub: some View {
-        TerminalFocusSettingsView()
-            .environmentObject(TerminalFocusState.shared)
+    private var modelsSubPicker: some View {
+        Picker("", selection: $modelsSub) {
+            Text("Configuration").tag("models")
+            Text("Presets").tag("presets")
+        }
     }
 
     // MARK: - Pane 3: Models (old Model & API + tier picker + offline +
@@ -1149,11 +1086,12 @@ struct SettingsView: View {
 
     private var modelsPane: some View {
         VStack(spacing: 0) {
-            Picker("", selection: $modelsSub) {
-                Text("Configuration").tag("models")
-                Text("Presets").tag("presets")
+            // Segmented where the segments fit, a menu where they do not: at
+            // the pane's 360pt floor the segmented row ran past both edges.
+            ViewThatFits(in: .horizontal) {
+                modelsSubPicker.pickerStyle(.segmented)
+                modelsSubPicker.pickerStyle(.menu).frame(maxWidth: GruxLayout.settingsMenuPickerMax)
             }
-            .pickerStyle(.segmented)
             .labelsHidden()
             .padding(.horizontal, GruxSpacing.l)
             .padding(.top, GruxSpacing.m)
@@ -1199,6 +1137,13 @@ struct SettingsView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 Form {
+                    // What the models did today and what it cost, above where
+                    // they are chosen.
+                    if sectionVisible("models.usage") {
+                        UsageCard()
+                            .id("models.usage")
+                    }
+
                     if sectionVisible("models.api") {
                         Section("Anthropic API") {
                             // labelsHidden, because a macOS Form promotes a
@@ -1239,33 +1184,7 @@ struct SettingsView: View {
 
                     if sectionVisible("models.tier") {
                         Section("Intelligence tier") {
-                            // ONE child, and that is the fix rather than a
-                            // nesting preference. This Section had TWO direct
-                            // children, the description and the card list, and a
-                            // macOS Form reads a two-child row as LABEL plus
-                            // CONTENT. So the paragraph became a label column,
-                            // which is why it rendered CUT rather than wrapped,
-                            // and the cards became a content column that
-                            // overflowed the detail pane: 810 of the 912 stray
-                            // pixels sat in one band, y 516 to 651pt, which is
-                            // the selected card's border running past the edge.
-                            //
-                            // The card was never at fault. It already declares
-                            // maxWidth .infinity and buttonStyle .plain, so it
-                            // fills whatever it is handed; it was being handed
-                            // too much. Two earlier hypotheses, the key rows and
-                            // the unwrapped paragraph, were REFUTED by measuring
-                            // at a pinned 1040pt window and seeing 912 unchanged.
-                            VStack(alignment: .leading, spacing: GruxSpacing.m) {
-                                Text("Pick how fast Grux watches your screen and how deep he reasons. Tier 2 is the cheapest, Tier 4 is the best value (recommended), ~$60/mo for always-on quality with a local prefilter. Tier 1 is the simplest, not the cheapest.")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                ForEach(GruxTier.allCases) { tier in
-                                    tierCard(tier: tier)
-                                }
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                            TuningPointer(text: TuningCopy.tierPointer(state.config.tier))
                         }
                         .id("models.tier")
                     }
@@ -1382,23 +1301,38 @@ struct SettingsView: View {
         AppearanceSettingsView()
     }
 
+    private var dataSecuritySubPicker: some View {
+        Picker("", selection: $dataSecuritySub) {
+            Text("Backup").tag("backup")
+            Text("Security").tag("security")
+            Text("Folders").tag("folders")
+            Text("Data & Capabilities").tag("capabilities")
+        }
+    }
+
     // MARK: - Pane 5: Data & Security (old Backup + Security + the
     // non-model parts of Upgrades + Telemetry)
 
     private var dataSecurityPane: some View {
         VStack(spacing: 0) {
-            Picker("", selection: $dataSecuritySub) {
-                Text("Backup").tag("backup")
-                Text("Security").tag("security")
-                Text("Data & Capabilities").tag("capabilities")
+            // Folders is the FILES ALLOWLIST, so Data and Security is where a
+            // person goes looking for it. Phase C fold: it had its own rail row
+            // and is now a sub-pane here. A fourth segment rather than a sixth
+            // top-level pane on purpose, because the comment above records what
+            // a fifth long label already cost this picker at the 840pt floor.
+            // Segmented where the segments fit, a menu where they do not: at
+            // the pane's 360pt floor the segmented row ran past both edges.
+            ViewThatFits(in: .horizontal) {
+                dataSecuritySubPicker.pickerStyle(.segmented)
+                dataSecuritySubPicker.pickerStyle(.menu).frame(maxWidth: GruxLayout.settingsMenuPickerMax)
             }
-            .pickerStyle(.segmented)
             .labelsHidden()
             .padding(.horizontal, GruxSpacing.l)
             .padding(.top, GruxSpacing.m)
             Group {
                 switch dataSecuritySub {
                 case "security": securitySub
+                case "folders": foldersSub
                 case "capabilities": capabilitiesSub
                 default: backupSub
                 }
@@ -1416,6 +1350,13 @@ struct SettingsView: View {
     // Items 30/31: injection screening, URL guard policy, Touch ID gates.
     private var securitySub: some View {
         SecuritySettingsView()
+    }
+
+    /// Folders, folded in from its own rail row. It is the allowlist of places
+    /// Grux may read and write, which is a security question, so it lives with
+    /// the other security questions rather than beside Notes and Documents.
+    private var foldersSub: some View {
+        FoldersManagementView()
     }
 
     private var capabilitiesSub: some View {
@@ -1467,16 +1408,18 @@ struct SettingsView: View {
                     // pane, so the one control that speaks for every capability
                     // would have opened the one pane that mentions none of them.
                     .id("data.credentials")
+                    if sectionVisible("data.brands") {
+                        Section("Brands") {
+                            AddBrandRow()
+                        }
+                        .id("data.brands")
+                    }
                     if sectionVisible("data.memory") {
                         Section("Persistent memory") {
-                            Toggle("Remember chats, screen events, and voice across sessions", isOn: $memoryEnabled)
-                                .onChange(of: memoryEnabled) { _, new in
-                                    state.config.memoryEnabled = new
-                                    state.saveConfig()
-                                }
+                            TuningPointer(text: TuningCopy.memoryPointer)
                             Text("Local-only: embeddings generated on-device via Apple NLEmbedding, stored in ~/Library/Application Support/Grux/. No data leaves your Mac.")
                                 .font(.caption).foregroundStyle(.secondary)
-                            if memoryEnabled {
+                            if state.config.memoryEnabled {
                                 HStack(spacing: GruxSpacing.l) {
                                     memoryStat("chats", (memoryCounts[.chatUser] ?? 0) + (memoryCounts[.chatAssistant] ?? 0))
                                     memoryStat("ambient", memoryCounts[.ambient] ?? 0)
@@ -1543,20 +1486,6 @@ struct SettingsView: View {
                         }
                         .id("data.asc")
                     }
-                    if sectionVisible("data.domainMonitor") {
-                        Section("Domain renewals") {
-                            Toggle("Watch my domains for expiry", isOn: Binding(
-                                get: { state.config.domainMonitorEnabled },
-                                set: { v in
-                                    state.config.domainMonitorEnabled = v
-                                    state.saveConfig()
-                                }
-                            ))
-                            Text("Off by default, and takes effect on next launch. When on, Grux asks your registrar for your domains at launch and every 24 hours, and SPEAKS ALOUD and posts a notification when one is within 30 days of expiring. It uses the registrar key you paste here, never a credential left on the Mac by something else. With it off you can still sweep by hand from the Empire dashboard.")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                        .id("data.domainMonitor")
-                    }
                     if sectionVisible("data.controlSocket") {
                         Section("Command line") {
                             Toggle("Let the grux command talk to this app", isOn: Binding(
@@ -1582,6 +1511,7 @@ struct SettingsView: View {
                             ))
                             Text("Off by default, and takes effect on next launch. When on, Grux looks over how you have been using it once a night, writes up changes it thinks would help, and asks you before building any of them. That nightly pass sends what it found to a model, so it spends against your key. With it off Grux never proposes anything and never spends on this.")
                                 .font(.caption).foregroundStyle(.secondary)
+                            TuningPointer(text: TuningCopy.selfUpgradePointer)
                         }
                         .id("data.foundry")
                     }
@@ -1956,7 +1886,8 @@ struct SettingsView: View {
 
     // MARK: - Microphones (voice-processing whitelist + preferred input)
     //
-    // Why this UI exists: macOS flips the whole output chain into narrow-band
+    // Why this UI exists: enabling VPIO was believed to flip the whole output
+    // chain into narrow-band
     // "communications" codec whenever an audio unit uses VoiceProcessingIO.
     // Grux enables VPIO on Ambient + Dictation by default. For mics that
     // don't need our echo cancellation (DJI Mic Mini etc.), the user can tick
@@ -1980,15 +1911,27 @@ struct SettingsView: View {
             // audio the first time they tapped the mic, and the fix was a box
             // they had no reason to look for. The per-device toggles below still
             // override this for a single mic; this turns it off everywhere.
-            Toggle("Use Apple voice processing (echo cancellation, noise suppression, AGC)",
+            // The on line used to say voice processing runs for as long as Grux
+            // listens. Since 2026-09-21 it runs only when the microphone could
+            // hear the Mac's output (VoiceProcessingPolicy), and since
+            // 2026-09-23 ambient listening never asks for it at all, because it
+            // closes the microphone while Grux speaks and so has no echo to
+            // cancel. The copy also used to promise other audio would play "at
+            // call quality"; that was never measured and is not true. Measured
+            // on built-in speakers: output stays 48000 Hz and a 12 kHz tone
+            // survives 73 dB above the noise floor while voice processing runs,
+            // and a playback-only app is untouched. What it really costs is
+            // other apps that are RECORDING, whose microphone capture stops
+            // dead the moment it starts.
+            Toggle("Use Apple voice processing (echo cancellation, noise suppression, level control)",
                    isOn: $premiumNoiseCancellation)
                 .onChange(of: premiumNoiseCancellation) { _, new in
                     state.config.premiumNoiseCancellation = new
                     state.saveConfig()
                 }
             Text(premiumNoiseCancellation
-                 ? "On. Grux cancels echo and background noise while it listens, and macOS drops all system output (Music, Safari, YouTube) to a narrow-band call codec for as long as it is listening."
-                 : "Off. System audio stays full fidelity while Grux listens. Echo cancellation is off, so on a built-in laptop mic Grux may pick up its own spoken replies.")
+                 ? "On for dictation, and only when your speakers could be heard by the microphone. It cancels your music and room noise out of what Grux hears and evens out your level. Always off for background listening, which closes the microphone whenever Grux speaks and so has nothing to cancel. Your music and video keep full quality either way, but while it runs another app that is recording, a call or a screen capture, can lose its microphone."
+                 : "Off. Nothing Grux does takes the microphone away from another app that is recording. Dictation loses noise suppression and level control, so a quiet voice on a built-in mic may transcribe a little less accurately.")
                 .font(.caption).foregroundStyle(.secondary)
 
             if devices.isEmpty {
@@ -2069,7 +2012,7 @@ struct SettingsView: View {
             }
             .padding(.top, 4)
 
-            Text("Ambient mode + dictation normally enable Apple's hardware voice processing (AEC + noise suppression). That forces speakers into narrow-band comm-mode (tinny mono). Tick \"Preserve speaker fidelity\" on any external mic that already has its own DSP, like the DJI Mic, so music/YouTube stay full-fidelity while Grux listens.")
+            Text("Dictation turns on Apple's voice processing (echo cancellation and noise suppression) when you listen on speakers. Background listening never does, because it closes the microphone while Grux speaks and so has no echo to cancel. Your music and video keep full quality either way. What voice processing does cost is other apps: while it runs, an app that is recording, a call or a screen capture, can lose its microphone. Tick \"Preserve speaker fidelity\" on any external mic that already cleans up its own sound, like the DJI Mic, to skip it entirely.")
                 .font(.caption).foregroundStyle(.secondary)
                 .id(micsRefreshTick) // force caption redraw when toggles change
         }
@@ -2079,61 +2022,6 @@ struct SettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: .gruxMicWhitelistChanged)) { _ in
             micsRefreshTick &+= 1
         }
-    }
-
-    @ViewBuilder
-    private func tierCard(tier: GruxTier) -> some View {
-        let isSelected = selectedTier == tier
-        Button {
-            selectedTier = tier
-            state.config.tier = tier
-            state.saveConfig()
-            FocusWatcher.shared.restartForTierChange()
-            savedAt = Date()
-        } label: {
-            HStack(alignment: .top, spacing: GruxSpacing.m) {
-                // Radio indicator
-                Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
-                    .font(.system(size: 18))
-                    .foregroundStyle(isSelected ? GruxTheme.accentPrimary : Color.secondary)
-                    .padding(.top, 2)
-
-                VStack(alignment: .leading, spacing: GruxSpacing.xs) {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(tier.label)
-                            .font(.headline)
-                            .foregroundStyle(.primary)
-                        Spacer()
-                        Text("~$\(tier.estimatedMonthlyUSD)/mo")
-                            .font(.subheadline.monospacedDigit())
-                            .foregroundStyle(isSelected ? GruxTheme.accentPrimary : Color.secondary)
-                    }
-                    Text(tier.architecture)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    VStack(alignment: .leading, spacing: 2) {
-                        ForEach(tier.capabilityBullets, id: \.self) { b in
-                            HStack(alignment: .top, spacing: 6) {
-                                Text("•").foregroundStyle(.secondary)
-                                Text(b).font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                    .padding(.top, 2)
-                }
-            }
-            .padding(GruxSpacing.m)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(isSelected ? GruxTheme.accentPrimary.opacity(0.08) : Color.secondary.opacity(0.05))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(isSelected ? GruxTheme.accentPrimary : Color.secondary.opacity(0.25), lineWidth: isSelected ? 1.5 : 1)
-            )
-        }
-        .buttonStyle(.plain)
     }
 
     @ViewBuilder
@@ -2173,23 +2061,15 @@ struct SettingsView: View {
         model = c.model
         interval = Double(c.captureIntervalSeconds)
         drift = Double(c.driftThreshold)
-        snooze = Double(c.snoozeMinutes)
-        activeStart = Double(c.activeHoursStart)
-        activeEnd = Double(c.activeHoursEnd)
         auto = c.autoPromoteDetectedTask
         notify = c.notificationsEnabled
         screen = c.screenAnalysisEnabled
         wakeWord = c.wakeWordEnabled
         autoSendWake = c.autoSendOnWake
-        speakAloud = c.speakRepliesAloud
         useEleven = c.useElevenLabs
-        bargeIn = c.bargeInEnabled
         elevenKey = KeychainStore.get(.elevenLabsApiKey)
         elevenVoiceId = c.elevenLabsVoiceId
         elevenModelId = c.elevenLabsModelId
-        voiceSpeed = c.voicePlaybackRate
-        selectedTier = c.tier
-        memoryEnabled = c.memoryEnabled
         webResearchEnabled = c.webResearchEnabled
         premiumNoiseCancellation = c.premiumNoiseCancellation
         musicStrategy = c.musicStrategy
@@ -2223,23 +2103,16 @@ struct SettingsView: View {
         c.model = model
         c.captureIntervalSeconds = Int(interval)
         c.driftThreshold = Int(drift)
-        c.snoozeMinutes = Int(snooze)
-        c.activeHoursStart = Int(activeStart)
-        c.activeHoursEnd = Int(activeEnd)
         c.autoPromoteDetectedTask = auto
         c.notificationsEnabled = notify
         c.screenAnalysisEnabled = screen
         c.wakeWordEnabled = wakeWord
         c.autoSendOnWake = autoSendWake
-        c.speakRepliesAloud = speakAloud
         c.useElevenLabs = useEleven
-        c.bargeInEnabled = bargeIn
         c.elevenLabsVoiceId = elevenVoiceId.trimmingCharacters(in: .whitespacesAndNewlines)
         c.elevenLabsModelId = elevenModelId.trimmingCharacters(in: .whitespacesAndNewlines)
-        c.voicePlaybackRate = voiceSpeed
         state.config = c
         state.saveConfig()
-        SpeechEngine.shared.applyPlaybackRate(voiceSpeed)
         savedAt = Date()
     }
 
@@ -2351,6 +2224,44 @@ private struct ClampToAvailableWidth: ViewModifier {
     func body(content: Content) -> some View {
         GeometryReader { geo in
             content.frame(width: geo.size.width, alignment: .top)
+        }
+    }
+}
+
+/// The Keep Grux on top row. Its caption never promises what the current shell
+/// does not do: the classic sidebar never floats (`LaunchWindowSizer.level`).
+enum KeepOnTopRow {
+    nonisolated static func isEnabled(legacyShell: Bool) -> Bool { !legacyShell }
+
+    nonisolated static func caption(legacyShell: Bool) -> String {
+        legacyShell
+            ? "Only the Command Panel can stay on top. Turn off Classic sidebar to use this."
+            : "The panel stays above other windows. Off by default."
+    }
+}
+
+/// Settings' "Hand setup to your agent". The panel shell opens the Optimize
+/// hub, where the Hand it over door lives. The legacy shell hosts no hub, so
+/// it writes the bundle right here and returns the line to show under the
+/// button: where it went, or why it could not.
+@MainActor
+enum SettingsHandoff {
+    static func run(legacyShell: Bool,
+                    write: @MainActor () -> Result<URL, Swift.Error> = { HandoffBundle.writeLive() }) -> String? {
+        guard legacyShell else {
+            OptimizeHubState.shared.isExpanded = true
+            // Settings is its own window, often over the panel or with the
+            // launch window closed: bring the panel forward, as the palette's
+            // Optimize Grux does, or the card expands where nobody sees it.
+            AppState.shared.requestedTab = PanelKeys.none
+            AppDelegate.shared?.openLaunchWindow(tab: PanelKeys.none)
+            return nil
+        }
+        switch write() {
+        case .success(let url):
+            return OptimizeCopy.handoffWritten + " " + (url.path as NSString).abbreviatingWithTildeInPath
+        case .failure(let error):
+            return OptimizeCopy.handoffFailed(error.localizedDescription)
         }
     }
 }

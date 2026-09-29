@@ -34,21 +34,12 @@ struct PresetsView: View {
     private var selected: Preset? { selection.flatMap { store.preset(id: $0) } }
 
     var body: some View {
-        HStack(spacing: 0) {
+        // The shared split: the index at its ideal beside the editor while the
+        // editor keeps its floor, giving ground toward listColumnMin first, and
+        // stacked over the editor on a pane too narrow for both.
+        GruxSplit(listWidth: GruxLayout.listColumnIdeal) {
             listColumn
-                // 280 is what the index WANTS, not what it takes. As a hard
-                // width it kept its number while the pane narrowed and the
-                // editor beside it absorbed every lost point, until the form
-                // rows (label column plus field) had nowhere left to go and
-                // clipped. Bounded, the HStack still hands the column its full
-                // 280 at any ordinary size and shrinks it toward
-                // listColumnMin first as the pane approaches its 599pt floor,
-                // so the thing being edited degrades last. 280 is
-                // GruxLayout.listColumnIdeal exactly, so nothing moves today.
-                .frame(minWidth: GruxLayout.listColumnMin,
-                       idealWidth: GruxLayout.listColumnIdeal,
-                       maxWidth: GruxLayout.listColumnIdeal)
-            Divider()
+        } detail: {
             editorColumn
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }

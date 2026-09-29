@@ -18,7 +18,7 @@ enum ActiveApp {
     }
 
     private static func frontWindowTitle(pid: pid_t?) -> String? {
-        guard let pid else { return nil }
+        guard let pid, AccessibilityTrust.isGranted() else { return nil }
         let appRef = AXUIElementCreateApplication(pid)
         var windowRef: CFTypeRef?
         guard AXUIElementCopyAttributeValue(appRef, kAXFocusedWindowAttribute as CFString, &windowRef) == .success,

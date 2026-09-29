@@ -157,17 +157,24 @@ struct Shell: ParsableCommand {
         // and that grux undo had the snapshot taken before it started. Neither was true: the
         // gate sits in FRONT of the run, and the run is what takes the snapshot, so nothing
         // ran and nothing was recorded.
-        if noInput, asksTouchID, mode == "trust", let reach {
+        // The app gates on the same text floor (`ShellTool.dangerGateReason`), so a command
+        // that deletes or overwrites puts the same sheet up as one that reaches off the Mac.
+        let destroys = ShellSafety.looksDestructive(command: command, cwd: folder)
+        let touchIDCause: String? = reach != nil ? "reaches off this Mac"
+            : (destroys ? "deletes or overwrites something" : nil)
+        if noInput, asksTouchID, mode == "trust", let touchIDCause {
             frame.open(.look, "Grux would put a Touch ID prompt on this Mac, and --no-input "
                               + "says there is nobody here to answer it.")
             printWhat(command: command, folder: folder, root: root, roots: roots,
                       mode: mode, frame: frame)
             print("")
             print(r.style.ink(.attention, r.prose(
-                "That command reaches off this Mac and you have the Touch ID gate switched "
+                "That command \(touchIDCause) and you have the Touch ID gate switched "
                 + "on, so Grux asks before it runs one. Nothing ran.")))
-            print("")
-            print(r.style.ink(.dim, r.prose(reach, indent: 2)))
+            if let reach {
+                print("")
+                print(r.style.ink(.dim, r.prose(reach, indent: 2)))
+            }
             print("")
             print(r.prose("No flag gets past this one, and --yes is the wrong one: it "
                           + "answers grux's own question, not the system prompt. Turn the "
@@ -196,10 +203,10 @@ struct Shell: ParsableCommand {
                 + "Grux records it before running. On a big project that takes a moment.",
                 indent: 2)))
         }
-        if asksTouchID, mode == "trust", reach != nil {
+        if asksTouchID, mode == "trust", let touchIDCause {
             print("")
             print(r.style.ink(.attention, r.prose("Grux will ask for Touch ID first: that "
-                + "command reaches off this Mac and you have the gate switched on.",
+                + "command \(touchIDCause) and you have the gate switched on.",
                 indent: 2)))
         }
 
@@ -278,14 +285,14 @@ struct Shell: ParsableCommand {
                 print(r.style.ink(.dim, r.prose("The command may still be running inside "
                     + "Grux. grux undo lists every snapshot there is to put back.",
                     indent: 2)))
-                if asksTouchID, mode == "trust", reach != nil {
+                if asksTouchID, mode == "trust", let touchIDCause {
                     print("")
                     // The cause this command PREDICTED before it called, so it is the one
                     // guess worth printing: the sheet has no timeout and this side's wait
                     // does, so the prompt outlives the command that asked for it.
                     print(r.style.ink(.attention, r.prose("It may also not have started: "
-                        + "Grux asks for Touch ID before a command that reaches off this "
-                        + "Mac, and that prompt waits for as long as it takes.", indent: 2)))
+                        + "Grux asks for Touch ID before a command that \(touchIDCause), "
+                        + "and that prompt waits for as long as it takes.", indent: 2)))
                 }
             }
             leave(.failed)
@@ -315,10 +322,21 @@ struct Shell: ParsableCommand {
 
         frame.open(.prove)
 
-        // REFUSED. The two kinds want opposite things from the reader, so they are never
-        // printed as one: an allowlist refusal is settled until somebody changes a setting,
-        // and a containment refusal is answered by a different command.
+        // REFUSED. The kinds want different things from the reader, so they are never
+        // printed as one: a silent-mode refusal is settled until ~/.grux/SILENT goes, an
+        // allowlist refusal until somebody changes a setting, and a containment refusal is
+        // answered by a different command.
         if reply["blocked"] as? Bool == true {
+            if (reply["blocked_kind"] as? String) == "silent" {
+                print(r.prose("Grux would not run that: silent mode is on, and that command "
+                              + "would make sound."))
+                print("")
+                print(r.style.ink(.dim, r.prose(reason, indent: 2)))
+                print("")
+                print(r.prose("Nothing ran and nothing changed. Remove ~/.grux/SILENT to let "
+                              + "Grux make sound again.", indent: 2))
+                leave(.waitingOnYou)
+            }
             let allowlist = (reply["blocked_kind"] as? String) == "allowlist"
             if allowlist {
                 print(r.prose("Grux would not run that. Your trust ceiling is strict, which "

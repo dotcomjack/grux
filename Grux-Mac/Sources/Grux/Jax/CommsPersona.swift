@@ -137,8 +137,7 @@ struct CommsRoster: Codable, Equatable {
 enum CommsRosterStore {
 
     static var fileURL: URL {
-        URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux", isDirectory: true)
+        Persistence.gruxDir
             .appendingPathComponent("comms-identity.json")
     }
 

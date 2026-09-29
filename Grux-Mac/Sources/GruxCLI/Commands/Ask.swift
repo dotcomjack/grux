@@ -18,11 +18,11 @@ struct Ask: ParsableCommand {
     /// Ten seconds is the default everywhere else and it is right everywhere else, because
     /// every other tool reads a file or flips a switch. This one waits on a model, which
     /// takes tens of seconds on a long answer and longer again when the turn calls a tool
-    /// and goes back for a second hop. Three minutes sits deliberately OUTSIDE the handler's
-    /// own 150 second deadline, so the app is the side that gets to describe a slow turn.
+    /// and goes back for a second hop. Six minutes sits deliberately OUTSIDE the handler's
+    /// own 330 second deadline, so the app is the side that gets to describe a slow turn.
     /// The client's own timeout sentence talks about an app busy starting up, which would be
     /// exactly wrong here.
-    static let waitSeconds: TimeInterval = 180
+    static let waitSeconds: TimeInterval = 360
 
     static let configuration = CommandConfiguration(
         commandName: "ask",

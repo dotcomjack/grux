@@ -94,39 +94,64 @@ struct ProjectsView: View {
 
     // MARK: - Header
 
+    // One row where it fits; on a narrow pane the filter drops under the
+    // title, which never wraps mid-word ("Proj / ect / s" at 360pt before).
     private var header: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: GruxSpacing.m) {
+                titleCluster
+                Spacer()
+                filterField
+                    .frame(minWidth: GruxLayout.searchFieldMin, idealWidth: GruxLayout.projectsFilterWidth,
+                           maxWidth: GruxLayout.projectsFilterWidth)
+                refreshButton
+            }
+            VStack(alignment: .leading, spacing: GruxSpacing.s) {
+                HStack(spacing: GruxSpacing.m) {
+                    titleCluster
+                    Spacer(minLength: 0)
+                    refreshButton
+                }
+                filterField.frame(maxWidth: .infinity)
+            }
+        }
+        .padding(.horizontal, GruxSpacing.l).padding(.vertical, GruxSpacing.m)
+    }
+
+    private var titleCluster: some View {
         HStack(spacing: GruxSpacing.m) {
             Image(systemName: "square.stack.3d.up.fill")
                 .foregroundStyle(.purple)
             Text("Projects").font(GruxType.title)
-
+                .lineLimit(1)
+                .fixedSize()
             if let snap = obs.snapshot {
                 sourcePill(snap)
             }
-
-            Spacer()
-
-            TextField("filter", text: $obs.filter)
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 180)
-
-            Button {
-                Task { await obs.refresh() }
-            } label: {
-                Image(systemName: obs.isRefreshing ? "arrow.triangle.2.circlepath" : "arrow.clockwise")
-                    .rotationEffect(.degrees(obs.isRefreshing ? 360 : 0))
-                    // Gated like every other loop in the app. A spinner that
-                    // is honestly reporting work still has no business turning
-                    // while the user asked for less motion, or while the window
-                    // it lives in is behind something else.
-                    .animation(MotionTokens.gated(obs.isRefreshing
-                               ? .linear(duration: 1).repeatForever(autoreverses: false)
-                               : .default), value: obs.isRefreshing)
-            }
-            .help("Refresh now")
-            .buttonStyle(.borderless)
         }
-        .padding(.horizontal, GruxSpacing.l).padding(.vertical, GruxSpacing.m)
+    }
+
+    private var filterField: some View {
+        TextField("filter", text: $obs.filter)
+            .textFieldStyle(.roundedBorder)
+    }
+
+    private var refreshButton: some View {
+        Button {
+            Task { await obs.refresh() }
+        } label: {
+            Image(systemName: obs.isRefreshing ? "arrow.triangle.2.circlepath" : "arrow.clockwise")
+                .rotationEffect(.degrees(obs.isRefreshing ? 360 : 0))
+                // Gated like every other loop in the app. A spinner that
+                // is honestly reporting work still has no business turning
+                // while the user asked for less motion, or while the window
+                // it lives in is behind something else.
+                .animation(MotionTokens.gated(obs.isRefreshing
+                           ? .linear(duration: 1).repeatForever(autoreverses: false)
+                           : .default), value: obs.isRefreshing)
+        }
+        .help("Refresh now")
+        .buttonStyle(.borderless)
     }
 
     private func sourcePill(_ snap: ProjectsIndex.Snapshot) -> some View {
@@ -144,6 +169,7 @@ struct ProjectsView: View {
             Text("·").foregroundStyle(.tertiary)
             Text("\(snap.entries.count) projects").font(.caption)
         }
+        .lineLimit(1)
         .foregroundStyle(.secondary)
         .padding(.horizontal, GruxSpacing.s).padding(.vertical, 3)
         .background(Capsule().fill(color.opacity(0.12)))

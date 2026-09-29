@@ -64,7 +64,112 @@ FAILED=0
 mkdir -p "$OUT"
 [ -z "$(pgrep -x Grux)" ] && { echo "Grux is not running" >&2; exit 1; }
 
+# restore_and_clean: on EVERY exit, success or not, put the app back on a
+# sane tab and drop this sweep's working frames. A verification sweep drives
+# the owner's live app, and leaving it parked on whatever tab happened to be
+# last is not a neutral act: it looks exactly like the app froze there. Ending
+# on Home is the difference between "the sweep finished" and "my app is
+# stuck". An early exit (no frame, a diff that could not run) used to skip
+# both and left _baseline and _pre files for a glob to mistake for tabs.
+restore_and_clean() {
+  # A command substitution's subshell runs this too; only the sweep itself acts.
+  (( ZSH_SUBSHELL )) && return
+  rm -f "$OUT/${PREFIX}-_baseline.png" "$OUT/${PREFIX}-_pre.png" \
+        "$OUT/${PREFIX}-_settle.png" "$OUT/${PREFIX}-_s.png"
+  local restore="${GRUX_SWEEP_RESTORE:-home}" i
+  rm -f "$ACK"; print -n "$restore" > "$FIRE"
+  for i in $(seq 1 30); do
+    [ -f "$ACK" ] && [ "$(cat "$ACK" 2>/dev/null)" = "$restore" ] && break
+    sleep 0.1
+  done
+  echo "restored to $restore"
+}
+trap restore_and_clean EXIT
+
 WINID=""; WINW=""; PREV=""
+
+# HEADLESS: ~/.grux/HEADLESS (the sentinel Grux reads live) means the screen is
+# someone else's. Never screencapture (it raises a Screen Recording prompt nobody
+# can answer) and never activate Grux: capture through Grux's own
+# fire-headless-snapshot, which renders its window to PNG with cacheDisplay.
+HEADLESS=""; [ -e "$HOME/.grux/HEADLESS" ] && HEADLESS=1
+WORKSPACE="$HOME/.grux/headless-workspace/workspace.json"
+SNAPFIRE="$HOME/.grux/fire-headless-snapshot"
+SNAPRESULT="$HOME/.grux/headless-workspace/snapshot-result.json"
+SNAPSHOTS="$HOME/.grux/headless-workspace/shots"
+SNAPN=0
+# This sweep's own mark on every frame it asks for. The pid alone is not
+# enough: pids are recycled, and a shot an earlier sweep left under the same
+# pid, counter and window would match. Kept short, because the app keeps only
+# 40 characters of a token in a file name.
+NONCE="$(date +%s | tail -c 6)$(printf '%04x' $((RANDOM % 65536)))"
+# How long one snapshot may take. Right after a launch Grux spent 15 s opening
+# Chat for the first time, and a 5 s wait ran out with no capture at all.
+SNAPWAIT="${GRUX_SWEEP_SNAP_WAIT:-20}"
+
+# grab <dest>: the main window, as it is drawn right now. Fails (status 1, no
+# file) when no frame arrived: a missing frame compared to anything measures 0,
+# and 0 reads as "settled" and "no change", so it must never reach framediff.
+grab() {
+  if [ -z "$HEADLESS" ]; then
+    screencapture -o -x -l"$WINID" "$1" 2>/dev/null
+    [ -f "$1" ]
+    return
+  fi
+  # Grux also snapshots on its own after each render and rewrites the result
+  # file then, 50 to 70 ms after this call's snapshot (measured 2026-09-28), so
+  # polling snapshot-result.json alone missed the token on every run and the
+  # sweep failed "no frame arrived". The shot's own file keeps the token in its
+  # name (<time>-<token>-<window title>-<window id>.png, HeadlessWorkspace) and
+  # nothing overwrites it: look for that first, the result file second.
+  local token="sweep-$$-$NONCE-$((SNAPN += 1))" file deadline=$((SECONDS + SNAPWAIT))
+  local -a shots
+  rm -f "$1"
+  # Written whole, then moved into place, so Grux never reads a half-written token.
+  print -n "$token" > "$SNAPFIRE.part" && mv -f "$SNAPFIRE.part" "$SNAPFIRE"
+  while (( SECONDS < deadline )); do
+    # (N) is zsh's null glob: no match is an empty list, not an error.
+    shots=( "$SNAPSHOTS"/*-"$token"-*-"$WINID".png(N) )
+    file="${shots[1]:-}"
+    [ -z "$file" ] && file=$(python3 -c '
+import json, sys
+r = json.load(open(sys.argv[1]))
+if r.get("reason") == sys.argv[2]:
+    print(next((f for f in r.get("files", []) if f.endswith("-%s.png" % sys.argv[3])), ""))
+' "$SNAPRESULT" "$token" "$WINID" 2>/dev/null)
+    if [ -n "$file" ]; then cp -f "$file" "$1" 2>/dev/null; [ -f "$1" ]; return; fi
+    sleep 0.05
+  done
+  return 1
+}
+
+# fdiff <a> <b>: changed pixels between two frames, right of the rail. A diff
+# that cannot run (framediff.py needs Pillow, which /usr/bin/python3 lacks when
+# env.sh was not sourced) ENDS the sweep and says why. It used to print
+# nothing, which `|| echo 0` turned into 0 px: "settled" for the baseline and
+# "NEVER DIVERGED" for every tab of a working app. Call it as
+# `X=$(fdiff a b) || exit 2`: exit inside $(...) leaves only the subshell.
+fdiff() {
+  local out err rc
+  err=$(mktemp -t grux-fdiff) || return 2
+  out=$(python3 "$HERE/framediff.py" "$1" "$2" "$RAILFRAC" 2>"$err"); rc=$?
+  if [ "$rc" -ne 0 ] || [[ ! "$out" =~ '^[0-9]+$' ]]; then
+    echo "FAIL: framediff.py could not compare two frames (exit $rc), so nothing it would have measured is certified:" >&2
+    sed 's/^/  /' "$err" | tail -3 >&2
+    echo "  Run the sweep with a python3 that has Pillow (source env.sh)." >&2
+    rm -f "$err"
+    return 2
+  fi
+  rm -f "$err"
+  print -r -- "$out"
+}
+
+# nosnap <what>: a frame that never arrived ends the sweep. Nothing after it can be
+# compared, so nothing after it is certified.
+nosnap() {
+  echo "FAIL: no frame of $1 arrived within ${SNAPWAIT}s${HEADLESS:+ (fire-headless-snapshot)}, so it cannot be compared; nothing after this is certified" >&2
+  exit 1
+}
 
 # Bootstrap onto a tab that is NOT the first one being swept, ALWAYS, for two
 # reasons. Grux is a menu-bar app that can be running with no window at all, in
@@ -87,7 +192,30 @@ BOOT="chat"; [ "$FIRSTTAB" = "chat" ] && BOOT="home"
 resolve_window() {
   local tries="$1" i line
   for i in $(seq 1 "$tries"); do
-    line=$(xcrun swift "$HERE/winid.swift" Grux 2>/dev/null | head -1)
+    if [ -n "$HEADLESS" ]; then
+      # Headless, the window is off every screen at alpha 0 and CGWindowList from
+      # a plain shell sees nothing, so ask Grux itself (workspace.json).
+      line=$(python3 -c '
+import json, sys
+for w in json.load(open(sys.argv[1])).get("windows", []):
+    if w.get("title") == "Grux OS" and w.get("visible"):
+        print("%d\t%dx%d" % (w["id"], w["frame"][2], w["frame"][3])); break
+' "$WORKSPACE" 2>/dev/null)
+      if [ -n "$line" ]; then
+        WINID=$(print -r -- "$line" | cut -f1)
+        WINW=$(print -r -- "$line" | cut -f2 | cut -dx -f1)
+        return 0
+      fi
+      sleep 0.2
+      continue
+    fi
+    # The MAIN window is the one titled "Grux OS". Since 3.0 the Ambient HUD
+    # panel (untitled, 392x1020) is up at launch too and can list first, and
+    # a sweep that captured it reported NEVER DIVERGED for every tab, which
+    # was true of the HUD and said nothing about the tabs. Prefer the title;
+    # fall back to the first Grux window only when no titled one is on screen.
+    line=$(xcrun swift "$HERE/winid.swift" Grux 2>/dev/null | awk -F'\t' '$4 == "Grux OS" {print; exit}')
+    [ -z "$line" ] && line=$(xcrun swift "$HERE/winid.swift" Grux 2>/dev/null | head -1)
     if [ -n "$line" ]; then
       WINID=$(print -r -- "$line" | cut -f1)
       WINW=$(print -r -- "$line" | cut -f2 | cut -dx -f1)
@@ -118,8 +246,7 @@ resolve_window 6
 PRE=""
 if [ -n "$WINID" ]; then
   PRE="$OUT/${PREFIX}-_pre.png"
-  screencapture -o -x -l"$WINID" "$PRE" 2>/dev/null
-  [ -f "$PRE" ] || PRE=""
+  grab "$PRE" || PRE=""
 fi
 
 rm -f "$ACK"; print -n "$BOOT" > "$FIRE"
@@ -129,6 +256,8 @@ for i in $(seq 1 40); do
 done
 
 [ -z "$WINID" ] && resolve_window 20
+# Headless, opening the bootstrap pane resized the window: read its width again.
+[ -n "$HEADLESS" ] && [ -n "$WINID" ] && { sleep 0.5; resolve_window 5; }
 
 # Still nothing, so ACTIVATE the app from outside and look again.
 #
@@ -149,19 +278,30 @@ done
 #
 # So the driver activates the app, which is something an external tool is
 # allowed to do and the app is not.
-if [ -z "$WINID" ]; then
+# Never headless: activating is exactly what the person watching must not see.
+if [ -z "$WINID" ] && [ -z "$HEADLESS" ]; then
   open -b com.gruxai.grux 2>/dev/null
   resolve_window 20
 fi
 [ -z "$WINID" ] && { echo "no Grux window found (Grux is running, the trigger fired and the app was activated, but no window ever came on screen)" >&2; exit 1; }
 
-# Where the detail pane starts, as a fraction of width. The nav rail is a fixed
-# 240pt (GruxLayout.navRail) at every window size, so this fraction MUST be
-# derived rather than hardcoded: the 0.32 that is right at the 840pt floor
+# Where the detail pane starts, as a fraction of width. The column left of it
+# is fixed at every window size: the Command Panel's 420pt panel
+# (GruxLayout.panelWidth), or the classic sidebar's 240pt rail
+# (GruxLayout.navRail) when legacyShell is on. So this fraction MUST be derived
+# rather than hardcoded: the 0.32 that is right at the classic 840pt floor
 # throws away a third of the detail pane at 2400pt and makes real switches look
-# like small ones.
-RAILFRAC=$(python3 -c "print(min(0.6,(240+8)/max(1.0,float($WINW))))")
-echo "window $WINID, ${WINW}pt wide, comparing from ${RAILFRAC} of width"
+# like small ones. GRUX_SWEEP_SHELL=panel|classic overrides the config read.
+SHELLMODE="${GRUX_SWEEP_SHELL:-}"
+if [ -z "$SHELLMODE" ]; then
+  SHELLMODE=$(python3 -c "import json,os; p=os.path.expanduser('~/Library/Application Support/Grux/config.json'); print('classic' if json.load(open(p)).get('legacyShell') else 'panel')" 2>/dev/null || echo panel)
+fi
+case "$SHELLMODE" in
+  classic) FIXEDW=240 ;;
+  *)       FIXEDW=420 ;;
+esac
+RAILFRAC=$(python3 -c "print(min(0.6,($FIXEDW+8)/max(1.0,float($WINW))))")
+echo "window $WINID, ${WINW}pt wide, $SHELLMODE shell, comparing from ${RAILFRAC} of width${HEADLESS:+, headless (fire-headless-snapshot)}"
 
 # Baseline BEFORE the first switch. Without it the first tab has nothing to
 # compare against, so it short-circuits and returns whatever was already on
@@ -190,13 +330,15 @@ PREV="$OUT/${PREFIX}-_baseline.png"
 BOOTOK=""
 for i in $(seq 1 20); do
   sleep 0.2
-  screencapture -o -x -l"$WINID" "$PREV" 2>/dev/null
+  grab "$PREV" || continue
   if [ -z "$PRE" ]; then BOOTOK=1; break; fi
-  BD=$(python3 "$HERE/framediff.py" "$PRE" "$PREV" "$RAILFRAC" 2>/dev/null || echo 0)
+  BD=$(fdiff "$PRE" "$PREV") || exit 2
   if [ "${BD:-0}" -ge "$THRESH" ]; then BOOTOK=1; break; fi
 done
 [ -n "$PRE" ] && rm -f "$PRE"
-[ -f "$PREV" ] || PREV=""
+# No baseline, nothing to compare a tab against, so no tab can be certified.
+# Stop here rather than file whatever comes next as the tab it was asked for.
+[ -f "$PREV" ] || { echo "no baseline capture of $BOOT, so no tab can be verified" >&2; exit 1; }
 [ -n "$BOOTOK" ] && echo "baseline on $BOOT (switched)" || echo "baseline on $BOOT (already there)"
 
 # Measure how much the screen changes when NOTHING changes, and raise the bar
@@ -239,8 +381,8 @@ SETTLED=""
 if [ -n "$PREV" ]; then
   for i in $(seq 1 25); do
     sleep 0.2
-    screencapture -o -x -l"$WINID" "$SETTLEIMG" 2>/dev/null
-    NOISE=$(python3 "$HERE/framediff.py" "$PREV" "$SETTLEIMG" "$RAILFRAC" 2>/dev/null || echo 0)
+    grab "$SETTLEIMG" || nosnap "the baseline ($BOOT) while it settled"
+    NOISE=$(fdiff "$PREV" "$SETTLEIMG") || exit 2
     # Always keep the NEWER frame as the baseline. It is the same tab and closer
     # in time to the switch that follows.
     mv -f "$SETTLEIMG" "$PREV" 2>/dev/null
@@ -270,9 +412,8 @@ for TAB in "$@"; do
   DEST="$OUT/${PREFIX}-${SAFE}.png"; OK=""; D=0
   for i in $(seq 1 14); do
     sleep 0.15
-    screencapture -o -x -l"$WINID" "$DEST" 2>/dev/null
-    if [ -z "$PREV" ]; then OK=1; break; fi
-    D=$(python3 "$HERE/framediff.py" "$PREV" "$DEST" "$RAILFRAC" 2>/dev/null || echo 0)
+    grab "$DEST" || nosnap "$TAB"
+    D=$(fdiff "$PREV" "$DEST") || { rm -f "$DEST"; exit 2; }
     if [ "${D:-0}" -ge "$THRESH" ]; then
       # DIFFERENT is not the same as ARRIVED. A big diff can come from an
       # intermediate frame: a scroll-to-anchor completing, a list populating, a
@@ -286,15 +427,15 @@ for TAB in "$@"; do
       SETTLE="$OUT/${PREFIX}-_s.png"
       for j in $(seq 1 12); do
         sleep 0.15
-        screencapture -o -x -l"$WINID" "$SETTLE" 2>/dev/null
-        M=$(python3 "$HERE/framediff.py" "$DEST" "$SETTLE" "$RAILFRAC" 2>/dev/null || echo 0)
+        grab "$SETTLE" || { rm -f "$DEST"; nosnap "$TAB while it settled"; }
+        M=$(fdiff "$DEST" "$SETTLE") || { rm -f "$DEST" "$SETTLE"; exit 2; }
         mv -f "$SETTLE" "$DEST" 2>/dev/null
         [ "${M:-0}" -eq 0 ] && break
       done
       rm -f "$SETTLE"
       # Re-measure against the previous tab AFTER settling, because the settled
       # frame may be a different one from the frame that first cleared the bar.
-      D=$(python3 "$HERE/framediff.py" "$PREV" "$DEST" "$RAILFRAC" 2>/dev/null || echo 0)
+      D=$(fdiff "$PREV" "$DEST") || { rm -f "$DEST"; exit 2; }
       if [ "${D:-0}" -ge "$THRESH" ]; then OK=1; break; fi
     fi
   done
@@ -313,21 +454,7 @@ for TAB in "$@"; do
   fi
 done
 
-# Drop the baseline so a glob over the output directory cannot mistake it for a
-# tab capture.
-rm -f "$OUT/${PREFIX}-_baseline.png"
-
-# Put the app back somewhere sane. A verification sweep drives the OWNER'S live
-# app, so leaving it parked on whatever tab happened to be last in the argument
-# list is not a neutral act: it looks exactly like the app froze there. Ending
-# on Home is the difference between "the sweep finished" and "my app is stuck".
-RESTORE="${GRUX_SWEEP_RESTORE:-home}"
-rm -f "$ACK"; print -n "$RESTORE" > "$FIRE"
-for i in $(seq 1 30); do
-  [ -f "$ACK" ] && [ "$(cat "$ACK" 2>/dev/null)" = "$RESTORE" ] && break
-  sleep 0.1
-done
-echo "restored to $RESTORE"
+# The baseline goes, and the app goes back to Home, in restore_and_clean on exit.
 
 # Exit non-zero when any tab failed to verify. Without this a caller that checks
 # the exit code, which is the normal thing to do, reads a run that mislabelled

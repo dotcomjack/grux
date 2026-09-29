@@ -110,11 +110,11 @@ enum CapabilityResolver {
         case .keySlack:            return .slackUserToken
         case .keyNotion:           return .notionToken
         case .keyResend:           return .resendApiKey
-        case .keyGodaddy:          return .goDaddyApiKey
         case .keyGithub:           return .gitHubToken
         case .keyAppstoreconnect:  return .appStoreConnectKey
         case .keyReddit:           return .redditCredentials
         case .keyTelegram:         return .telegramBotToken
+        case .keyTypesafe:         return .typesafeApiKey
         default:                   return nil
         }
     }
@@ -137,7 +137,6 @@ enum CapabilityResolver {
     /// divergence real whether the resolver acknowledges it or not.
     static func alternateSource(for requirement: SetupRequirement) -> (() -> Bool)? {
         switch requirement {
-        case .keyGodaddy: return { DomainMonitor.credentialsFoundOutsideKeychain() }
         case .endpointSocialAccounts:
             // THE THIRD TIME THIS EXACT SHAPE HAS APPEARED, after endpoint.imap below and
             // step.terminal_sessions_explained.
@@ -209,25 +208,14 @@ enum CapabilityResolver {
     }
 
     /// Some credentials are a PAIR, and the contract says so in its own
-    /// remediation: key.godaddy reads "your registrar API key and secret". One
-    /// half is not a satisfied capability, and treating it as one is how a user
+    /// remediation (key.telegram needs a chat id beside its token; the ripped
+    /// key.godaddy needed a secret beside its key). One half is not a satisfied capability, and treating it as one is how a user
     /// with a key but no secret would have been dropped past the setup card
     /// into an empty tab.
     ///
     /// Returns nil when the capability has no second half.
     static func companion(for requirement: SetupRequirement) -> CredentialCompanion? {
         switch requirement {
-        case .keyGodaddy:
-            return CredentialCompanion(
-                title: "Registrar API secret",
-                placeholder: "the secret half of the key pair",
-                isSatisfied: { !KeychainStore.get(.goDaddyApiSecret).isEmpty },
-                save: { raw in
-                    let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !t.isEmpty else { return false }
-                    _ = KeychainStore.set(.goDaddyApiSecret, t)
-                    return true
-                })
         case .keyTelegram:
             return CredentialCompanion(
                 title: "Telegram chat id",
@@ -262,7 +250,7 @@ enum CapabilityResolver {
             return AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
 
         case .permAccessibility:
-            return AXIsProcessTrusted()
+            return AccessibilityTrust.isGranted()
 
         case .permCalendar:
             let status = EKEventStore.authorizationStatus(for: .event)
@@ -370,11 +358,37 @@ enum CapabilityResolver {
     /// - any target answering `errAEEventNotPermitted` is an explicit refusal
     /// - anything else, including `-600` and "not decided yet", says nothing and
     ///   leaves the last real observation alone
+    ///
+    /// `probe` exists for tests. The real one is an Apple Events round trip to
+    /// TCC, and it BLOCKS while the Mac's screen is locked: measured
+    /// 2026-09-21, a suite run sat in it for 19 minutes with the login window
+    /// in front. The app only asks while the Automation card is on screen,
+    /// with somebody at the Mac; a test must never ask at all.
     @discardableResult
-    static func refreshAutomationObservation() -> Bool {
-        let statuses = automationTargets.map {
-            NotesIngester.automationPermission(forBundleId: $0)
-        }
+    static func refreshAutomationObservation(
+        probe: (String) -> OSStatus = { NotesIngester.automationPermission(forBundleId: $0) }
+    ) -> Bool {
+        let statuses = automationTargets.map(probe)
+        let verdict = automationVerdict(
+            statuses: statuses,
+            previous: UserDefaults.standard.bool(forKey: automationObservedKey))
+        UserDefaults.standard.set(verdict, forKey: automationObservedKey)
+        return verdict
+    }
+
+    /// The same refresh with the probes OFF the main actor, for anything that polls.
+    ///
+    /// The probe blocks while the screen is locked (19 minutes, measured above), and the
+    /// synchronous refresh was only safe on the premise that somebody is at the Mac. A 2 s
+    /// poll removes that premise: a card left up when the Mac locks would stall the app's
+    /// main thread for as long as the lock lasts. The four probes run detached and the
+    /// verdict is written back here, on main, exactly as the synchronous refresh writes it.
+    @discardableResult
+    static func refreshAutomationObservationInBackground(
+        probe: @escaping @Sendable (String) -> OSStatus = { NotesIngester.automationPermission(forBundleId: $0) }
+    ) async -> Bool {
+        let targets = automationTargets
+        let statuses = await Task.detached(priority: .utility) { targets.map(probe) }.value
         let verdict = automationVerdict(
             statuses: statuses,
             previous: UserDefaults.standard.bool(forKey: automationObservedKey))
@@ -457,18 +471,17 @@ enum CapabilityResolver {
     ///
     /// THE LOOP THIS CLOSES. Every `step.*` used to resolve to a `UserDefaults` boolean
     /// written only by an in-app control, so somebody could install the agent CLI, fetch
-    /// the speech model and write the focus hook, and Grux would still report needs-setup
+    /// the speech model, and Grux would still report needs-setup
     /// with nothing on screen to explain why. `AgentHandoff` shipped a paragraph warning
     /// the reader about exactly that, because the alternative was pretending.
     ///
-    /// For these four, DETECTION WINS OVER THE FLAG in both directions. Present on disk
+    /// For these three, DETECTION WINS OVER THE FLAG in both directions. Present on disk
     /// means satisfied even if nobody ticked anything, which is what lets an agent do the
     /// work and have Grux simply notice. Absent means unsatisfied even if a stale flag says
     /// otherwise, which is what stops a tick surviving an uninstall.
     static let detectedSteps: Set<SetupRequirement> = [
         .stepAgentCliInstalled,
         .stepSpeechModelDownloaded,
-        .stepTerminalFocusHookInstalled,
         .stepPhonePaired,
     ]
 
@@ -488,15 +501,6 @@ enum CapabilityResolver {
         .stepTerminalSessionsExplained,
         .stepYoutubeTranscriptsEnabled,
     ]
-
-    /// Where the coding agent's hook script lives. Same path `TerminalFocusState` writes
-    /// to and checks, named once here so the two cannot drift into disagreeing about
-    /// whether the hook is installed.
-    // nonisolated: it reads NSHomeDirectory and nothing else, and a default argument is
-    // evaluated outside the actor, so a MainActor-isolated property cannot be one.
-    nonisolated static var terminalFocusHookPath: String {
-        NSHomeDirectory() + "/.claude/hooks/terminal-focus.sh"
-    }
 
     /// The on-device speech model, and what counts as HAVING it.
     ///
@@ -525,19 +529,12 @@ enum CapabilityResolver {
         return speechModelBundles.allSatisfy { fm.fileExists(atPath: path + "/" + $0) }
     }
 
-    /// Same reasoning as above.
-    nonisolated static func terminalFocusHookIsInstalled(at path: String = terminalFocusHookPath) -> Bool {
-        FileManager.default.fileExists(atPath: path)
-    }
-
     private static func stepCompleted(_ requirement: SetupRequirement) -> Bool {
         switch requirement {
         case .stepAgentCliInstalled:
             return AccountSwitcher.locateClaudeBinary() != nil
         case .stepSpeechModelDownloaded:
             return speechModelIsDownloaded()
-        case .stepTerminalFocusHookInstalled:
-            return terminalFocusHookIsInstalled()
         case .stepPhonePaired:
             return KeychainStore.exists(.phonePairingSecret)
         case .stepRecordingConsentAcknowledged:
@@ -578,7 +575,8 @@ enum CapabilityResolver {
             // that shows the frame.
             return firstFrameWasReviewed(stage: OnboardingModel.shared.stage,
                                         skippedFirstLook: OnboardingModel.shared.skippedFirstLook,
-                                        level: OnboardingModel.shared.level)
+                                        level: OnboardingModel.shared.level,
+                                        path: OnboardingModel.shared.path)
         default:
             guard let key = stepDefaultsKey(for: requirement) else { return false }
             return UserDefaults.standard.bool(forKey: key)
@@ -589,12 +587,16 @@ enum CapabilityResolver {
     ///
     /// `advance` mutates the singleton and PERSISTS, which is why OnboardingModel already
     /// splits its own transition decision out for the same reason.
+    /// On the question path the first look is a setup item that may never
+    /// come up, so only the screen's own "Continue" counts (`skippedFirstLook`
+    /// starts true there and only `recordFirstLookReviewed` clears it); the
+    /// level alone says nothing about what was shown.
     static func firstFrameWasReviewed(stage: OnboardingModel.Stage,
                                       skippedFirstLook: Bool,
-                                      level: OnboardingModel.Level) -> Bool {
-        stage == .done
-            && skippedFirstLook == false
-            && OnboardingModel.stages(for: level).contains(.firstLook)
+                                      level: OnboardingModel.Level,
+                                      path: OnboardingModel.Path = .list) -> Bool {
+        guard stage == .done, skippedFirstLook == false else { return false }
+        return path == .question || OnboardingModel.stages(for: level).contains(.firstLook)
     }
 
     /// Marks a setup step complete. The only writer, so a step cannot be set

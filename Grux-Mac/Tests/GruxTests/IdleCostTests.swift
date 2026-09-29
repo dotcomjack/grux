@@ -17,6 +17,11 @@ final class IdleCostTests: XCTestCase {
         return try String(contentsOf: url, encoding: .utf8)
     }
 
+    /// Where the file-drop triggers live. The table moved out of `GruxApp.swift` into
+    /// `Triggers/AppTriggers.swift` in P-R-7, and both are read, so a trigger added back
+    /// into `GruxApp.swift` is still judged by the guards below.
+    private static let triggerFiles = ["GruxApp.swift", "Triggers/AppTriggers.swift"]
+
     /// The regression this exists for: 57 separate repeating timers, each polling for a
     /// file-drop trigger in `~/.grux`, together making 93 stat() calls and 93 main-thread
     /// wakeups per second, forever, on an idle machine. They are one `TriggerWatcher` now.
@@ -25,13 +30,14 @@ final class IdleCostTests: XCTestCase {
     /// second for the life of the process, which is exactly the kind of thing nobody
     /// notices until the fans are on.
     func testNoFileTriggerIsPolledOnATimer() throws {
-        let src = try source("GruxApp.swift")
-        let lines = src.components(separatedBy: "\n")
         var offenders: [String] = []
-        for (i, line) in lines.enumerated() where line.contains("scheduledTimer") && line.contains("repeats: true") {
-            let body = lines[(i + 1)..<min(i + 4, lines.count)].joined(separator: "\n")
-            if body.contains("fileExists") {
-                offenders.append("GruxApp.swift:\(i + 1)")
+        for file in Self.triggerFiles {
+            let lines = try source(file).components(separatedBy: "\n")
+            for (i, line) in lines.enumerated() where line.contains("scheduledTimer") && line.contains("repeats: true") {
+                let body = lines[(i + 1)..<min(i + 4, lines.count)].joined(separator: "\n")
+                if body.contains("fileExists") {
+                    offenders.append("\(file):\(i + 1)")
+                }
             }
         }
         XCTAssertTrue(offenders.isEmpty,
@@ -40,13 +46,21 @@ final class IdleCostTests: XCTestCase {
     }
 
     /// The conversion moved 57 sites. If a later edit drops registrations on the floor the
-    /// triggers stop working silently, which is worse than the polling was.
+    /// triggers stop working silently, which is worse than the polling was. Since P-R-7 the
+    /// registrations sit in their own function, so NOT CALLING it drops every one of them
+    /// at once, and that is checked too.
     func testEveryTriggerIsStillRegistered() throws {
-        let src = try source("GruxApp.swift")
-        let count = src.components(separatedBy: "TriggerWatcher.shared.register").count - 1
+        var count = 0
+        for file in Self.triggerFiles {
+            count += try source(file).components(separatedBy: "TriggerWatcher.shared.register").count - 1
+        }
         XCTAssertGreaterThanOrEqual(count, 57,
                                     "expected at least the 57 converted triggers, found \(count)")
-        XCTAssertTrue(src.contains("TriggerWatcher.shared.start()"),
+        let app = try source("GruxApp.swift")
+        XCTAssertTrue(app.contains("AppTriggers.register(in: dir)"),
+                      "nothing calls AppTriggers.register, so every ~/.grux/fire-* trigger is "
+                      + "defined and none of them is registered")
+        XCTAssertTrue(app.contains("TriggerWatcher.shared.start()"),
                       "registrations are inert unless the watcher is armed")
     }
 
@@ -131,21 +145,13 @@ final class IdleCostTests: XCTestCase {
         XCTAssertTrue(src.contains("lines.removeFirst()"),
                       "a tail read starts mid-line, so the partial first line must be dropped")
     }
-
-    /// Terminal Focus is a labs feature whose poll ran at launch for everyone, and each
-    /// tick walked the window list several times. It must be armed by state, not blindly.
-    func testTerminalFocusPollIsGatedOnVisibility() throws {
-        let src = try source("TerminalFocusState.swift")
-        XCTAssertTrue(src.contains("let needed = isEnabled && (isVisible || isTerminalFront)"),
-                      "the terminal poll must be gated on whether the overlay can change")
-    }
 }
 
 /// The incremental fold must agree with the whole-history fold, exactly.
 ///
-/// This is the assertion that makes the performance change safe. `ClaudeSessionTailer` now
-/// folds only newly appended entries into a kept accumulator instead of re-folding the
-/// entire transcript every tick. That is only legitimate if folding 1...n then n+1...m
+/// This is the assertion that makes incremental folding safe. `ClaudeSessionJSONL.fold`
+/// adds newly appended entries into a kept accumulator instead of re-folding the
+/// entire transcript. That is only legitimate if folding 1...n then n+1...m
 /// gives the same snapshot as folding 1...m in one pass, so it is asserted rather than
 /// assumed, including at the boundaries where a slice splits between related entries.
 final class IncrementalFoldTests: XCTestCase {
@@ -188,7 +194,7 @@ final class IncrementalFoldTests: XCTestCase {
     }
 
     /// Cost and token totals accumulate, so a repeated fold of the same slice would double
-    /// count. This pins that the tailer's contract is "fold each entry exactly once".
+    /// count. This pins that the accumulator's contract is "fold each entry exactly once".
     func testAccumulatingFieldsAreNotDoubleCounted() throws {
         let all = entries()
         var acc = ClaudeSessionJSONL.SnapshotAccumulator(sessionId: "seed")

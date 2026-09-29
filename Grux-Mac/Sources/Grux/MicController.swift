@@ -65,16 +65,26 @@ enum MicController {
         }
     }
 
-    static func toggle() {
+    static func toggle(source: String = "unnamed caller") {
         let state = AppState.shared
         if state.micMuted {
             unmute()
+        } else if MicHealth.shared.notHearing {
+            // A tap on a listener that hears nothing is somebody trying to be
+            // heard. Measured 2026-09-21: ambient had given up, the orb still
+            // read ARMED, and the tap the person tried MUTED it. Now the tell
+            // reads NOT HEARING, and the tap tries the microphone again.
+            WakeLog.shared.log("mic: tapped while not hearing, trying the microphone again")
+            AmbientListener.shared.retryNow()
         } else {
-            mute()
+            mute(source: source)
         }
     }
 
-    static func mute() {
+    /// `source` names WHO muted, because four surfaces call this and the log
+    /// line used to say "user tapped orb" for all of them, including the CLI
+    /// trigger. A log that names the wrong cause is worse than a quiet one.
+    static func mute(source: String = "unnamed caller") {
         let state = AppState.shared
         guard !state.micMuted else { return }
         state.micMuted = true
@@ -120,7 +130,7 @@ enum MicController {
         // restores it from there.
         AmbientState.shared.isEnabled = false
         AmbientState.shared.status = "Muted"
-        WakeLog.shared.log("mic: MUTED (user tapped orb) - ambient isEnabled pulled to false")
+        WakeLog.shared.log("mic: MUTED (\(source)) - ambient isEnabled pulled to false")
     }
 
     static func unmute() {
@@ -180,6 +190,7 @@ enum MicController {
             // unmute restores from. A caller asking "is ambient turned on"
             // wants the preference; a caller asking "is it listening right now"
             // wants the other two.
+            "listeningMode": s.config.listeningMode.rawValue,
             "ambientEnabledPreference": s.config.ambientEnabled,
             "wakeWordEnabledPreference": s.config.wakeWordEnabled,
             "ambientListening": AmbientState.shared.isEnabled,

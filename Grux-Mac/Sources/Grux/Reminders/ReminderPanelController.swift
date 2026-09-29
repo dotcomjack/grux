@@ -51,7 +51,7 @@ final class GruxReminderPanelController {
             backing: .buffered,
             defer: false
         )
-        p.level = .floating
+        WindowFacade.setLevel(.floating, of: p)
         p.isOpaque = false
         p.backgroundColor = .clear
         p.hasShadow = false
@@ -79,7 +79,7 @@ final class GruxReminderPanelController {
         self.panel = p
         self.hostingController = hc
 
-        p.orderFrontRegardless()
+        WindowFacade.orderFrontRegardless(p)
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.20
             p.animator().alphaValue = 1

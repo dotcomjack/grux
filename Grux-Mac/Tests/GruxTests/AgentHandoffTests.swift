@@ -71,7 +71,6 @@ final class AgentHandoffTests: XCTestCase {
         let decisions = Set(groups.first { $0.heading.contains("Decisions that are mine") }?.items ?? [])
 
         for step: SetupRequirement in [.stepSpeechModelDownloaded,
-                                       .stepTerminalFocusHookInstalled,
                                        .stepPhonePaired,
                                        .stepYoutubeTranscriptsEnabled,
                                        .stepAgentCliInstalled] {

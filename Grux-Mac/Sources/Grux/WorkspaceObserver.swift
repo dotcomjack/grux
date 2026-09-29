@@ -172,6 +172,7 @@ final class WorkspaceObserver {
     }
 
     private static func focusedWindowTitle(pid: pid_t) -> String? {
+        guard AccessibilityTrust.isGranted() else { return nil }
         let appRef = AXUIElementCreateApplication(pid)
         var windowRef: CFTypeRef?
         guard AXUIElementCopyAttributeValue(appRef, kAXFocusedWindowAttribute as CFString, &windowRef) == .success,

@@ -60,6 +60,7 @@ enum ScreenControlTool {
                         "label": ["type": "string", "description": "For click_element: the visible text on the control to click, e.g. \"Submit\", \"Sign in\", \"Search\". Grux reads the app fresh and clicks the best match, so you do NOT pass coordinates. May be empty if you give a role (e.g. role=\"link\" nth=3)."],
                         "role": ["type": "string", "description": "Optional (click_element). Narrow the match to a kind of control: button, link, field, checkbox, menu, tab, radio, slider."],
                         "nth": ["type": "integer", "description": "Optional (click_element). When several controls match, pick the Nth in reading order (1-based). Default 1."],
+                        "which": ["type": "string", "description": "Optional (click_element). When several controls could match, say in words which one you mean, e.g. \"the Save in the dialog, not the toolbar\". Grux picks among the matches; it never clicks something that did not match."],
                         "x": ["type": "number", "description": "X coordinate (global screen points, top-left origin). For click/move/scroll."],
                         "y": ["type": "number", "description": "Y coordinate (global screen points, top-left origin). For click/move/scroll."],
                         "button": ["type": "string", "enum": ["left", "right", "center"], "description": "Mouse button for click. Default left."],
@@ -145,7 +146,7 @@ enum ScreenControlTool {
                 await audit(action: action, verdict: "error", detail: "no target app")
                 return "error: no target app found. Ask the user to bring the app they want to control to the front."
             }
-            guard let idx = ScreenControlEngine.matchElement(
+            guard var idx = ScreenControlEngine.matchElement(
                 query: label, role: roleHint, nth: nth, among: result.elements) else {
                 let scope = label.isEmpty ? "role \"\(roleHint ?? "")\"" : "\"\(label)\""
                 await audit(action: action, verdict: "error",
@@ -158,6 +159,24 @@ enum ScreenControlTool {
                     + (sample.isEmpty
                         ? "It exposes no actionable elements right now; use read_screen to locate a target, then click by coordinate."
                         : "Here is what IS actionable (retry click_element with one of these labels, or click a center=(x,y) directly):\n" + sample)
+            }
+            // P-R-4: several equal matches and a description of which one is
+            // meant. The engine may pick among the TIED matches only; unsure,
+            // keyless or on device, reading order stands, as it always did.
+            let which = ((input["which"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if nth == nil, !which.isEmpty {
+                let tied = ScreenElementChoice.tiedAtTop(query: label, role: roleHint, among: result.elements)
+                let engine = await MainActor.run { DecisionEngine.shared }
+                if tied.count > 1, await MainActor.run(body: { engine.hasRemoteKey }) {
+                    let q = ScreenElementChoice.question(label: label, which: which, app: result.app,
+                                                         candidates: tied.map { result.elements[$0] })
+                    let threshold = await MainActor.run { AppState.shared.config.listeningThreshold }
+                    let decided = await engine.decide(surface: ScreenElementChoice.surface, state: q.state, questions: q.questions)
+                    if let chosen = ScreenElementChoice.pick(decided.answers["which"], provider: decided.provider,
+                                                             threshold: threshold, tied: tied) {
+                        idx = chosen
+                    }
+                }
             }
             let el = result.elements[idx]
             let button = ScreenControlEngine.MouseButton(rawValue: (input["button"] as? String) ?? "left") ?? .left

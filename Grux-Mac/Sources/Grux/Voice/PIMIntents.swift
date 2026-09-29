@@ -4,7 +4,7 @@ import Foundation
 //
 // Maps spoken utterance patterns onto a deterministic tool-call plan that
 // executes through the EXISTING Claude tools (CalendarTool create_event,
-// NotesTool create_note, DocumentTools documents_list) via
+// NotesTool create_note, DocumentTools documents_list, add_task) via
 // ChatService.dispatchTool, so there is exactly one implementation of each
 // PIM action. No EventKit, no NotesStore, no network is touched here: this
 // file is pure parsing + plan construction, which is what makes it unit
@@ -36,6 +36,11 @@ enum PIMIntentKind: String, CaseIterable, Sendable {
     case takeNote = "take_note"
     case draftEmail = "draft_email"
     case findDocument = "find_document"
+    case addTask = "add_task"
+    case completeTask = "complete_task"
+    case removeTask = "remove_task"
+    case focusTask = "focus_on_task"
+    case rememberFact = "remember_fact"
 
     /// SF Symbol for the confirmation card.
     var symbolName: String {
@@ -44,6 +49,46 @@ enum PIMIntentKind: String, CaseIterable, Sendable {
         case .takeNote:      return "note.text.badge.plus"
         case .draftEmail:    return "envelope"
         case .findDocument:  return "doc.text.magnifyingglass"
+        case .addTask:       return "checklist"
+        case .completeTask:  return "checkmark.circle"
+        case .removeTask:    return "trash"
+        case .focusTask:     return "scope"
+        case .rememberFact:  return "person.text.rectangle"
+        }
+    }
+
+    /// The action in words, for the decision provider judging a matched plan.
+    var judgeAction: String {
+        switch self {
+        case .addToCalendar: return "add a calendar event"
+        case .takeNote:      return "save a note"
+        case .draftEmail:    return "draft an email"
+        case .findDocument:  return "search the document library"
+        case .addTask:       return "add a task to the person's task list"
+        case .completeTask:  return "mark a task on the person's task list as done"
+        case .removeTask:    return "remove a task from the person's task list"
+        case .focusTask:     return "make a task the person's current focus"
+        case .rememberFact:  return "save, in the person's own words, what they just asked Grux to remember about themselves"
+        }
+    }
+
+    /// Whether the decision provider may veto the fast path for this kind.
+    /// Not for actions on an existing task: their tools change nothing
+    /// without a matching task and the card carries the undo, so a wrong fire
+    /// costs nothing while a veto turns a clear ask into an offer (live
+    /// 2026-09-28: "focus on the task X" 0.49 to 0.62, "check off X" 0.59).
+    /// Anything that creates keeps the judge: a false positive leaves junk.
+    /// Except a note: the note matcher only fires on an explicit verb ("take
+    /// a note", "note that", "write down"), a wrong note is harmless and
+    /// undoable from the card, and the veto (0.16 to 0.56 live) turned every
+    /// spoken note ask into an offer (A34, ruling 0v).
+    /// And a first-person fact: the fact matcher only fires on the patterns
+    /// ruling 0t lists ("remember that my X is Y", "remember that I ..."),
+    /// which have one reading, and the card carries the undo.
+    var isJudged: Bool {
+        switch self {
+        case .completeTask, .removeTask, .focusTask, .takeNote, .rememberFact: return false
+        case .addToCalendar, .draftEmail, .findDocument, .addTask: return true
         }
     }
 
@@ -54,6 +99,8 @@ enum PIMIntentKind: String, CaseIterable, Sendable {
         case .takeNote:      return "NOTE"
         case .draftEmail:    return "EMAIL DRAFT"
         case .findDocument:  return "DOC SEARCH"
+        case .addTask, .completeTask, .removeTask, .focusTask: return "TASK"
+        case .rememberFact:  return "MEMORY"
         }
     }
 }
@@ -134,6 +181,10 @@ enum PIMIntents {
         case .takeNote:      return notePlan(slots: m.slots)
         case .draftEmail:    return emailPlan(slots: m.slots)
         case .findDocument:  return documentPlan(slots: m.slots)
+        case .addTask:       return taskPlan(slots: m.slots)
+        case .completeTask, .removeTask, .focusTask:
+            return taskActionPlan(kind: m.kind, slots: m.slots)
+        case .rememberFact:  return factPlan(slots: m.slots)
         }
     }
 
@@ -163,6 +214,9 @@ enum PIMIntents {
         // specific; "note that I need to email Sarah" must stay a note.
         if let m = matchNote(stripped) { return m }
         if let m = matchEmail(stripped) { return m }
+        if let m = matchTask(stripped) { return m }
+        if let m = matchTaskAction(stripped) { return m }
+        if let m = matchFact(stripped) { return m }
         if let m = matchCalendar(stripped, now: now) { return m }
         if let m = matchDocument(stripped) { return m }
         return nil
@@ -265,6 +319,9 @@ enum PIMIntents {
     private static let noteRegexes: [NSRegularExpression] = [
         regex(#"^take a (?:quick )?note[,:. ]\s*(?:that\s+)?(.+)$"#),
         regex(#"^make a (?:quick )?note(?: that| of| about)?[,:. ]\s*(.+)$"#),
+        // "add a note to the invoice" attaches to something else: that stays
+        // with the model.
+        regex(#"^add a (?:quick )?note(?:\s*[,:]\s*|\s+that\s+|\s+(?!(?:to|of|on|in|for|about|at)\b))(.+)$"#),
         regex(#"^note that\s+(.+)$"#),
         regex(#"^note to self[,:. ]\s*(.+)$"#),
         regex(#"^write (?:this|that) down[,:. ]\s*(.+)$"#),
@@ -282,6 +339,104 @@ enum PIMIntents {
                 var slots = PIMSlots()
                 slots.title = body
                 return Match(kind: .takeNote, slots: slots)
+            }
+        }
+        return nil
+    }
+
+    // MARK: Task
+
+    // A task ask has one reading, so it does not wait on the model: on the
+    // local route the model answered "add a task: X" with a made-up "added"
+    // whenever the thread had any earlier turn (A28), and nothing was added.
+    private static let taskRegexes: [NSRegularExpression] = [
+        regex(#"^(?:add|create|make)\s+(?:a\s+)?(?:new\s+|another\s+)?(?:task|to-?do)\b[,:.]?\s*(?:to\s+|for\s+|called\s+|named\s+)?(.+)$"#),
+        regex(#"^remind me to\s+(.+)$"#),
+        regex(#"^(?:add|put)\s+(.+?)\s+(?:to|on|onto)\s+(?:my\s+|the\s+)?(?:tasks|task\s+list|task\s+stack|to-?do\s+list|to-?dos|to-?do)$"#)
+    ]
+
+    private static func matchTask(_ s: String) -> Match? {
+        guard !isQuestionShaped(s) else { return nil }
+        for re in taskRegexes {
+            if let m = re.firstMatch(in: s, range: fullRange(s)),
+               let r = Range(m.range(at: 1), in: s) {
+                let title = String(s[r])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .trimmingCharacters(in: CharacterSet(charactersIn: ",.:;!\""))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !title.isEmpty else { continue }
+                var slots = PIMSlots()
+                slots.title = title
+                return Match(kind: .addTask, slots: slots)
+            }
+        }
+        return nil
+    }
+
+    // A task action names one task and has one reading, so it does not wait
+    // on the model either: with any thread history the local model answered
+    // "mark X as done", "delete the task X" and "focus on the task X" with a
+    // made-up "Marked as complete" 0 of 9 times calling the tool (A28b).
+    // Every pattern names the task list or ends in a done word, so a bare
+    // "focus on the release" or "remove lunch from my calendar" stays out.
+    private static let taskListNoun = #"(?:my\s+|the\s+)?(?:tasks|task\s+list|task\s+stack|to-?do\s+list|to-?dos)"#
+    private static let taskActionRegexes: [(PIMIntentKind, NSRegularExpression)] = [
+        (.completeTask, regex(#"^(?:mark|set)\s+(?:the\s+task\s+)?(.+?)\s+(?:as\s+)?(?:done|complete|completed|finished)$"#)),
+        (.completeTask, regex(#"^(?:check|tick|cross)\s+off\s+(?:the\s+task\s+)?(.+)$"#)),
+        (.completeTask, regex(#"^(?:complete|finish|close)\s+(?:the\s+)?task\s+(.+)$"#)),
+        (.removeTask, regex(#"^(?:delete|remove|drop|scratch)\s+(?:the\s+)?task\s+(.+)$"#)),
+        (.removeTask, regex(#"^(?:delete|remove|drop|scratch|take)\s+(.+?)\s+(?:from|off)\s+(?:of\s+)?"# + taskListNoun + "$")),
+        (.focusTask, regex(#"^focus\s+on\s+(?:the\s+)?task\s+(.+)$"#)),
+        (.focusTask, regex(#"^(?:make|set)\s+(?:the\s+task\s+)?(.+?)\s+(?:my|the)\s+(?:current\s+focus|focus|top\s+priority)$"#))
+    ]
+
+    private static let pointerWords: Set<String> = ["as", "it", "that", "this", "that one", "this one", "them", "those", "these"]
+
+    private static func matchTaskAction(_ s: String) -> Match? {
+        guard !isQuestionShaped(s) else { return nil }
+        for (kind, re) in taskActionRegexes {
+            if let m = re.firstMatch(in: s, range: fullRange(s)),
+               let r = Range(m.range(at: 1), in: s) {
+                let title = String(s[r])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .trimmingCharacters(in: CharacterSet(charactersIn: ",.:;!\"'"))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                // "mark it as done" points back into the conversation; only
+                // the model can tell which task "it" is.
+                guard !title.isEmpty, !pointerWords.contains(title.lowercased()) else { continue }
+                var slots = PIMSlots()
+                slots.title = title
+                return Match(kind: kind, slots: slots)
+            }
+        }
+        return nil
+    }
+
+    // A first-person fact has one reading, so it does not wait on the model:
+    // with any thread history the local model answered "remember that X"
+    // with text 3 of 3 times and saved nothing (A28c). Only "my <thing> is
+    // <value>" and "I <verb> ..." count, "I am ..." and the contractions
+    // ("I'm", "I've", "I'd", "I'll") included; "remember that trip" or
+    // "remember that time we ..." is conversation and stays with the model.
+    private static let factRegexes: [NSRegularExpression] = [
+        regex(#"^remember\s+(?:that\s+)?(my\s+\S.*?\s+(?:is|are)\s+\S.*)$"#),
+        regex(#"^remember\s+that\s+(i\s+\S+\s+\S.*)$"#),
+        regex(#"^remember\s+that\s+(i['\x{2019}](?:m|ve|d|ll)\s+\S.*)$"#)
+    ]
+
+    private static func matchFact(_ s: String) -> Match? {
+        guard !isQuestionShaped(s) else { return nil }
+        for re in factRegexes {
+            if let m = re.firstMatch(in: s, range: fullRange(s)),
+               let r = Range(m.range(at: 1), in: s) {
+                let fact = String(s[r])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .trimmingCharacters(in: CharacterSet(charactersIn: ",.;!\""))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !fact.isEmpty else { continue }
+                var slots = PIMSlots()
+                slots.title = capitalizedFirst(fact)
+                return Match(kind: .rememberFact, slots: slots)
             }
         }
         return nil
@@ -385,6 +540,57 @@ enum PIMIntents {
             cardTitle: noteTitle,
             cardDetail: firstLine(of: body, cap: 90),
             spokenAck: "Noted: \(spokenLowercased(firstLine(of: body, cap: 70)))."
+        )
+    }
+
+    private static func taskPlan(slots: PIMSlots) -> PIMPlan? {
+        guard !slots.title.isEmpty else { return nil }
+        let title = capitalizedFirst(firstLine(of: slots.title, cap: 120))
+        let input: [String: Any] = ["title": title, "priority": TaskPriority.next.rawValue]
+        return PIMPlan(
+            kind: .addTask,
+            slots: slots,
+            execution: .tool(name: "add_task", input: input),
+            cardTitle: title,
+            cardDetail: "task list, up next",
+            spokenAck: "Added to your tasks: \(spokenLowercased(firstLine(of: slots.title, cap: 70)))."
+        )
+    }
+
+    /// The task is matched by title when the card runs (fuzzy, like the
+    /// model's own call), so an unknown title ends as a failed card saying
+    /// no task matched, never as a claim that something changed.
+    private static func taskActionPlan(kind: PIMIntentKind, slots: PIMSlots) -> PIMPlan? {
+        guard !slots.title.isEmpty else { return nil }
+        let match = firstLine(of: slots.title, cap: 120)
+        let spoken = spokenLowercased(firstLine(of: slots.title, cap: 70))
+        let (detail, ack): (String, String)
+        switch kind {
+        case .completeTask: (detail, ack) = ("task list, mark done", "Marking done: \(spoken).")
+        case .removeTask:   (detail, ack) = ("task list, remove", "Removing from your tasks: \(spoken).")
+        case .focusTask:    (detail, ack) = ("task list, make it NOW", "Focusing on: \(spoken).")
+        default: return nil
+        }
+        return PIMPlan(
+            kind: kind,
+            slots: slots,
+            execution: .tool(name: kind.rawValue, input: ["match": match]),
+            cardTitle: capitalizedFirst(match),
+            cardDetail: detail,
+            spokenAck: ack
+        )
+    }
+
+    private static func factPlan(slots: PIMSlots) -> PIMPlan? {
+        guard !slots.title.isEmpty else { return nil }
+        let fact = firstLine(of: slots.title, cap: 140)
+        return PIMPlan(
+            kind: .rememberFact,
+            slots: slots,
+            execution: .tool(name: "remember_fact", input: ["fact": fact]),
+            cardTitle: fact,
+            cardDetail: "Their words, kept as said.",
+            spokenAck: "I'll remember that."
         )
     }
 

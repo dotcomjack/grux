@@ -29,8 +29,7 @@ actor ChatHistoryImporter: CorpusIngester {
     private var ledger: CorpusLedger
 
     static var importsDir: URL {
-        URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux")
+        Persistence.gruxDir
             .appendingPathComponent("jax")
             .appendingPathComponent("imports")
     }

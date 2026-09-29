@@ -17,14 +17,20 @@ struct CustomEndpoint: Codable, Identifiable, Equatable, Hashable {
     var baseURL: String
     var hasAPIKey: Bool
     var createdAt: Date
+    /// The model this endpoint serves, e.g. `deepseek/deepseek-v4-flash-0731`
+    /// on OpenRouter. Optional: an endpoint without one borrows the local
+    /// model name, which is how it worked before 3.0 and stays right for a
+    /// second Ollama on the network.
+    var modelId: String?
 
     init(id: UUID = UUID(), name: String, baseURL: String,
-         hasAPIKey: Bool = false, createdAt: Date = Date()) {
+         hasAPIKey: Bool = false, createdAt: Date = Date(), modelId: String? = nil) {
         self.id = id
         self.name = name
         self.baseURL = baseURL
         self.hasAPIKey = hasAPIKey
         self.createdAt = createdAt
+        self.modelId = modelId
     }
 
     // Keychain account string for this endpoint's API key. Account names are
@@ -237,6 +243,26 @@ final class CustomEndpointStore: ObservableObject {
 
     // Remove an endpoint and delete its Keychain entry (no-op when no key was
     // ever stored; SecItemDelete treats item-not-found as success).
+    /// Store a key for an existing endpoint through this app's own Keychain
+    /// writer, so the item belongs to Grux and reads never prompt.
+    @discardableResult
+    func setAPIKey(_ key: String, for id: UUID) -> Bool {
+        guard let idx = endpoints.firstIndex(where: { $0.id == id }) else { return false }
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        guard Self.keychainSet(account: endpoints[idx].keychainAccount, value: trimmed) else { return false }
+        endpoints[idx].hasAPIKey = true
+        scheduleSave()
+        return true
+    }
+
+    func setModelId(_ modelId: String?, for id: UUID) {
+        guard let idx = endpoints.firstIndex(where: { $0.id == id }) else { return }
+        let trimmed = modelId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        endpoints[idx].modelId = trimmed.isEmpty ? nil : trimmed
+        scheduleSave()
+    }
+
     func remove(id: UUID) {
         guard let idx = endpoints.firstIndex(where: { $0.id == id }) else { return }
         Self.keychainDelete(account: endpoints[idx].keychainAccount)

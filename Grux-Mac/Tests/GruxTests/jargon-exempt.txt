@@ -1,0 +1,20 @@
+# Surfaces where internals are the POINT, so the jargon rules do not apply.
+# One path per line, relative to Sources/Grux. A second test fails the day an
+# entry here stops matching a real file, so this list cannot quietly rot.
+#
+# Settings detail lines: a person opens Settings precisely to see and change
+# the internals, and a model identifier is the thing they are choosing.
+SettingsView.swift
+Settings
+Integrations
+Backend
+# Developer door surfaces (Phase C disposition: developer).
+CommandsView.swift
+CommandsV2
+AgentsView.swift
+Compare
+LocalModelCookbook
+# Labs door surfaces (Phase C disposition: labs).
+Foundry
+Jax
+Reactor

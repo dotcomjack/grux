@@ -29,19 +29,30 @@ final class PIMConfirmationModel: ObservableObject {
         case pending      // undo window running
         case executing
         case done(String) // tool result line
+        /// A dry-run turn held the write: nothing was done, and the card says so.
+        case dryRun(String)
         case cancelled
         case failed(String)
     }
 
     let plan: PIMPlan
+    /// The person asked for this themselves (typed, spoken, from the phone).
+    /// False when an agent or a schedule put the words in Chat.
+    let personAsked: Bool
+    /// Raised by a dry-run turn (`JaxToolGate.dryRun`). Kept on the card, not
+    /// read when it runs: a card committed early runs from the NEXT turn's
+    /// task, which may be a real one or a dry run (review RV4).
+    let dryRun: Bool
     @Published var phase: Phase = .pending
     /// 0 → 1 over the undo window; drives the draining progress bar.
     @Published var progress: Double = 0
 
     var onUndo: (() -> Void)?
 
-    init(plan: PIMPlan) {
+    init(plan: PIMPlan, personAsked: Bool, dryRun: Bool) {
         self.plan = plan
+        self.personAsked = personAsked
+        self.dryRun = dryRun
     }
 }
 
@@ -62,7 +73,7 @@ final class PIMConfirmationController {
     var isShowing: Bool { window?.isVisible == true }
 
     /// Entry point. Called from ChatService.send's PIM fast path.
-    func present(plan: PIMPlan) {
+    func present(plan: PIMPlan, personAsked: Bool) {
         // A second utterance inside the undo window must not silently drop
         // the first plan: the user confirmed it by moving on, so commit it
         // now, then present the new card.
@@ -70,12 +81,19 @@ final class PIMConfirmationController {
             runTask?.cancel()
             runTask = nil
             let priorPlan = prior.plan
+            let priorPersonAsked = prior.personAsked
+            let priorDryRun = prior.dryRun
             WakeLog.shared.log("pim: committing pending \(priorPlan.kind.rawValue) early, new utterance arrived")
-            Task { @MainActor in await Self.executeDetached(plan: priorPlan) }
+            Task { @MainActor in
+                await JaxToolGate.$dryRun.withValue(priorDryRun) {
+                    await Self.executeDetached(plan: priorPlan, personAsked: priorPersonAsked)
+                }
+            }
         }
         dismiss(animated: false)
 
-        let model = PIMConfirmationModel(plan: plan)
+        let dryRun = JaxToolGate.dryRun
+        let model = PIMConfirmationModel(plan: plan, personAsked: personAsked, dryRun: dryRun)
         model.onUndo = { [weak self] in self?.undo() }
         self.model = model
 
@@ -111,7 +129,9 @@ final class PIMConfirmationController {
                 }
             }
             guard !Task.isCancelled else { return }
-            await self?.execute(plan: plan)
+            await JaxToolGate.$dryRun.withValue(dryRun) {
+                await self?.execute(plan: plan, personAsked: personAsked)
+            }
         }
     }
 
@@ -136,37 +156,71 @@ final class PIMConfirmationController {
     /// the chat log, but never touches the controller's current model or
     /// window (the new card owns the UI).
     @MainActor
-    static func executeDetached(plan: PIMPlan) async {
+    static func executeDetached(plan: PIMPlan, personAsked: Bool) async {
         switch plan.execution {
         case .tool(let name, let input):
-            let result = await ChatService.dispatchTool(name: name, input: input)
-            AppState.shared.appendChat(ChatMessage(role: .assistant, content: result))
-            if AppState.shared.config.memoryEnabled {
-                SemanticMemory.shared.store(kind: .chatAssistant, text: result)
-            }
+            let (result, _) = await runAndTell(name: name, input: input, personAsked: personAsked)
             WakeLog.shared.log("pim: early-committed \(plan.kind.rawValue) → \(result.prefix(120))")
         case .chat(let prompt):
             WakeLog.shared.log("pim: early-committed \(plan.kind.rawValue) to chat")
-            Task { await ChatService.shared.send(userText: prompt) }
+            Task { await ChatService.shared.send(userText: prompt, initiator: personAsked ? .person : .agent) }
         }
     }
 
-    private func execute(plan: PIMPlan) async {
+    /// Runs a card's tool. The card with its undo window IS the confirmation
+    /// when the person asked for this themselves (operator ruling A10b): a
+    /// second approval in Jax HQ for the note they just dictated is a double
+    /// ask. So a person's plan runs with the same one-shot token ApprovalQueue
+    /// arms for an approved replay, good for this one dispatch only. Anything
+    /// an agent or a schedule started still waits in the approval queue.
+    static func dispatch(
+        name: String,
+        input: [String: Any],
+        personAsked: Bool,
+        via dispatcher: (String, [String: Any]) async -> String = ChatService.dispatchTool(name:input:)
+    ) async -> String {
+        guard personAsked else { return await dispatcher(name, input) }
+        let pass = UUID()
+        var confirmed = input
+        confirmed["__approved_id"] = pass.uuidString
+        JaxToolGate.arm(pass)
+        defer { JaxToolGate.disarm(pass) }
+        WakeLog.shared.log("pim: \(name) confirmed on the card by the person, no second approval")
+        return await dispatcher(name, confirmed)
+    }
+
+    /// Runs a card's tool and lands the person's line in Chat. The one door
+    /// both the card and a superseded card's detached run go through: the
+    /// result is written for the model, the card and Chat show the person's
+    /// line (D-replycopy). The phone picks the line up through the existing
+    /// chat bridge / surface sync snapshots.
+    @discardableResult
+    static func runAndTell(
+        name: String,
+        input: [String: Any],
+        personAsked: Bool,
+        via dispatcher: (String, [String: Any]) async -> String = ChatService.dispatchTool(name:input:)
+    ) async -> (result: String, reply: String) {
+        let result = await dispatch(name: name, input: input, personAsked: personAsked, via: dispatcher)
+        let reply = ToolReplyCopy.forPerson(tool: name, input: input, result: result)
+        AppState.shared.appendChat(ChatMessage(role: .assistant, content: reply))
+        if AppState.shared.config.memoryEnabled {
+            SemanticMemory.shared.store(kind: .chatAssistant, text: reply)
+        }
+        return (result, reply)
+    }
+
+    private func execute(plan: PIMPlan, personAsked: Bool) async {
         model?.phase = .executing
         switch plan.execution {
         case .tool(let name, let input):
-            let result = await ChatService.dispatchTool(name: name, input: input)
-            let failed = result.hasPrefix("error")
-            model?.phase = failed ? .failed(result) : .done(result)
-            // Land the result in the chat log; the phone picks it up through
-            // the existing chat bridge / surface sync snapshots.
-            AppState.shared.appendChat(ChatMessage(role: .assistant, content: result))
-            if AppState.shared.config.memoryEnabled {
-                SemanticMemory.shared.store(kind: .chatAssistant, text: result)
-            }
+            let (result, reply) = await Self.runAndTell(name: name, input: input, personAsked: personAsked)
+            let phase = Self.endPhase(result: result, reply: reply)
+            let failed = phase == .failed(reply)
+            model?.phase = phase
             ShellStateBus.shared.publish(
                 mode: failed ? .alert : .idle,
-                headline: failed ? "PIM failed" : "Done",
+                headline: failed ? "PIM failed" : (phase == .dryRun(reply) ? "Dry run" : "Done"),
                 detail: plan.cardTitle,
                 source: "pim",
                 hold: failed ? 4 : 0
@@ -175,7 +229,7 @@ final class PIMConfirmationController {
             if state.config.speakRepliesAloud && !state.voiceMuted {
                 if failed {
                     SpeechEngine.shared.speak("That did not land. Check the chat log.")
-                } else if plan.kind == .findDocument {
+                } else if plan.kind == .findDocument, phase == .done(reply) {
                     SpeechEngine.shared.speak(Self.spokenDocSummary(result: result))
                 }
             }
@@ -189,8 +243,16 @@ final class PIMConfirmationController {
             ShellStateBus.shared.publish(mode: .idle, headline: "Drafting", detail: plan.cardTitle, source: "pim")
             WakeLog.shared.log("pim: delegated \(plan.kind.rawValue) to chat")
             scheduleDismiss(after: 2.0)
-            Task { await ChatService.shared.send(userText: prompt) }
+            Task { await ChatService.shared.send(userText: prompt, initiator: personAsked ? .person : .agent) }
         }
+    }
+
+    /// Where the card ends for a tool's `result`, showing the person's `reply`.
+    /// A write a dry-run turn held ends as a dry run, never as done
+    /// (integrated review, P1).
+    static func endPhase(result: String, reply: String) -> PIMConfirmationModel.Phase {
+        if result.hasPrefix(JaxToolGate.dryRunStatus) { return .dryRun(reply) }
+        return result.hasPrefix("error") ? .failed(reply) : .done(reply)
     }
 
     /// "found 3 documents" out of a documents_list result block.
@@ -219,7 +281,7 @@ final class PIMConfirmationController {
             backing: .buffered,
             defer: false
         )
-        panel.level = .statusBar
+        WindowFacade.setLevel(.statusBar, of: panel)
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
@@ -242,7 +304,7 @@ final class PIMConfirmationController {
 
         self.window = panel
         self.hostingController = hc
-        panel.orderFrontRegardless()
+        WindowFacade.orderFrontRegardless(panel)
     }
 
     private func scheduleDismiss(after seconds: TimeInterval) {
@@ -348,7 +410,7 @@ struct PIMConfirmationCard: View {
 
     private var accent: Color {
         switch model.phase {
-        case .pending, .executing: return GruxTheme.accentPrimary
+        case .pending, .executing, .dryRun: return GruxTheme.accentPrimary
         case .done:                return GruxTheme.successMint
         case .cancelled, .failed:  return GruxTheme.destructiveRose
         }
@@ -358,7 +420,7 @@ struct PIMConfirmationCard: View {
         switch model.phase {
         case .pending:            return model.plan.cardDetail
         case .executing:          return "running..."
-        case .done(let result):   return PIMConfirmationCard.resultLine(result)
+        case .done(let result), .dryRun(let result): return PIMConfirmationCard.resultLine(result)
         case .cancelled:          return "cancelled, nothing happened"
         case .failed(let result): return PIMConfirmationCard.resultLine(result)
         }
@@ -385,6 +447,7 @@ struct PIMConfirmationCard: View {
     private var badgeSymbol: String {
         switch model.phase {
         case .done:      return "checkmark"
+        case .dryRun:    return "hand.raised"
         case .cancelled: return "arrow.uturn.backward"
         case .failed:    return "exclamationmark.triangle"
         default:         return model.plan.kind.symbolName

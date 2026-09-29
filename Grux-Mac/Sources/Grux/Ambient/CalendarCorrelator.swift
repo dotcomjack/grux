@@ -120,7 +120,11 @@ enum CalendarCorrelator {
     static func eventsInWindow(
         windowStart: Date, windowEnd: Date
     ) -> [EKEvent] {
-        guard currentPermissionState() == .granted else { return [] }
+        // The second calendar reader, isolated for the same reason as
+        // `CalendarService.hasAccess`: a test must never see the operator's
+        // own diary, and one guarded reader with an unguarded twin is not
+        // isolation at all.
+        guard !CalendarService.isUnderTest, currentPermissionState() == .granted else { return [] }
         let store = sharedStore
         let calendars = store.calendars(for: .event)
         guard !calendars.isEmpty else { return [] }

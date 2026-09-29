@@ -44,7 +44,7 @@ final class StageController {
             backing: .buffered,
             defer: false
         )
-        w.level = .screenSaver
+        WindowFacade.setLevel(.screenSaver, of: w)
         w.isOpaque = false
         w.backgroundColor = .clear
         w.hasShadow = false
@@ -71,7 +71,7 @@ final class StageController {
 
         self.window = w
         self.hostingController = hc
-        w.orderFrontRegardless()
+        WindowFacade.orderFrontRegardless(w)
 
         dismissTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(clamped * 1_000_000_000))

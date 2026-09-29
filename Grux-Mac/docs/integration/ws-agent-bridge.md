@@ -160,7 +160,8 @@ struct BridgeDesignAgentDelegate: DesignAgentDelegating {
 
 `AgentCLIRegistry.oauthSafeEnvironment(base:)` and
 `AgentCLIRegistry.resolveExecutablePath(for:)` are the consolidation targets for
-the three copy-pasted `resolveClaudeBinary()` / env-strip blocks
-(`SwarmWorker.swift`, `AccountSwitcher.swift`, `TerminalFocusState.swift`). They
+the copy-pasted `resolveClaudeBinary()` / env-strip blocks
+(`SwarmWorker.swift`, `AccountSwitcher.swift`; a third lived in the since-removed
+Terminal Focus state file). They
 were left in place to keep this workstream's blast radius to `GruxAgentCore`;
 migrating each caller to the registry is a clean, separate change.

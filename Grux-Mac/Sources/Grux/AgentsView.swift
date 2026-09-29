@@ -18,8 +18,17 @@ struct AgentsView: View {
 
     var body: some View {
         HSplitView {
-            jobList
-                .frame(minWidth: 240, idealWidth: 280)
+            VStack(alignment: .leading, spacing: 0) {
+                // The one place Agents says BETA (3.0: no per-row pills).
+                HStack(spacing: 6) {
+                    Text("Agents").font(GruxType.title).foregroundStyle(GruxTheme.textPrimary)
+                    LabsHeaderBadge(feature: "agents")
+                    Spacer()
+                }
+                .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 6)
+                jobList
+            }
+            .frame(minWidth: 240, idealWidth: 280)
             jobDetail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -366,6 +375,11 @@ private struct JobRow: View {
                     .font(.caption2)
                     .foregroundStyle(.yellow)
             }
+            if job.failedOnSignIn {
+                Text("Claude sign-in expired")
+                    .font(GruxType.caption)
+                    .foregroundStyle(GruxTheme.warnAmber)
+            }
         }
         .padding(.vertical, 2)
     }
@@ -436,6 +450,9 @@ struct JobDetailView: View {
             }
             .font(.caption)
             Text(job.goal).font(.body).foregroundStyle(.secondary).lineLimit(3)
+            if job.failedOnSignIn {
+                ClaudeSignInExpiredLine()
+            }
         }
         .padding(GruxSpacing.m)
     }
@@ -816,6 +833,21 @@ struct ResumeJobSheet: View {
             dismiss()
         case .failed(let msg):
             lastError = msg
+        }
+    }
+}
+
+/// The line on a job that failed because the Claude CLI's sign-in expired,
+/// with the one button that starts the existing sign-in (the same flow as the
+/// Self-Upgrade card's "Sign in to build it"). Never the monthly-limit Resume.
+struct ClaudeSignInExpiredLine: View {
+    var body: some View {
+        HStack(spacing: GruxSpacing.s) {
+            Label("Claude sign-in expired", systemImage: "person.crop.circle.badge.exclamationmark")
+                .font(GruxType.caption)
+                .foregroundStyle(GruxTheme.warnAmber)
+            Button("Sign in") { ClaudeSignInState.shared.startSignIn() }
+                .buttonStyle(.borderedProminent)
         }
     }
 }

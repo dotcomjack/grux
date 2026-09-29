@@ -76,8 +76,7 @@ final class PersonMemory {
     // MARK: - Paths
 
     nonisolated static var rootDir: URL {
-        let url = URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".grux", isDirectory: true)
+        let url = Persistence.gruxDir
             .appendingPathComponent("people", isDirectory: true)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url

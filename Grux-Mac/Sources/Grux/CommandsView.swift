@@ -53,6 +53,17 @@ private struct MacroDraft: Equatable {
 // MARK: - Commands tab
 
 struct CommandsView: View {
+    /// One line for the macros set aside because every step in them belonged to
+    /// Terminal Focus. Nil when there are none.
+    static func setAsideNotice(_ names: [String]) -> String? {
+        guard !names.isEmpty else { return nil }
+        let list = names.joined(separator: ", ")
+        let one = names.count == 1
+        return "Set aside: \(list). Every step in \(one ? "it" : "them") was a Terminal Focus action, "
+            + "which Grux no longer has, so \(one ? "it no longer answers its phrase" : "they no longer answer their phrases"). "
+            + "Still saved; nothing was deleted."
+    }
+
     @ObservedObject private var registry = VoiceMacroRegistry.shared
     @State private var expandedName: String?       // which row is expanded
     @State private var drafts: [String: MacroDraft] = [:]   // keyed by originalName
@@ -85,6 +96,15 @@ struct CommandsView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            if let notice = Self.setAsideNotice(registry.setAside) {
+                Text(notice)
+                    .font(GruxTheme.Font.caption)
+                    .foregroundStyle(GruxTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
+            }
             Divider()
             ScrollViewReader { proxy in
                 ScrollView {
@@ -792,12 +812,6 @@ private struct ActionEditorRow: View {
                     Text("Cols: \(currentCols)")
                 }
             }
-        case .enableTerminalFocusOverlay:
-            Text("No parameters. Turns the overlay on.")
-                .font(.caption).foregroundStyle(.tertiary)
-        case .disableTerminalFocusOverlay:
-            Text("No parameters. Tears the overlay down; Terminal windows stay.")
-                .font(.caption).foregroundStyle(.tertiary)
         case .playMusic:
             SongPicker(
                 song: songBinding,

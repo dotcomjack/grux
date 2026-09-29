@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import Combine
+import GruxAgentCore
 
 // AccountSwitcher - manages the user's set of paired claude.ai OAuth accounts
 // and which one is currently active.
@@ -38,6 +39,12 @@ final class AccountSwitcher: ObservableObject {
     // refreshActiveStatus() and after a switch completes. Used to render the
     // "currently active" indicator in the Resume sheet.
     @Published private(set) var liveStatus: LiveStatus?
+
+    // True once refreshActiveStatus has returned at least once, whatever it
+    // found. liveStatus alone cannot tell "not asked yet" from "asked, and the
+    // CLI said no", and the Self-Upgrade card needs the difference: the first
+    // is "Checking your sign-in", the second is "Sign in to build it".
+    @Published private(set) var statusChecked = false
 
     // The `claude auth login` command from the most recent switch attempt, kept
     // so the Resume sheet can offer "Re-open login Terminal" on a timeout
@@ -80,6 +87,9 @@ final class AccountSwitcher: ObservableObject {
     // gracefully (the Resume sheet still works without it).
     func refreshActiveStatus() async {
         let out = await Self.runClaude(args: ["auth", "status", "--json"])
+        // Flagged on every exit below, including the early one: a check that
+        // came back with nothing is still a check that came back.
+        defer { statusChecked = true }
         guard out.exitCode == 0,
               let data = out.stdout.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -243,6 +253,68 @@ final class AccountSwitcher: ObservableObject {
         lastLoginCommand ?? "claude auth login --claudeai"
     }
 
+    // The Self-Upgrade card's "Sign in to build it". The SAME flow the Resume
+    // sheet uses (a Terminal window running the claudeai login, finished in
+    // the browser), followed by the same status poll, so there is one way to
+    // sign in and not two. Nothing is logged out first: this is a sign-in, not
+    // a switch.
+    //
+    // Returns true only once a real authenticated call goes through (RV16).
+    // `claude auth status` reads the local credentials and says loggedIn while
+    // the refresh token behind them is dead, which is exactly the state that
+    // raised "Claude sign-in expired", so it alone cannot clear it.
+    func signIn(timeoutSec: TimeInterval = 300) async -> Bool {
+        reopenLoginTerminal()
+        return await Self.waitForWorkingSignIn(
+            timeoutSec: timeoutSec,
+            loggedIn: { [self] in
+                await refreshActiveStatus()
+                return liveStatus?.loggedIn == true
+            },
+            callGoesThrough: { await Self.authenticatedCallGoesThrough() })
+    }
+
+    // Polls until the CLI says logged in AND an authenticated call goes
+    // through, or the timeout. The call is tried at most every `probeEvery`
+    // seconds: a failed one is an auth refusal and costs nothing, a working
+    // one ends the wait.
+    static func waitForWorkingSignIn(
+        timeoutSec: TimeInterval,
+        pollSeconds: TimeInterval = 2,
+        probeEvery: TimeInterval = 10,
+        loggedIn: @MainActor () async -> Bool,
+        callGoesThrough: @MainActor () async -> Bool
+    ) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeoutSec)
+        var lastProbe: Date?
+        while true {
+            let due = lastProbe.map { Date().timeIntervalSince($0) >= probeEvery } ?? true
+            if due, await loggedIn() {
+                lastProbe = Date()
+                if await callGoesThrough() { return true }
+            }
+            if Date() >= deadline { return false }
+            try? await Task.sleep(nanoseconds: UInt64(pollSeconds * 1_000_000_000))
+        }
+    }
+
+    // One small authenticated call through the CLI, the same env-stripped way
+    // every other call here runs. True when it came back as a success, or as
+    // the usage limit (which the service only says to a signed-in account).
+    static func authenticatedCallGoesThrough() async -> Bool {
+        let out = await runClaude(
+            args: ["-p", "Reply with the word OK.", "--model", "haiku", "--output-format", "json"],
+            timeoutSec: 60)
+        if LimitSignal.detect(rawLine: out.stdout) { return true }
+        guard out.exitCode == 0 else { return false }
+        if let data = out.stdout.data(using: .utf8),
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           obj["is_error"] as? Bool == true {
+            return false
+        }
+        return !SignInExpiry.detect(out.stdout)
+    }
+
     // MARK: - Process helpers
 
     struct ClaudeRunResult {
@@ -265,28 +337,14 @@ final class AccountSwitcher: ObservableObject {
     /// `resolveClaudeBinary`, whose fallback is deliberate: PATH may still resolve it in a
     /// login shell even when none of the fixed locations match.
     static func locateClaudeBinary() -> String? {
-        if let env = ProcessInfo.processInfo.environment["CLAUDE_BIN"], !env.isEmpty,
-           FileManager.default.isExecutableFile(atPath: env) {
-            return env
-        }
-        let home = NSHomeDirectory()
-        for c in [
-            "\(home)/.local/bin/claude",
-            "\(home)/.claude/local/claude",
-            "/opt/homebrew/bin/claude",
-            "/usr/local/bin/claude",
-            "/usr/bin/claude"
-        ] where FileManager.default.isExecutableFile(atPath: c) {
-            return c
-        }
-        return nil
+        ClaudeBinaryLocator.locate()
     }
 
     static func resolveClaudeBinary() -> String {
         locateClaudeBinary() ?? "claude"
     }
 
-    private static func runClaude(args: [String]) async -> ClaudeRunResult {
+    private static func runClaude(args: [String], timeoutSec: TimeInterval? = nil) async -> ClaudeRunResult {
         // Resolve binary on the calling actor so the detached Task doesn't have
         // to cross actor isolation boundaries to reach the @MainActor-isolated
         // resolveClaudeBinary().
@@ -310,16 +368,25 @@ final class AccountSwitcher: ObservableObject {
                 "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_EXECPATH",
                 "CLAUDE_CODE_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"
             ] { env.removeValue(forKey: k) }
+            env["PATH"] = ClaudeBinaryLocator.spawnPATH(
+                for: bin, base: env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin")
             proc.environment = env
 
             let outPipe = Pipe()
             let errPipe = Pipe()
             proc.standardOutput = outPipe
             proc.standardError = errPipe
+            // Nothing here reads stdin; a CLI that waits on it must not hang.
+            proc.standardInput = FileHandle.nullDevice
             do {
                 try proc.run()
             } catch {
                 return ClaudeRunResult(exitCode: -1, stdout: "", stderr: "spawn: \(error.localizedDescription)")
+            }
+            if let timeoutSec {
+                DispatchQueue.global().asyncAfter(deadline: .now() + timeoutSec) {
+                    if proc.isRunning { proc.terminate() }
+                }
             }
             proc.waitUntilExit()
             let outStr = String(data: outPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""

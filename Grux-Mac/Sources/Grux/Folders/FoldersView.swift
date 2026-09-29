@@ -179,8 +179,10 @@ struct FolderEditSheet: View {
             Divider()
             footer
         }
-        .padding(22)
-        .frame(minWidth: 460, maxWidth: 520)
+        .padding(GruxSpacing.xl)
+        // The shared sheet range: it opens at the ideal and gives ground to
+        // the sheet floor, where a 460pt minimum used to overflow it.
+        .frame(minWidth: GruxLayout.sheetMin, idealWidth: GruxLayout.sheetIdeal, maxWidth: GruxLayout.sheetIdeal)
     }
 
     private var header: some View {
@@ -252,7 +254,8 @@ struct FolderEditSheet: View {
     private var colorPicker: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Color").font(.caption.bold()).foregroundStyle(.secondary)
-            HStack(spacing: 8) {
+            // Wraps rather than running past a narrow sheet's edge.
+            GruxFlow(spacing: GruxSpacing.s, rowSpacing: GruxSpacing.s) {
                 ForEach(colorPalette, id: \.self) { hex in
                     Button {
                         colorHex = hex

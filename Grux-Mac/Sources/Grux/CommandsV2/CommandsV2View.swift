@@ -6,8 +6,12 @@ import SwiftUI
 
 struct CommandsV2View: View {
     @ObservedObject private var engine = CommandV2Engine.shared
-    @State private var selectedRunId: UUID?
+    /// The run whose steps are open (shared, so fire-workflow-open-run opens
+    /// one the way the Drill in button does).
+    @ObservedObject private var selection = WorkflowsSelection.shared
     @State private var runStartStatus: String = ""
+    /// Runs whose Details (their raw state) the person opened.
+    @State private var openDetails: Set<UUID> = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -49,15 +53,21 @@ struct CommandsV2View: View {
     private var header: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Workflows").font(GruxType.title).foregroundStyle(GruxTheme.textPrimary)
-                Text("Commands V2: phase-gated, resilient, voice-first.")
+                HStack(spacing: 6) {
+                    Text("Workflows").font(GruxType.title).foregroundStyle(GruxTheme.textPrimary)
+                    LabsHeaderBadge(feature: "workflows")
+                }
+                // PLAIN WORDS. This read "Commands V2: phase-gated,
+                // resilient, voice-first", which names the implementation and
+                // tells the reader nothing about what the surface is for.
+                Text("Steps Grux runs in order, on your say-so. A run that fails picks up where it stopped.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer()
             HStack(spacing: 6) {
                 Circle().fill(Color.green.opacity(engine.activeRuns.isEmpty ? 0.3 : 1.0)).frame(width: 7, height: 7)
-                Text("\(engine.activeRuns.count) active · \(engine.definitions.count) defs")
+                Text("\(engine.activeRuns.count) running, \(engine.definitions.count) saved")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
@@ -87,8 +97,8 @@ struct CommandsV2View: View {
                         .font(.body.weight(.semibold))
                     HStack(spacing: 8) {
                         statusPill(run.status)
-                        Text("phase: ").font(.caption2).foregroundStyle(.tertiary)
-                        + Text(run.currentPhaseId).font(.caption2.weight(.semibold))
+                        Text(CommandV2Engine.stepLine(for: run, in: engine.definition(id: run.definitionId)))
+                            .font(.caption2).foregroundStyle(.secondary)
                     }
                     if let reason = run.blockingReason, !reason.isEmpty {
                         Text(reason)
@@ -105,11 +115,27 @@ struct CommandsV2View: View {
                 Spacer()
                 HStack(spacing: 6) {
                     if run.status == .waitingForApproval {
-                        Button("Approve") {
-                            Task { await engine.resume(run.id, userReply: "approved (UI)") }
+                        // The gate's own words, so a gate that branches on
+                        // "fix" / "ship" / "hold" gets one of them. A gate
+                        // that asks for free text is answered in Chat.
+                        if let replies = engine.buttonReplies(for: run) {
+                            ForEach(replies, id: \.self) { reply in
+                                Button(reply.capitalized) {
+                                    Task { await engine.resume(run.id, userReply: reply) }
+                                }
+                                .controlSize(.small)
+                                .buttonStyle(.borderedProminent)
+                            }
+                        } else {
+                            // Puts the question back as Grux's latest line in
+                            // Chat, which is when a free-text gate takes the
+                            // next message, and opens Chat.
+                            Button("Answer in Chat") {
+                                engine.askAgainInChat(run.id)
+                                WindowOpener.openChat()
+                            }
+                            .controlSize(.small)
                         }
-                        .controlSize(.small)
-                        .buttonStyle(.borderedProminent)
                     }
                     if run.status.isCancellable {
                         Button("Cancel", role: .destructive) {
@@ -117,13 +143,13 @@ struct CommandsV2View: View {
                         }
                         .controlSize(.small)
                     }
-                    Button(selectedRunId == run.id ? "Hide" : "Drill in") {
-                        selectedRunId = (selectedRunId == run.id) ? nil : run.id
+                    Button(selection.openRunId == run.id ? "Hide" : "Drill in") {
+                        selection.toggle(run.id)
                     }
                     .controlSize(.small)
                 }
             }
-            if selectedRunId == run.id {
+            if selection.openRunId == run.id {
                 drillIn(run)
             }
         }
@@ -161,13 +187,16 @@ struct CommandsV2View: View {
     private func drillIn(_ run: CommandV2Run) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Divider()
-            Text("PHASE HISTORY").font(.caption2.bold()).foregroundStyle(.secondary)
+            // A person reads this: the step's own name and how it went in
+            // words, never its id or the engine's outcome (SWEEP-12).
+            let definition = engine.definition(id: run.definitionId)
+            Text(PhaseLogCopy.stepsHeader).font(.caption2.bold()).foregroundStyle(.secondary)
             ForEach(Array(run.phaseHistory.enumerated()), id: \.offset) { idx, rec in
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 6) {
                         Text("\(idx + 1).").font(.caption2.monospacedDigit()).foregroundStyle(.tertiary)
-                        Text(rec.phaseId).font(.caption.weight(.semibold))
-                        Text("(\(rec.outcome.rawValue))").font(.caption2).foregroundStyle(.secondary)
+                        Text(PhaseLogCopy.stepTitle(rec.phaseId, in: definition)).font(.caption.weight(.semibold))
+                        Text(PhaseLogCopy.status(rec.outcome)).font(.caption2).foregroundStyle(.secondary)
                         Spacer()
                         if let end = rec.endedAt {
                             Text(durationText(from: rec.startedAt, to: end))
@@ -182,19 +211,42 @@ struct CommandsV2View: View {
                             .lineLimit(4)
                             .padding(.leading, 18)
                     }
+                    // What the tool, command or agent printed, under its own
+                    // label: kept for a person working out why a step failed,
+                    // never the step's line (SWEEP-12).
+                    if let details = rec.details, !details.isEmpty {
+                        Text("Details")
+                            .font(.caption2.bold())
+                            .foregroundStyle(.tertiary)
+                            .padding(.leading, 18)
+                        Text(details)
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(4)
+                            .textSelection(.enabled)
+                            .padding(.leading, 18)
+                    }
                 }
             }
+            // What the run kept, raw, for debugging: below the steps, and
+            // closed until someone opens it.
             if !run.state.isEmpty {
                 Divider()
-                Text("STATE").font(.caption2.bold()).foregroundStyle(.secondary)
-                ForEach(run.state.keys.sorted(), id: \.self) { key in
-                    HStack(alignment: .top, spacing: 4) {
-                        Text(key).font(.caption2.monospaced()).foregroundStyle(.secondary)
-                        Text("=").font(.caption2).foregroundStyle(.tertiary)
-                        Text(stateValueDescription(run.state[key] ?? .null))
-                            .font(.caption2.monospaced())
-                            .lineLimit(2)
+                DisclosureGroup(isExpanded: Binding(
+                    get: { openDetails.contains(run.id) },
+                    set: { if $0 { openDetails.insert(run.id) } else { openDetails.remove(run.id) } }
+                )) {
+                    ForEach(run.state.keys.sorted(), id: \.self) { key in
+                        HStack(alignment: .top, spacing: 4) {
+                            Text(key).font(.caption2.monospaced()).foregroundStyle(.secondary)
+                            Text("=").font(.caption2).foregroundStyle(.tertiary)
+                            Text(stateValueDescription(run.state[key] ?? .null))
+                                .font(.caption2.monospaced())
+                                .lineLimit(2)
+                        }
                     }
+                } label: {
+                    Text(PhaseLogCopy.detailsLabel).font(.caption2.bold()).foregroundStyle(.secondary)
                 }
             }
         }
@@ -205,9 +257,9 @@ struct CommandsV2View: View {
     private func definitionCard(_ def: CommandV2Definition) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(def.displayName)
+                Text(PhaseLogCopy.cardTitle(def))
                     .font(.body.weight(.semibold))
-                Text(def.category.rawValue)
+                Text(PhaseLogCopy.category(def.category))
                     .font(.caption2.weight(.bold))
                     .padding(.horizontal, 6).padding(.vertical, 1)
                     .background(Color.purple.opacity(0.15))
@@ -233,7 +285,7 @@ struct CommandsV2View: View {
             }
             HStack(spacing: 4) {
                 Image(systemName: "list.number").font(.caption2).foregroundStyle(.tertiary)
-                Text("\(def.phases.count) phases")
+                Text(def.phases.count == 1 ? "1 step" : "\(def.phases.count) steps")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
@@ -257,12 +309,12 @@ struct CommandsV2View: View {
         // Voice triggers and the chat inject path can supply real values.
         var params: [String: JSONValue] = [:]
         for p in def.parameters {
-            params[p.name] = .string("(unspecified)")
+            params[p.name] = .string(CommandV2Engine.unspecifiedParameter)
         }
         let result = await CommandV2Engine.shared.start(definitionId: def.id, params: params)
         switch result {
-        case .success(let id):
-            runStartStatus = "Started \(def.displayName) - run \(id.uuidString.prefix(8))"
+        case .success:
+            runStartStatus = "Started \(CommandV2Engine.runName(def.displayName, params: params))."
         case .failure(let err):
             runStartStatus = "Couldn't start: \(err.localizedDescription)"
         }

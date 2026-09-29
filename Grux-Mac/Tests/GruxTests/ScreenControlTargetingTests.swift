@@ -23,6 +23,10 @@ import XCTest
 /// The choice is tested as a PURE FUNCTION over a described window stack,
 /// because the real one depends on what the developer happens to have open, and
 /// a test that depends on that proves nothing on anybody else's machine.
+///
+/// The one live test here (a real AX read of Finder) is OPT-IN: it skips by
+/// default under XCTest and runs with `GRUX_LIVE_AX_TESTS=1` on a Mac where the
+/// test host is trusted for Accessibility (`LiveAccessibility`).
 final class ScreenControlTargetingTests: XCTestCase {
 
     private let selfPID: pid_t = 501
@@ -303,8 +307,7 @@ final class ScreenControlTargetingTests: XCTestCase {
     /// pieces typecheck.
     @MainActor
     func testListUIElementsReallyReadsTheAppItWasAskedFor() async throws {
-        try XCTSkipUnless(ScreenControlEngine.hasAccessibility(),
-                          "the test host has no Accessibility grant, so no AX tree is readable")
+        try LiveAccessibility.require(self)
         let running = NSWorkspace.shared.runningApplications
         try XCTSkipUnless(running.contains { $0.localizedName == "Finder" }, "Finder is not running")
 
