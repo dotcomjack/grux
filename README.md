@@ -42,17 +42,23 @@ behind a waitlist. See [Feature tiers](#feature-tiers) for exactly which is whic
 Grux 3.0 opens on the Command Panel: one input, a Now list of what needs you, and
 the Optimize Grux card. Anything you open slides in as one pane beside it.
 
-![Local Models: hardware-aware model recommendations for this Mac, through Ollama](docs/screenshots/local-models.png)
+![The Command Panel with the Mail pane open beside it, saying the one thing Mailbox still needs](docs/screenshots/panel-with-pane.png)
+
+Open anything and it slides in beside the panel as one pane. Each feature says
+what it still needs, and nothing in it is required to use the rest of Grux.
+
+![The Optimize Grux card: tune it, change it, hand it over, let it improve itself](docs/screenshots/optimize-card.png)
+
+Optimize Grux is where you make it yours. Say what you want different and Grux
+writes a work order your coding agent builds. Nothing about Grux changes without
+your yes.
 
 Grux reads your hardware and tells you which local models actually fit it, so you
-can run the whole thing without sending a token to anyone.
+can run the whole thing without sending a token to anyone. Credentials go to your
+Keychain and services are called directly from your machine. There is no server
+in the middle because there is no server.
 
-![Integrations: tokens stored in the macOS Keychain, talking to services directly from your Mac](docs/screenshots/integrations.png)
-
-Credentials go to your Keychain and services are called directly from your
-machine. There is no server in the middle because there is no server.
-
-These are the real interface, not mockups. Two surfaces rather than a gallery,
+These are the real interface, not mockups. Three views rather than a gallery,
 because the rest of the app is full of the author's own mail and calendar and
 those are not yours to look at.
 
