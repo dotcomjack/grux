@@ -413,7 +413,7 @@ catches already happened here:
 
 ```sh
 cd Grux-Mac
-swift test                          # 3876 tests
+swift test                          # 3878 tests
 python3 scripts/check-contract.py   # the setup contract is frozen
 ```
 
