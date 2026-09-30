@@ -175,7 +175,15 @@ jobs:
     # GitHub's default is 360 minutes. On a macOS runner one hung job at that
     # default is worth more than a month of normal usage, so this is a spend
     # guard rather than a patience setting.
-    timeout-minutes: 30
+    #
+    # 45, not the 30 it was, because 30 stopped being "hung" and started being
+    # "normal". Measured on the public run of 2026-09-30, the first full run of
+    # the 3.0 suite to get past its tests: build 6 minutes, 3878 tests 17
+    # minutes, then the release build was cancelled at the limit 7 minutes in.
+    # The last green release build, 2026-08-26, took 9 minutes on its own. That
+    # is about 33 minutes of honest work, and 45 leaves a third again for a
+    # slow runner before anything is called hung.
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
