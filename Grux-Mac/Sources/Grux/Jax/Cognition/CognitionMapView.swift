@@ -203,25 +203,17 @@ struct CognitionMapView: View {
     private var rollupRow: some View {
         let r = trace.rollup
         return JaxSection(title: "At a glance", icon: "chart.bar.xaxis", tint: GruxTheme.textSecondary) {
-            HStack(spacing: 10) {
-                CognitionStatCard(
-                    value: r.avgConfidence > 0 ? CognitionFormat.pct(r.avgConfidence) : "n/a",
-                    label: "Avg confidence",
-                    tint: CognitionFormat.confidenceTint(r.avgConfidence),
-                    icon: "gauge.with.dots.needle.67percent"
-                )
-                CognitionStatCard(
-                    value: "\(r.lowConfidenceCount)",
-                    label: "Paused to clarify",
-                    tint: r.lowConfidenceCount > 0 ? GruxTheme.warnAmber : GruxTheme.textTertiary,
-                    icon: "questionmark.bubble.fill"
-                )
-                CognitionStatCard(
-                    value: "\(r.events.count)",
-                    label: "Decisions traced",
-                    tint: GruxTheme.accentPrimaryLight,
-                    icon: "list.number"
-                )
+            // Three across only when every card holds its label on one line,
+            // stacked below that. Three equal thirds squeezed under that width
+            // made each card wrap a single capitalised word it could not
+            // break, so the row answered up to a point wider than its offer.
+            // In a 360pt pane with always-visible scrollers (the content
+            // column is 345pt) that pushed the scroll view 2pt past the pane
+            // on macOS 15 CI.
+            GruxWidthSwitch(threshold: Self.statRowMin) {
+                HStack(spacing: 10) { statCards(r) }
+            } narrow: {
+                VStack(spacing: 8) { statCards(r) }
             }
             if !r.countsByKind.isEmpty {
                 HStack(spacing: 6) {
@@ -236,6 +228,34 @@ struct CognitionMapView: View {
                 .padding(.top, 4)
             }
         }
+    }
+
+    /// The narrowest a stat card can be and still hold "PAUSED TO CLARIFY",
+    /// its longest label, on one line: 133pt measured on macOS 26, with room
+    /// for a wider system font.
+    private static let statCardMin: CGFloat = 144
+    private static let statRowMin: CGFloat = 3 * statCardMin + 2 * 10
+
+    @ViewBuilder
+    private func statCards(_ r: CognitionRollup) -> some View {
+        CognitionStatCard(
+            value: r.avgConfidence > 0 ? CognitionFormat.pct(r.avgConfidence) : "n/a",
+            label: "Avg confidence",
+            tint: CognitionFormat.confidenceTint(r.avgConfidence),
+            icon: "gauge.with.dots.needle.67percent"
+        )
+        CognitionStatCard(
+            value: "\(r.lowConfidenceCount)",
+            label: "Paused to clarify",
+            tint: r.lowConfidenceCount > 0 ? GruxTheme.warnAmber : GruxTheme.textTertiary,
+            icon: "questionmark.bubble.fill"
+        )
+        CognitionStatCard(
+            value: "\(r.events.count)",
+            label: "Decisions traced",
+            tint: GruxTheme.accentPrimaryLight,
+            icon: "list.number"
+        )
     }
 
     // MARK: Log (newest first, tappable rows)

@@ -214,6 +214,41 @@ jobs:
         working-directory: Grux-Mac
         run: swift build
 
+      # Pillow, for GruxSweepHeadlessTests. Those tests drive tools/grux-sweep.sh
+      # for real, and the sweep compares frames with tools/framediff.py, which
+      # imports PIL. The runner image ships no Pillow, so on 2026-09-30 four
+      # tests and ten assertions went red on one line of stderr:
+      # "ModuleNotFoundError: No module named 'PIL'".
+      #
+      # It has to be the SAME python3 the sweep resolves, not whichever one
+      # `setup-python` would hand the job. The test pins the sweep's PATH to
+      # /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin (see `realPython()` and
+      # `runSweep` in GruxSweepHeadlessTests.swift), so this step resolves
+      # python3 on that exact PATH and installs into that interpreter. A Pillow
+      # installed anywhere else is invisible to the test and the run stays red.
+      #
+      # Into the interpreter's own site-packages, not `--user`. The test swaps
+      # HOME for a fake one before starting the sweep, and a user-site install
+      # is only found again through the PYTHONUSERBASE it forwards. The
+      # interpreter's site-packages does not move with HOME at all, so it is the
+      # install with one fewer thing to go wrong. Homebrew's python is
+      # externally managed (PEP 668), and `--break-system-packages` is how pip is
+      # told that a throwaway runner is the one place that is fine.
+      #
+      # Then PROVE it, under a fresh empty HOME the way the sweep runs, rather
+      # than trusting pip's exit code. An install that landed somewhere the
+      # sweep cannot see is exactly the failure this step exists to prevent, and
+      # it fails here, named, instead of as ten assertions deep in the suite.
+      - name: Pillow for the sweep's framediff.py
+        run: |
+          set -euo pipefail
+          export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+          PY="$(command -v python3)"
+          echo "the sweep's python3: $PY ($("$PY" --version))"
+          "$PY" -m pip install --disable-pip-version-check --break-system-packages Pillow
+          FAKE_HOME="$(mktemp -d)"
+          HOME="$FAKE_HOME" python3 -c 'import PIL, sys; print("import PIL ok:", PIL.__version__, "under", sys.executable)'
+
       # `swift build` does NOT compile the test target, so the step above says
       # nothing about the suite. Run the tests, then assert a test actually ran:
       # an exit code of 0 with no "Executed N tests" line is indistinguishable

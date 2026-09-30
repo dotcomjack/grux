@@ -11,6 +11,20 @@ final class PaneFitBox {
     var child: CGSize = .zero
 }
 
+/// Records the width it is placed at: inside a vertical scroll view, that is
+/// the content column the scroller leaves.
+struct PaneFitWidthProbe: Layout {
+    let box: PaneFitBox
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        CGSize(width: proposal.width ?? 0, height: 10)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        MainActor.assumeIsolated { box.child = bounds.size }
+    }
+}
+
 /// Offers its one child exactly `width` x `height`, takes exactly that size
 /// itself, and centres the child the way `.frame(width:height:)` does, so a
 /// child that answers wider spills past both edges exactly as it does in the
@@ -145,6 +159,28 @@ enum PaneFitHarness {
         return PaneFitResult(surface: surface, width: width, fitting: fitting,
                              bleedLeading: bleedLeading, bleedTrailing: bleedTrailing,
                              overflowingLayers: overflowing, firstInk: firstInk)
+    }
+
+    /// The surface's fitting width alone, laid out in a window but with no
+    /// settle and no render: a fraction of what `measure` costs, so a band of
+    /// widths can be swept one point at a time. The window is not optional: a
+    /// scroll view with no window never reserves its legacy scroller, so
+    /// without one this measures the overlay case whatever the pin says.
+    static func fitting<V: View>(width: CGFloat, height: CGFloat, @ViewBuilder _ content: () -> V) -> CGFloat {
+        let box = PaneFitBox()
+        let host = NSHostingView(rootView: PaneFitSlot(width: width, height: height, box: box) { content() }
+            .environmentObject(AppState.shared)
+            .tint(GruxTheme.accentPrimary))
+        host.frame = NSRect(x: 0, y: 0, width: width, height: height)
+        let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        pump(0.02)
+        host.layoutSubtreeIfNeeded()
+        // Never `close()`, for the reason `measure` gives.
+        window.contentView = nil
+        return box.child.width
     }
 
     /// The first inked column, in points from the slot's leading edge.
@@ -300,6 +336,7 @@ final class PaneFitSweepTests: XCTestCase {
     private var savedSkippedFirstLook = false
     private var savedOnboardingBytes: Data?
     private let onboardingURL = Persistence.supportDir.appendingPathComponent("onboarding.json")
+    private var savedScrollerStyle: IMP?
 
     /// Every failure also lands in notes.txt, for the same reason `note` exists.
     override func record(_ issue: XCTIssue) {
@@ -314,9 +351,29 @@ final class PaneFitSweepTests: XCTestCase {
         savedStage = OnboardingModel.shared.stage
         savedSkippedFirstLook = OnboardingModel.shared.skippedFirstLook
         savedOnboardingBytes = try? Data(contentsOf: onboardingURL)
+        // Always-visible scrollers, which a Mac with no trackpad gets and a
+        // hosted CI runner has. A vertical scroll view then gives its content
+        // one scroller less than the pane, so a surface that fits a 360pt pane
+        // under overlay scrollers can still overflow one. Measured 2026-09-30:
+        // the Cognition Map fit on every Mac with a trackpad and overflowed 2pt
+        // on macOS 15 CI. Pinned here so every host measures the narrow case.
+        //
+        // By replacing `NSScroller.preferredScrollerStyle` for the length of
+        // the test, because nothing gentler takes. AppKit reads the
+        // `AppleShowScrollBars` default once, so setting it in any domain from
+        // inside a running process changes nothing: measured, the content
+        // column stayed 360pt. `test_theSweepMeasuresUnderAlwaysVisibleScrollers`
+        // fails if this stops taking.
+        let method = class_getClassMethod(NSScroller.self, #selector(getter: NSScroller.preferredScrollerStyle))
+        let legacy: @convention(block) (AnyObject) -> Int = { _ in NSScroller.Style.legacy.rawValue }
+        if let method { savedScrollerStyle = method_setImplementation(method, imp_implementationWithBlock(legacy)) }
     }
 
     override func tearDown() async throws {
+        if let saved = savedScrollerStyle,
+           let method = class_getClassMethod(NSScroller.self, #selector(getter: NSScroller.preferredScrollerStyle)) {
+            method_setImplementation(method, saved)
+        }
         AppState.shared.requestedSettingsTab = savedRequestedSettingsTab
         SidebarStateStore.shared.replaceRecents(savedRecents)
         SidebarStateStore.shared.replacePins(savedPins)
@@ -490,6 +547,72 @@ final class PaneFitSweepTests: XCTestCase {
             }
         }
         assertAllFit("tabs", results)
+    }
+
+    /// The scroller pin in `setUp` took: a vertical scroll view in a pane at
+    /// the floor leaves its content the pane less a legacy scroller. Without
+    /// this the sweep would quietly measure overlay scrollers again, and pass
+    /// the surfaces that only overflow on a Mac without a trackpad.
+    func test_theSweepMeasuresUnderAlwaysVisibleScrollers() {
+        let w = GruxLayout.detailContentMin
+        let box = PaneFitBox()
+        _ = PaneFitHarness.measure("scroller-probe", width: w, height: 200, writePNG: false) {
+            // Taller than the pane: a legacy scroller only takes its column
+            // when there is something to scroll.
+            ScrollView(.vertical) { PaneFitWidthProbe(box: box) { Color.clear }.frame(height: 400) }
+        }
+        let scroller = NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy)
+        XCTAssertGreaterThan(scroller, 0)
+        XCTAssertEqual(box.child.width, w - scroller, accuracy: 0.5,
+                       "the scroll view's content column is \(box.child.width)pt in a \(Int(w))pt pane: always-visible scrollers are not in effect")
+    }
+
+    /// The Cognition Map with decisions traced, which is how anyone who uses
+    /// Jax sees it and how CI saw it once earlier tests had traced some. Empty,
+    /// it shows a wrapping sentence and fits anything, which is all
+    /// `test_everyTabFitsEveryPaneWidth` sees on a clean host.
+    ///
+    /// Every whole width from the floor to 40pt past it is held to the width
+    /// it was offered with no tolerance, because the overflow this was written
+    /// for lived in a band: its stat row answered a fraction of a point too
+    /// wide at some widths and not at the ones either side, and the scroll
+    /// view turned that fraction into 2pt of ink past the pane. The pane
+    /// widths themselves then get the full measurement, ink and all.
+    func test_theCognitionMapFitsWithDecisionsTraced() {
+        let trace = CognitionTrace.shared
+        let saved = trace.events
+        defer {
+            trace.clearAll()
+            for event in saved.reversed() { trace.record(event) }
+        }
+        trace.note(kind: .directive, trigger: "Learned from your edit: Where is my order",
+                   heuristicsFired: ["Keep replies short and skip the apology."], mode: "observe",
+                   outcome: "Captured a lesson from a correction.", brand: "acme", correlationId: "pane-fit-1")
+        trace.note(kind: .task, trigger: "fact grounding audit (acme)",
+                   memoriesRetrieved: ["acme product catalog (ground truth)"], gateVerdict: "clarify",
+                   gateReason: "An ungrounded fact is true confusion.", confidence: 0.2, mode: "simulate",
+                   outcome: "Blocked publish on 1 invented fact.")
+        trace.note(kind: .goalCycle, trigger: "goal pursuit cycle", memoriesRetrieved: ["(mail) 3 unread"],
+                   gateVerdict: "queued", mode: "observe", outcome: "Planned: reply to the supplier")
+        trace.note(kind: .prompt, trigger: "what is on my calendar tomorrow",
+                   heuristicsFired: ["Prefer the calendar", "Ask before moving events"], gateVerdict: "proceed",
+                   confidence: 0.9, mode: "assist", outcome: "Answered from the calendar.")
+        XCTAssertGreaterThanOrEqual(trace.events.count, 4)
+
+        let floor = PaneMinimum.width(for: .cognitionMap)
+        for w in stride(from: floor, through: floor + 40, by: 1) {
+            let fitting = PaneFitHarness.fitting(width: w, height: Self.paneHeight) {
+                SurfacePane(selection: .constant(.cognitionMap)).environment(\.hostedInPane, true)
+            }
+            XCTAssertLessThanOrEqual(fitting, w, "tab-cognitionMap with decisions traced answered \(fitting)pt to a \(Int(w))pt pane")
+        }
+        var results: [PaneFitResult] = []
+        for w in [floor] + Self.paneWidths.dropFirst() {
+            results.append(PaneFitHarness.measure("tab-cognitionMap-traced", width: w, height: Self.paneHeight) {
+                SurfacePane(selection: .constant(.cognitionMap)).environment(\.hostedInPane, true)
+            })
+        }
+        assertAllFit("cognition-traced", results)
     }
 
     func test_everySettingsSectionFitsEveryPaneWidth() {
