@@ -1,7 +1,8 @@
 # Grux
 
-A native macOS app that gives an AI agent your mail, your calendar, your meetings
-and a shell it can undo. Your own API key, or a local model and no key at all.
+**Grux is an open source, local-first AI agent for macOS.** It is a native app that
+gives the agent your mail, your calendar, your meetings and a shell it can undo.
+Your own API key, or a local model through Ollama and no key at all.
 
 [![CI](https://github.com/dotcomjack/grux/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dotcomjack/grux/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/dotcomjack/grux?label=download&color=7C5CFF)](https://github.com/dotcomjack/grux/releases/latest)
@@ -118,6 +119,11 @@ repository when the site is built, and a weekly job flags any that have since mo
 - [Stopping an AI agent leaking secrets from your screen and files](https://gruxai.com/answers/stop-an-ai-agent-leaking-secrets/)
 - [The macOS permissions an AI assistant asks for, and what each one buys](https://gruxai.com/answers/macos-permissions-an-ai-assistant-asks-for/)
 - [Driving a Mac app from the terminal with a coding agent](https://gruxai.com/answers/drive-a-mac-app-from-the-terminal-with-an-agent/)
+- [Open source AI agents for macOS, compared](https://gruxai.com/answers/open-source-ai-agent-for-macos/)
+- [Open source alternatives to the ChatGPT app on Mac](https://gruxai.com/answers/open-source-chatgpt-alternative-for-mac/)
+- [Mac apps that work with Ollama](https://gruxai.com/answers/mac-apps-that-use-ollama/)
+- [A Mac app you can customize with Claude Code](https://gruxai.com/answers/mac-app-you-can-customize-with-claude-code/)
+- [What is new in Grux 3.0](https://gruxai.com/answers/whats-new-in-grux-3/)
 
 Every surface, one line each: [gruxai.com/features](https://gruxai.com/features/).
 
