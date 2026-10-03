@@ -7,7 +7,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-## [3.0.0] - staged, not released
+## [3.0.0] - 2026-09-29
 
 The release where Grux decides quickly, says what it is doing, and opens on
 one Command Panel.
