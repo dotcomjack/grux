@@ -125,6 +125,35 @@ repository when the site is built, and a weekly job flags any that have since mo
 - [A Mac app you can customize with Claude Code](https://gruxai.com/answers/mac-app-you-can-customize-with-claude-code/)
 - [What is new in Grux 3.0](https://gruxai.com/answers/whats-new-in-grux-3/)
 
+Comparisons and how-tos, for people choosing between Mac AI apps or running a model
+locally:
+
+- [Grux vs Raycast AI: an open source alternative on Mac](https://gruxai.com/answers/grux-vs-raycast-ai/)
+- [Grux vs LM Studio: running a model versus an agent that acts](https://gruxai.com/answers/grux-vs-lm-studio/)
+- [Claude desktop alternative for Mac, open source: Grux OS](https://gruxai.com/answers/grux-vs-claude-desktop-app/)
+- [Grux vs the ChatGPT desktop app on Mac](https://gruxai.com/answers/grux-vs-chatgpt-desktop-app/)
+- [Grux vs Osaurus: two open source AI agents for Mac](https://gruxai.com/answers/grux-vs-osaurus/)
+- [An open source Siri alternative for Mac](https://gruxai.com/answers/open-source-siri-alternative-for-mac/)
+- [An open source Msty alternative for Mac: Grux OS vs Msty](https://gruxai.com/answers/grux-vs-msty/)
+- [An open source Jan alternative for Mac: Grux OS vs Jan](https://gruxai.com/answers/grux-vs-jan/)
+- [AI email assistant and client for Mac, open source and local](https://gruxai.com/answers/ai-email-assistant-for-mac/)
+- [Best local LLM app for Mac: Ollama, LM Studio, Jan, Msty](https://gruxai.com/answers/best-local-llm-app-for-mac/)
+- [MCP client for Mac: Grux OS, Claude, goose, LM Studio, Jan](https://gruxai.com/answers/mcp-client-for-mac/)
+- [Claude Code Mac app: the official app, and where Grux fits](https://gruxai.com/answers/claude-code-mac-app/)
+- [Ollama vs LM Studio on a Mac: which one to run](https://gruxai.com/answers/ollama-vs-lm-studio/)
+- [Ollama alternatives for Mac: LM Studio, llama.cpp, MLX, Jan](https://gruxai.com/answers/ollama-alternatives-for-mac/)
+- [How to run an LLM on a Mac (MacBook or Mac mini)](https://gruxai.com/answers/how-to-run-an-llm-on-a-mac/)
+- [Apple Intelligence alternative for Mac, open source and local](https://gruxai.com/answers/apple-intelligence-alternative-for-mac/)
+- [Whisper app for Mac: MacWhisper, whisper.cpp, WhisperKit](https://gruxai.com/answers/whisper-app-for-mac/)
+- [AI terminal for Mac: Warp, and a shell an agent can undo](https://gruxai.com/answers/ai-terminal-for-mac/)
+- [Local AI on a Mac mini: a home AI server and agent](https://gruxai.com/answers/local-ai-on-a-mac-mini/)
+- [AnythingLLM alternatives for Mac: Open WebUI, Msty, LM Studio](https://gruxai.com/answers/anythingllm-alternatives/)
+- [Open WebUI alternatives for Mac: native apps and self-hosted](https://gruxai.com/answers/open-webui-alternatives-for-mac/)
+- [How to run DeepSeek locally on a Mac (MacBook or Mac mini)](https://gruxai.com/answers/how-to-run-deepseek-on-a-mac/)
+- [How to run gpt-oss locally on a Mac (20b and 120b)](https://gruxai.com/answers/how-to-run-gpt-oss-on-a-mac/)
+- [Best local LLM for coding on a Mac, by memory](https://gruxai.com/answers/best-local-llm-for-coding-on-a-mac/)
+- [An AI agent to manage your calendar on a Mac](https://gruxai.com/answers/ai-agent-to-manage-my-calendar/)
+
 Every surface, one line each: [gruxai.com/features](https://gruxai.com/features/).
 
 ## Table of contents
