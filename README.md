@@ -4,8 +4,11 @@
 gives the agent your mail, your calendar, your meetings and a shell it can undo.
 Your own API key, or a local model through Ollama and no key at all.
 
+**[Download Grux for Mac](https://github.com/dotcomjack/grux/releases/latest/download/Grux.dmg)** (Grux.dmg, 27 MB, Apple silicon, macOS 14 or later).
+Open it, drag Grux into Applications, and open it from there.
+
 [![CI](https://github.com/dotcomjack/grux/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dotcomjack/grux/actions/workflows/ci.yml)
-[![Latest release](https://img.shields.io/github/v/release/dotcomjack/grux?label=download&color=7C5CFF)](https://github.com/dotcomjack/grux/releases/latest)
+[![Download](https://img.shields.io/github/v/release/dotcomjack/grux?label=download&color=7C5CFF)](https://github.com/dotcomjack/grux/releases/latest/download/Grux.dmg)
 [![Licence](https://img.shields.io/badge/licence-MIT-7C5CFF)](LICENSE)
 [![Platform](https://img.shields.io/badge/macOS-14%2B%20Apple%20silicon-lightgrey)](#requirements)
 
@@ -67,34 +70,33 @@ those are not yours to look at.
 
 ## Install
 
-**Download the notarized build.** This is the front door. It is signed with a
-Developer ID, notarized by Apple and stapled, so it opens on a Mac that has never
-seen it without a right click and without a trip through System Settings.
+**[Download Grux.dmg](https://github.com/dotcomjack/grux/releases/latest/download/Grux.dmg)** (27 MB, Apple silicon, macOS 14 or later)
 
-[**Download Grux 3.0 for Apple silicon**](https://github.com/dotcomjack/grux/releases/latest) (23 MB, macOS 14+)
+1. Open `Grux.dmg`.
+2. Drag Grux into Applications.
+3. Open Grux from Applications.
 
-Unzip it, drag `Grux.app` to Applications, open it. There is no installer and no
-updater phoning home. To check what you got before you run it:
+The disk image and the app are signed with a Developer ID, notarized by Apple and
+stapled, so Grux opens on a Mac that has never seen it, with no right click and no trip
+through System Settings. There is no installer and no updater phoning home. To check
+what you got before you run it:
 
 ```sh
-shasum -a 256 Grux-macOS-arm64.zip     # compare against the checksum in the release notes
+shasum -a 256 ~/Downloads/Grux.dmg     # compare against the checksum in the release notes
 
 spctl -a -vv /Applications/Grux.app
-# Grux.app: accepted
+# /Applications/Grux.app: accepted
 # source=Notarized Developer ID
 ```
 
-The checksum lives in the release notes rather than here, because it changes every
-release and a copy in this file is a copy that goes stale.
-
-**Or through Homebrew.**
+**Or through Homebrew**, which installs the app and the `grux` command together:
 
 ```sh
 brew install --cask dotcomjack/tap/grux
 ```
 
-**Then wire up the command line**, if you want one. This finds the app you just
-installed, puts `grux` on your PATH and runs setup. It installs nothing itself:
+**The command line, after a DMG install.** It lives inside the app, so there is nothing
+else to download. This finds the app, puts `grux` on your PATH and runs setup:
 
 ```sh
 npx @dotcomjack/grux
@@ -318,13 +320,19 @@ uploaded and rejected.
 
 ## First run
 
-**The minimum useful setup is one key.** Chat needs an Anthropic API key and
-nothing else. Paste it in Settings and the app is usable.
+Grux opens on a short setup that asks before it assumes, and every screen in it can be
+skipped and come back to later.
 
-Everything beyond that is opt in, and the app tells you what is missing rather
-than failing quietly. Each sidebar row carries a dot when a feature it depends on
-is unconfigured, and the setup sheet names the specific credential, permission or
-step that is absent. A feature you never open never asks you for anything.
+1. **How much to set up now:** a working app in a minute, or everything up front.
+2. **One question:** what you want Grux for. The answer picks the features to start
+   with, and the next screen shows the pick before asking for anything, so you can
+   change it.
+3. **Setup, one thing at a time:** your name and a model, then only what the picked
+   features need. Every macOS permission gets its own screen that says what it is for
+   before macOS asks.
+
+**The minimum useful setup is one model.** Chat runs on an Anthropic API key, or on
+Ollama with no key at all.
 
 If you would rather not send anything to a hosted model at all, install
 [Ollama](https://ollama.com), pull a model, and Grux will use it. The Local Models
