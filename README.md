@@ -323,13 +323,13 @@ uploaded and rejected.
 Grux opens on a short setup that asks before it assumes, and every screen in it can be
 skipped and come back to later.
 
-1. **How much to set up now:** a working app in a minute, or everything up front.
-2. **One question:** what you want Grux for. The answer picks the features to start
+1. **One question:** what you want Grux for. The answer picks the features to start
    with, and the next screen shows the pick before asking for anything, so you can
-   change it.
-3. **Setup, one thing at a time:** your name and a model, then only what the picked
-   features need. Every macOS permission gets its own screen that says what it is for
-   before macOS asks.
+   change it. Would rather choose yourself? "I would rather pick from a list" asks how
+   much to set up now instead.
+2. **Your name and a model**, then a short look at how Grux works.
+3. **Setup, one thing at a time:** only what the picked features need. Every macOS
+   permission gets its own screen that says what it is for before macOS asks.
 
 **The minimum useful setup is one model.** Chat runs on an Anthropic API key, or on
 Ollama with no key at all.

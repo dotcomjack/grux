@@ -27,6 +27,7 @@ SIGN_ID=$(security find-identity -v -p codesigning | awk '/Developer ID Applicat
 [[ -n "$SIGN_ID" ]] || { echo "FATAL: no Developer ID Application identity on this Mac"; exit 1; }
 
 WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
 python3 -m venv "$WORK/venv"
 "$WORK/venv/bin/pip" install -q dmgbuild pillow
 (cd "$WORK" && "$WORK/venv/bin/python" "$HERE/background.py")
