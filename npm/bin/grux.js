@@ -12,7 +12,7 @@
 // `npx grux status --json` behaves exactly like `grux status --json`.
 
 import { spawnSync } from 'node:child_process'
-import { locate, appVersion, RELEASES } from '../lib/locate.js'
+import { locate, appVersion, DOWNLOAD } from '../lib/locate.js'
 import { link, pathLineFor } from '../lib/link.js'
 import { out, err, fill, rail, row, accent, dim } from '../lib/ui.js'
 
@@ -38,9 +38,9 @@ function notInstalled() {
   out(rail('LOOK'))
   out(row('needed', 'Grux.app is not on this Mac', 'The command line ships inside the app bundle. It is not a separate download, so there is nothing this launcher can usefully install on its own.'))
   out('')
-  out(fill('Download it, drag it to Applications, then run this again:', 2))
+  out(fill('Download Grux.dmg, open it, drag Grux into Applications, then run this again:', 2))
   out('')
-  out('    ' + accent(RELEASES))
+  out('    ' + accent(DOWNLOAD))
   out('')
   out(dim(fill('Nothing was changed on this Mac.', 2)))
   out('')

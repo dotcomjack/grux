@@ -64,6 +64,17 @@ test('GRUX_APP replaces the search path, it does not extend it', () => {
   assert.doesNotMatch(r.stdout, /Applications\/Grux\.app/, 'must not report the real app when another was named')
 })
 
+// The download line is the one thing a stranger without the app reads, so it
+// must be the disk image itself. It used to be the releases PAGE, where a
+// first-time visitor had to pick the app out of release notes and zips.
+test('with no app, it prints the direct Grux.dmg download, not the releases page', () => {
+  const r = run([], { GRUX_APP: '/tmp/definitely-not-an-app-9f3a.app' })
+  assert.equal(r.status, 2)
+  assert.ok(r.stdout.includes('https://github.com/dotcomjack/grux/releases/latest/download/Grux.dmg'),
+    'the not-installed path must print the disk image URL')
+  assert.match(r.stdout, /drag Grux into Applications/)
+})
+
 test('a named app that exists is used, and arguments pass through untouched', () => {
   const { root, app } = fakeApp()
   try {

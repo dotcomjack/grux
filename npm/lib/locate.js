@@ -4,7 +4,9 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 export const BUNDLE_ID = 'com.gruxai.grux'
-export const RELEASES = 'https://github.com/dotcomjack/grux/releases/latest'
+// The disk image itself, not the releases page. A stable name that every release
+// uploads, so this never needs bumping; gruxai.com links the same URL.
+export const DOWNLOAD = 'https://github.com/dotcomjack/grux/releases/latest/download/Grux.dmg'
 
 // The binary lives inside the app bundle. It is not a separate download and
 // there is deliberately no second copy of it anywhere, because two copies of a

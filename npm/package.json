@@ -1,6 +1,6 @@
 {
   "name": "@dotcomjack/grux",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "The one command front door to Grux OS. Finds the app, puts grux on your PATH, and hands you to the real command line.",
   "bin": {
     "grux": "bin/grux.js"

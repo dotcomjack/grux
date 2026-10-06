@@ -78,7 +78,7 @@ refuses and tells you. It will not remove somebody else's program.
 
 ## Requirements
 
-macOS 14 or later, and [Grux.app](https://github.com/dotcomjack/grux/releases/latest).
+macOS 14 or later, and [Grux.app](https://github.com/dotcomjack/grux/releases/latest/download/Grux.dmg).
 Node 18 or later, which `npx` already implies.
 
 ## License
