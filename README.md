@@ -33,12 +33,12 @@ machine, your data.
 
 If it earns it, a star is the whole ask.
 
-**Status: shipping, currently 3.0.** 37 features ship in 14 sidebar rows, and a command line drives all of them. 25 are
+**Status: shipping, currently 3.0.** 37 features ship in 14 surfaces, and a command line drives all of them. 25 are
 core and 12 are labs: real, but rough at the edges, and labelled so. Those are
-two different counts on purpose. A feature is a capability the app has; a row is
-a place to click. 3.0 folded nine things into where they belonged, so the
-sidebar got shorter without anything being taken away. Speaker enrollment, for
-instance, lost its own row and kept every one of its tools. Nothing is hidden
+two different counts on purpose. A feature is a capability the app has; a surface
+is a place to open. 3.0 folded nine things into where they belonged, so the list
+of surfaces got shorter without anything being taken away. Speaker enrollment, for
+instance, lost its own surface and kept every one of its tools. Nothing is hidden
 behind a waitlist. See [Feature tiers](#feature-tiers) for exactly which is which.
 
 ![The Command Panel: one input, a Now list of what needs you, and the Optimize Grux card](docs/screenshots/command-panel.png)
@@ -182,8 +182,8 @@ Every surface, one line each: [gruxai.com/features](https://gruxai.com/features/
 
 ## What it actually does
 
-The short version: one window, a sidebar of surfaces, and an assistant that can
-reach the things a Mac assistant should be able to reach.
+The short version: one Command Panel that opens each surface as a pane beside it,
+and an assistant that can reach the things a Mac assistant should be able to reach.
 
 - **Chat** with tool use, against Anthropic or a local model.
 - **Local models** through Ollama, so you can run the whole thing without sending
@@ -409,7 +409,7 @@ Media Studio, Social, Workflows, Self-Upgrade, Jax HQ, Meta Ads, Phone
 companion.
 
 Labs does not mean broken. It means the surface is real and the edges are not
-sanded. The sidebar says so once: the Labs door carries one BETA badge for the
+sanded. The app says so once: the Labs door carries one BETA badge for the
 surfaces behind it, and a labs feature that lives elsewhere (Agents behind the
 Developer door, Meta Ads and Social once you add a brand) keeps its own. Tests
 assert both halves, so the label cannot quietly go stale.
@@ -444,10 +444,10 @@ of `allTools()` and its handler is the first `case`. Two edits, same file, and t
 model can call it. `ToolCatalogueTests` pins the count at 116, so adding one turns the
 suite red until you move the pin on purpose.
 
-**To add a surface**, meaning a row in the sidebar with its own screen. Add a
+**To add a surface**, meaning a place to open with its own screen. Add a
 `FeatureRow` to `FeatureRegistry.rows` in
 `Grux-Mac/Sources/Grux/Onboarding/FeatureRegistry.swift`, naming what it `requires` and
-what is merely `optional`. The dot on the sidebar row, the setup sheet, the permission
+what is merely `optional`. The setup dot, the setup sheet, the permission
 table in this README and the BETA badge are all read from that one entry, so getting
 the row right is the whole job.
 
