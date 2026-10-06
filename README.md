@@ -70,7 +70,7 @@ those are not yours to look at.
 
 ## Install
 
-**[Download Grux.dmg](https://github.com/dotcomjack/grux/releases/latest/download/Grux.dmg)** (27 MB, Apple silicon, macOS 14 or later)
+**[Download Grux 3.0 for Apple silicon](https://github.com/dotcomjack/grux/releases/latest/download/Grux.dmg)** (Grux.dmg, 27 MB, macOS 14 or later)
 
 1. Open `Grux.dmg`.
 2. Drag Grux into Applications.
