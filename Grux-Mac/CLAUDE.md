@@ -11,28 +11,26 @@ tracked: this file is the half that is true for every install, and that file is
 the half that is true for exactly one machine. An absent local file is a
 supported state, not an error, and nothing here depends on it.
 
-## ABSOLUTE: ONE active codebase + ONE canonical branch (LOCKED 2026-06-14)
+## ONE canonical branch: `main` (LOCKED 2026-06-14, rewritten 2026-10-12)
 
-Grux is developed and BUILT from ONE clone on branch **`main`**. That clone owns the `.worktrees/` (the `upgrade/*` autonomous-upgrade branches and the clean build worktree `grux-main`). Build + install ONLY from the build worktree, which is the checkout that holds `main`:
+`main` on origin is the only source of truth. Every change starts in a fresh worktree cut from it and lands through a pull request:
 
 ```
-cd Grux-Mac && ./build.sh
+git worktree add ../.worktrees/grux-<scope> -b <branch> origin/main
+cd ../.worktrees/grux-<scope>/Grux-Mac && ./build.sh
 ```
+
+No checkout is expected to hold `main` locally, and a worktree's NAME says nothing about its branch (measured 2026-10-12: the worktree called `grux-main` sat on a September gap branch). Read the branch, never the folder name: `git -C <path> branch --show-current`, then `git log origin/main..HEAD` and `git log HEAD..origin/main`.
 
 `main` is the feature-complete tree: the Command Panel shell (a 420pt panel that opens any surface as one pane beside it, with the section-grouped classic sidebar behind **Settings, General, Shell, Classic sidebar**) with Home, Mailbox, Calendar, Notes, Documents, Contacts, Schedules, Research, Meta Ads, and the **Foundry / Self-Upgrade** engine.
 
-**Do NOT work in or build from these (they are stale and WILL look like an old Grux):**
-- Any iCloud Drive mirror of this repo. iCloud mirrors of code trees are read-only history as far as Grux is concerned; they are never the build source.
-- Branch `feat/empire-dash` (an old base that `main` already merged on 2026-06-12 via `c031298`).
-- Branch `gap/context-compression-rolling-summarization` (April 30 base for the upgrade worktrees).
+**Never build from, or work in:** any iCloud Drive mirror of this repo; `feat/empire-dash` (merged into `main` 2026-06-12 via `c031298`); `gap/context-compression-rolling-summarization` (an April base); another session's worktree, whatever its name.
 
-**Why this lock exists (incident 2026-06-14):** a session worked in an iCloud mirror on `feat/empire-dash`, built it, and installed it over the real `main` build. The reorganized sidebar and the Self-Upgrade tab vanished from the running app and looked deleted. They were on `main` the entire time, and nothing had been lost. Before concluding any feature is "gone," confirm which clone and branch you are on (`git -C <path> rev-parse --abbrev-ref HEAD` should say `main`) and run `git log --all` / `git branch -a --contains <sha>` / `git worktree list`. A "missing" feature almost always means wrong checkout, not lost work.
-
-Note the repo root is NOT expected to be on `main`: git allows a branch in exactly one worktree at a time, and the build worktree owns `main`, so checking `main` out at the root fails by design. Checking the root's branch instead of the build worktree's is the trap this rule is here to catch.
+**Why (incident 2026-06-14):** a session built an iCloud mirror on `feat/empire-dash` and installed it over the real build. The reorganized sidebar and the Self-Upgrade tab vanished from the running app and looked deleted; they were on `main` the whole time. Before concluding any feature is "gone", check the branch and run `git log --all`, `git branch -a --contains <sha>` and `git worktree list`. A "missing" feature almost always means the wrong checkout, not lost work.
 
 ## Commit WIP features the moment they work (LOCKED 2026-06-14)
 
-When a Grux feature reaches a working state, COMMIT IT THAT SESSION and push to `main` (the global "commit and push freely without asking" rule authorizes this, no permission needed). Do not leave a built feature sitting only in the working tree across sessions: untracked new files and modified tracked files are both at risk from a later `git checkout`/`reset`/`clean`. If a feature is reported "gone," FIRST check `git log --all`, `git branch -a --contains <sha>`, `git stash list`, `git reflog`, and `git fsck --lost-found` before assuming it is unrecoverable, and report honestly.
+When a Grux feature reaches a working state, COMMIT IT THAT SESSION, push the branch and open a pull request against `main` (commits and branch pushes need no permission). Do not leave a built feature sitting only in the working tree across sessions: untracked new files and modified tracked files are both at risk from a later `git checkout`/`reset`/`clean`. If a feature is reported "gone," FIRST check `git log --all`, `git branch -a --contains <sha>`, `git stash list`, `git reflog`, and `git fsck --lost-found` before assuming it is unrecoverable, and report honestly.
 
 ## Bundle id is `com.gruxai.grux` (RENAMED 2026-08-16). The phone is NOT renamed.
 
@@ -190,13 +188,13 @@ Every handoff Grux writes for a person's coding agent goes through the ONE work 
 
 Measured 2026-09-27 on the test Mac: the Optimize card's "Keep Grux on top" handoff was a second, thinner formatter. The agent stopped at a commit on a side branch in a fresh worktree, the person had to type "reload grux (merge it and run it)", nothing reached a progress log, the worktree and branch stayed behind, and the card kept offering the change it had just delivered.
 
-## Deploy freely (Grux exception)
+## What needs a go-ahead (rewritten 2026-10-12)
 
-Per global rule: "Never deploy to production without explicit ask" applies to every brand EXCEPT GruxAI. Build, sign, install to iPhone, push Mac app, rotate tunnels, all routine. No "ship it" confirmation needed.
+Grux is public, so the old deploy-freely exception is retired. Builds, signing, installs on the maintainer's own Macs and iPhone, tunnel rotation, commits, branch pushes and pull requests are routine. Anything a stranger receives needs the maintainer's explicit go-ahead: a release tag, a notarized DMG, an npm publish, a Homebrew cask bump, or a code push to the public repo. Never move an existing release tag.
 
 ## Build + deploy
 
-- **Mac:** `./build.sh` from the build worktree's `Grux-Mac` (releases to `/Applications/Grux.app`). build.sh quits + relaunches Grux. It pins a TCC-stable signing identity: that pin is load-bearing, because macOS keys every TCC permission grant to the signing identity, so signing with a different one silently revokes microphone, accessibility, automation and screen-recording access on the next launch. The concrete identity hash is per-machine and lives in `~/.grux/grux-mac-local.md`.
+- **Mac:** `./build.sh` from your worktree's `Grux-Mac` (releases to `/Applications/Grux.app`). build.sh quits + relaunches Grux. It pins a TCC-stable signing identity: that pin is load-bearing, because macOS keys every TCC permission grant to the signing identity, so signing with a different one silently revokes microphone, accessibility, automation and screen-recording access on the next launch. The concrete identity hash is per-machine and lives in `~/.grux/grux-mac-local.md`.
 - **Open a specific tab for verification:** `/Applications/Grux.app/Contents/MacOS/Grux --open-tab=metaAds`. Full key list (36 tabs, LOCKED strings): home, reactor, chat, jaxHQ, jaxCommand, cognitionMap, featureReview, projects, tasks, agents, meetings, calendar, documents, creative (Media Studio), designStudio (alias: design), compare, cookbook, folders, notes, research, skills, schedules, speakers, contacts, mailbox, roadmap, commands, workflows, metaAds, social, focus, selfUpgrade (alias: foundry), integrations, settings, labs (the Labs door's shelf, added 2026-09-22), tuning (Tuning, the behaviour cards; no rail row, opened from the orb's right click, Today, the palette, the menu bar and the top of Settings, added 2026-09-22). One more key is not a tab: `panel` (3.0) closes the pane and leaves the Command Panel alone, and it is what `rendered-tab.txt` reads when no pane is open.
 
 The list above is the enum at `Sources/Grux/LaunchRootView.swift:33`, which is the only source of truth; this file said 35 and omitted `social` until 2026-08-11. Count it there before trusting a number here. Unknown keys silently fall back to chat, so verify the tab you actually got.
