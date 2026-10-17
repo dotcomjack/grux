@@ -193,7 +193,10 @@ enum CapabilityResolver {
             // ModelRegistry.discoverLocal(), which AppState runs unconditionally
             // at launch. That is the honest question: is a local model reachable,
             // rather than has a string been typed.
-            return { ModelRegistry.shared.local != nil }
+            //
+            // And USABLE, not merely reachable: a server holding no model
+            // answers too, and cannot serve a turn (W4 pass 2, 2026-10-13).
+            return { ModelRegistry.shared.localUsable }
         case .endpointMicrosoftGraph:
             // Same shape as the mail account store above, and named here for the
             // same reason: contract section 2.5 gives this capability the

@@ -32,7 +32,10 @@ final class SetupOrderTests: XCTestCase {
         let asked = Set(plan.required.map(\.requirement) + plan.optional.map(\.requirement))
         XCTAssertFalse(asked.contains(.keyAnthropic), "the model key has its own screen")
         XCTAssertFalse(asked.contains(.endpointOllama), "the local model has its own screen")
-        XCTAssertTrue(plan.ready.contains("chat"), "chat needs only the model gate")
+        // Not "ready" either: with no model, Chat does not work, and the setup
+        // screen said it did (W4 pass 1, 2026-10-13). It waits on the gate.
+        XCTAssertFalse(plan.ready.contains("chat"), "chat is called working with no model")
+        XCTAssertTrue(plan.needsModel.contains("chat"), "chat needs only the model gate")
         XCTAssertEqual(plan.required.map(\.requirement), [.keyBrave])
     }
 
@@ -118,7 +121,8 @@ final class SetupOrderTests: XCTestCase {
         let ids = IntentToFeatures.keyless(answer: "Run my inbox and transcribe my meetings")
         let plan = SetupOrder.plan(features: rows(ids), listening: true, listeningStarted: false,
                                    satisfied: { _ in false })
-        XCTAssertEqual(plan.ready, ["home", "chat", "approvals", "tasks", "notes", "settings"])
+        XCTAssertEqual(plan.ready, ["home", "approvals", "tasks", "notes", "settings"])
+        XCTAssertEqual(plan.needsModel, ["chat"])
         XCTAssertEqual(plan.required.map(\.requirement),
                        [.permMicrophone, .stepRecordingConsentAcknowledged, .stepSpeechModelDownloaded,
                         .endpointImap, .permCalendar, .permSystemAudio])

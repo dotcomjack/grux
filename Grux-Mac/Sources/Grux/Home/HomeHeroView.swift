@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import ImageIO
 
 // The Home tab hero: a dark aurora backdrop filling the top, a gradient
 // scrim fading it into the GruxTheme base, an iridescent glass orb floating
@@ -16,17 +17,36 @@ import AppKit
 struct HomeHeroView: View {
     let greeting: String
     let dateLine: String
+    /// From `heroHeight(forPane:)`: the full 360 where there is room, short
+    /// where the pane is, so Start my day is never below the fold.
+    var height: CGFloat = HomeHeroView.fullHeight
+
+    static let fullHeight: CGFloat = 360
+    static let shortHeight: CGFloat = 150
+    /// Below this pane height the full hero pushed Start my day out of sight
+    /// at the default 1100x560 window (audit 2026-10-13, item 4).
+    static let shortBelow: CGFloat = 700
+
+    static func heroHeight(forPane paneHeight: CGFloat) -> CGFloat {
+        paneHeight > 0 && paneHeight < shortBelow ? shortHeight : fullHeight
+    }
+    @ObservedObject private var assets = HomeAssets.shared
 
     // Breathing scale + parallax offset, driven by a repeatForever animation
     // that we only start when reduceMotion is off.
     @State private var breathe = false
+    /// Pictures, the blur and the shadow wait one beat. They were the rest
+    /// of the first Home open after the greeting was already on screen.
+    @State private var showArt = false
 
     private var motionOff: Bool { GruxTheme.reduceMotion }
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
             scrim
-            orb
+            if showArt {
+                orb
+            }
             // The wordmark rides the same content column as the card stack
             // below it, while the scrim, orb and backdrop stay full bleed. Once
             // HomeView capped that stack, a hero greeting still pinned to the
@@ -37,7 +57,7 @@ struct HomeHeroView: View {
                 .frame(maxWidth: GruxLayout.contentMax, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .center)
         }
-        .frame(height: 360)
+        .frame(height: height)
         .frame(maxWidth: .infinity)
         // The backdrop is a BACKGROUND, not a ZStack member, and that is a
         // layout fix rather than a style choice.
@@ -58,9 +78,22 @@ struct HomeHeroView: View {
         // `.clipped()` still trims it, but Home now asks for exactly what it is
         // given. Measured at the 840pt floor: 217pt of nav rail before, 240pt
         // after.
-        .background(backdrop)
+        .background {
+            if showArt {
+                backdrop
+            } else {
+                LinearGradient(
+                    colors: [GruxTheme.accentPrimary.opacity(0.45), GruxTheme.base],
+                    startPoint: .top, endPoint: .bottom
+                )
+            }
+        }
         .clipped()
-        .onAppear {
+        // A task, so leaving Home inside the first beat cancels it.
+        .task {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            guard !Task.isCancelled else { return }
+            showArt = true
             guard !motionOff else { return }
             withAnimation(.easeInOut(duration: 6).repeatForever(autoreverses: true)) {
                 breathe = true
@@ -72,7 +105,7 @@ struct HomeHeroView: View {
 
     @ViewBuilder
     private var backdrop: some View {
-        if let image = HomeAssets.heroBackdrop {
+        if let image = assets.heroBackdrop {
             Image(nsImage: image)
                 .resizable()
                 .aspectRatio(contentMode: .fill)
@@ -105,17 +138,21 @@ struct HomeHeroView: View {
 
     // MARK: Orb
 
+    /// 220 in the full hero; in the short one it shrinks with it, so the orb
+    /// floats whole instead of being cut off by the hero's bottom edge.
+    private var orbSize: CGFloat { min(220, height * 0.6) }
+
     // Floats upper-trailing, leaving the lower-leading negative space for the
     // wordmark. Soft radial mask hides the white plate on home-orb-0.png when
     // no transparent cutout is bundled.
     private var orb: some View {
         GeometryReader { geo in
             Group {
-                if let cutout = HomeAssets.orbCutout {
+                if let cutout = assets.orbCutout {
                     Image(nsImage: cutout)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                } else if let plate = HomeAssets.orbPlate {
+                } else if let plate = assets.orbPlate {
                     Image(nsImage: plate)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
@@ -143,11 +180,11 @@ struct HomeHeroView: View {
                         .opacity(0.55)
                 }
             }
-            .frame(width: 220, height: 220)
+            .frame(width: orbSize, height: orbSize)
             .scaleEffect(motionOff ? 1.0 : (breathe ? 1.035 : 0.985))
             .offset(
-                x: geo.size.width - 210,
-                y: motionOff ? 30 : (breathe ? 22 : 38)
+                x: geo.size.width - orbSize * 0.95,
+                y: (motionOff ? 30 : (breathe ? 22 : 38)) * orbSize / 220
             )
             .shadow(color: GruxTheme.violetGlow(strong: true), radius: 44, x: 0, y: 18)
             .accessibilityHidden(true)
@@ -158,7 +195,7 @@ struct HomeHeroView: View {
 
     private var wordmark: some View {
         VStack(alignment: .leading, spacing: GruxSpacing.s) {
-            Text("GRUX OS")
+            Text("GRUX AI")
                 .font(.system(size: 13, weight: .heavy, design: .monospaced))
                 .kerning(6)
                 .foregroundStyle(GruxTheme.textSecondary)
@@ -180,16 +217,41 @@ struct HomeHeroView: View {
 
 // MARK: - Bundled asset loader
 
-// Loads the Home hero assets once from the app bundle and caches them.
-// `Bundle.main.url(forResource:withExtension:)` resolves them from
-// Contents/Resources/, where build.sh copies them.
-enum HomeAssets {
-    static let heroBackdrop: NSImage? = load("home-hero", "jpg")
-    static let orbCutout: NSImage? = load("home-orb-cutout", "png")
-    static let orbPlate: NSImage? = load("home-orb-0", "png")
+// The backdrop is 871 KB and the orb plate is 3.8 MB. Decoding them on the
+// click made the first Home open wait. `preload()` starts at launch, off
+// the main thread. The hero draws the greeting immediately and picks up
+// the pictures when they are ready.
+@MainActor
+final class HomeAssets: ObservableObject {
+    static let shared = HomeAssets()
 
-    private static func load(_ name: String, _ ext: String) -> NSImage? {
-        guard let url = Bundle.main.url(forResource: name, withExtension: ext) else { return nil }
-        return NSImage(contentsOf: url)
+    @Published private(set) var heroBackdrop: NSImage?
+    @Published private(set) var orbCutout: NSImage?
+    @Published private(set) var orbPlate: NSImage?
+
+    func preload() {
+        let backdrop = Bundle.main.url(forResource: "home-hero", withExtension: "jpg")
+        let cutout = Bundle.main.url(forResource: "home-orb-cutout", withExtension: "png")
+        let plate = Bundle.main.url(forResource: "home-orb-0", withExtension: "png")
+        DispatchQueue.global(qos: .userInitiated).async {
+            let decoded = (
+                Self.decode(backdrop),
+                Self.decode(cutout),
+                Self.decode(plate)
+            )
+            DispatchQueue.main.async {
+                self.heroBackdrop = decoded.0
+                self.orbCutout = decoded.1
+                self.orbPlate = decoded.2
+            }
+        }
+    }
+
+    nonisolated private static func decode(_ url: URL?) -> NSImage? {
+        guard let url else { return nil }
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
+        let size = NSSize(width: image.width, height: image.height)
+        return NSImage(cgImage: image, size: size)
     }
 }

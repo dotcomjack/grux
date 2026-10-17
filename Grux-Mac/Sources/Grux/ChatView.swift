@@ -46,6 +46,9 @@ struct ChatView: View {
     // more. A page of 16 opened 500 and 1000 message threads in 128 ms and
     // about 10 MB on the Mini (2026-09-28), against 85 ms for an empty one.
     @State private var shownCount = ChatView.transcriptPage
+    /// The transcript lays out after the composer is on screen. A full
+    /// thread's first layout was the whole wait.
+    @State private var showTranscript = false
 
     // Item 24: shell bus fills the idle gap with canonical moments.
     @ObservedObject private var shellBus = ShellStateBus.shared
@@ -107,7 +110,8 @@ struct ChatView: View {
             micMuted: state.micMuted && !pushToTalk,
             isSpeaking: speech.isSpeaking || speech.isBuffering,
             isThinking: state.isThinking,
-            notHearing: !pushToTalk && micHealth.notHearing)
+            notHearing: !pushToTalk && micHealth.notHearing,
+            awaitingConsent: !pushToTalk && state.config.listeningAwaitingConsent)
     }
 
     /// How many rows the collapsed rail is about to draw. The conversation
@@ -119,7 +123,7 @@ struct ChatView: View {
 
     private var orbState: GruxOrbState {
         if shellBus.current.mode == .alert { return ShellMode.alert.orbState }
-        if listeningTell == .off { return shellBus.current.mode.orbState }
+        if listeningTell.listenerOff { return shellBus.current.mode.orbState }
         return listeningTell.orbState
     }
 
@@ -138,7 +142,11 @@ struct ChatView: View {
                     heroHeader
                     themedHairline
                     SessionsStrip()
-                    messagesScroll
+                    if showTranscript {
+                        messagesScroll
+                    } else {
+                        Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
                     VoiceLiveRail()
                     if voice.isRecording || voice.isTranscribing {
                         liveVoiceStrip
@@ -162,9 +170,13 @@ struct ChatView: View {
         // conversation alone.
         .frame(minWidth: hostedInPane ? Self.paneMinWidth : 560, minHeight: 520)
         .onChange(of: state.offlineMode) { _, _ in readiness = ChatReadiness.current() }
+        .onChange(of: draft) { _, _ in returnRefused = false }
+        .onChange(of: readiness) { _, _ in returnRefused = false }
         .onAppear {
-            readiness = ChatReadiness.current()
             inputFocused = true
+            // Before the first paint: the Send button reads it, and it starts
+            // as .ready.
+            readiness = ChatReadiness.current()
             // Consume a prompt staged by the Meta Ads "Send to Claude" button if
             // it was set before this tab appeared. Pre-fill only, never auto-send.
             if let p = state.pendingChatPrompt, !p.isEmpty {
@@ -172,10 +184,13 @@ struct ChatView: View {
                 inputFocused = true
                 state.pendingChatPrompt = nil
             }
-            // Price the pending context once on appear so the composer's cost
-            // line is present on a fresh session BEFORE the first send (it used
-            // to only publish inside send(), so a new session showed just the
-            // model chip until the user had sent at least once).
+        }
+        // The transcript and the cost line wait for the first paint. A task,
+        // so leaving Chat inside that beat cancels it.
+        .task {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            guard !Task.isCancelled else { return }
+            showTranscript = true
             ChatService.shared.refreshChatEstimate()
         }
         .onChange(of: draft) { _, _ in
@@ -394,9 +409,9 @@ struct ChatView: View {
     /// is now the shared tell, so this chip and the orb cannot disagree.
     private var listeningIndicator: some View {
         statusPill(
-            icon: listeningTell == .off ? "waveform.slash" : "waveform",
-            label: listeningTell.label,
-            accent: listeningTell == .off || listeningTell == .muted
+            icon: listeningTell.listenerOff ? "waveform.slash" : "waveform",
+            label: listeningTell.phrase.uppercased(),
+            accent: listeningTell.listenerOff || listeningTell == .muted
                 ? GruxTheme.textTertiary
                 : GruxTheme.successMint
         )
@@ -407,11 +422,16 @@ struct ChatView: View {
     /// now says what Grux's voice is DOING; the vendor still shows, one size
     /// smaller, behind the shared glyph.
     private var speakIndicator: some View {
-        HStack(spacing: GruxSpacing.xs) {
-            statusPill(icon: voiceState.icon, label: voiceState.label, accent: voiceState.accent)
-            VendorGlyph(vendor: state.config.useElevenLabs ? "ElevenLabs" : "macOS")
-        }
+        // The vendor is in the tooltip. Beside the chip it was a bare "ai"
+        // mark with no noun, read as a third state (audit 2026-10-13, item 10).
+        statusPill(icon: voiceState.icon, label: voiceState.label, accent: voiceState.accent)
+            .help("Grux's voice: \(voiceVendor)")
+            // VendorGlyph carried the vendor to VoiceOver; the chip says it now.
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(ChatComposerSend.voiceChipLabel(state: voiceState.label, vendor: voiceVendor))
     }
+
+    private var voiceVendor: String { state.config.useElevenLabs ? "ElevenLabs" : "macOS" }
 
     private var voiceState: VoiceStateChip {
         VoiceStateChip.resolve(speakRepliesAloud: state.config.speakRepliesAloud,
@@ -555,6 +575,12 @@ struct ChatView: View {
     /// how many more each "Show earlier" adds.
     static let transcriptPage = 16
 
+    /// The composer opens two lines tall and grows to six (audit 2026-10-13,
+    /// item 10: one line read as a search box, a 165pt well as empty).
+    static let composerLines = 2...6
+    /// How far the transcript fades out under the header.
+    static let transcriptTopFade: CGFloat = 24
+
     /// The part of `chat` the transcript lays out when `shown` messages are
     /// asked for, and how many earlier ones stay behind "Show earlier".
     static func transcriptWindow(_ chat: [ChatMessage], shown: Int) -> (earlier: Int, messages: ArraySlice<ChatMessage>) {
@@ -646,7 +672,9 @@ struct ChatView: View {
                                     }
                             }
                         }
-                        if state.isThinking {
+                        // A CHAT turn, not isThinking: FocusWatcher toggles
+                        // that around its own vision calls (PR 40 W2d review).
+                        if state.chatTurnInFlight {
                             thinkingBubble
                         }
                         // Invisible sentinel pinned to the bottom of the
@@ -689,7 +717,7 @@ struct ChatView: View {
                 })
                 // The thinking bubble grows the transcript at the bottom; while
                 // following, keep the bottom (with the bubble) in view.
-                .onChange(of: state.isThinking) { _, _ in
+                .onChange(of: state.chatTurnInFlight) { _, _ in
                     let follow = follow
                     DispatchQueue.main.async { follow.showBottomIfFollowing() }
                 }
@@ -727,6 +755,15 @@ struct ChatView: View {
                 .onChange(of: railRowCount) { _, _ in
                     guard isAtBottom, !state.chat.isEmpty else { return }
                     follow.scrollToEnd(animated: true)
+                }
+                // Lines scroll out under a fade, not a hard edge that cuts a
+                // bubble in half under the header (audit 2026-10-13, item 10).
+                .overlay(alignment: .top) {
+                    LinearGradient(colors: [GruxTheme.base, GruxTheme.base.opacity(0)],
+                                   startPoint: .top, endPoint: .bottom)
+                        .frame(height: Self.transcriptTopFade)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
                 }
 
                 if !isAtBottom && !state.chat.isEmpty {
@@ -792,9 +829,16 @@ struct ChatView: View {
             Circle().fill(GruxTheme.accentCo).frame(width: 6, height: 6)
                 .scaleEffect(1.2)
                 .shadow(color: GruxTheme.accentCo.opacity(0.6), radius: 4)
-            Text("grux is thinking…")
-                .font(.caption)
-                .foregroundStyle(GruxTheme.textSecondary)
+            // HOW LONG, AND WHERE. A first reply on a local model can take
+            // minutes, and "grux is thinking" for 329 s read as a hang (W4).
+            TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                Text(ChatThinkingCopy.line(since: state.thinkingSince, now: ctx.date,
+                                           local: ChatService.isLocalTurn(
+                                               providerOverride: PresetStore.shared.activeChatApplication()?.providerOverride,
+                                               resolved: ModelRegistry.shared.resolvedProvider)))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(GruxTheme.textSecondary)
+            }
             Spacer()
         }
     }
@@ -859,6 +903,9 @@ struct ChatView: View {
     /// keystroke in the composer. Refreshed on appear and whenever offline mode
     /// flips, which are the two moments the answer can change under the user.
     @State private var readiness: ChatReadiness = .ready
+    /// Return was pressed while chat could not send: the composer says why
+    /// until the draft or the readiness changes.
+    @State private var returnRefused = false
 
     /// Extracted so it can be RENDERED. A view that reads `ChatReadiness.current()`
     /// can only ever be photographed in whatever state the machine happens to be
@@ -867,12 +914,13 @@ struct ChatView: View {
     /// reason `ChatReadiness.evaluate` is split from `current()`.
     @ViewBuilder private var readinessNotice: some View {
         ChatReadinessNotice(readiness: readiness) {
-            // "api", not "models". The latter resolves to the pane with no
-            // anchor and opens the top of a long screen; "api" resolves to
-            // anchor "models.api", the Anthropic key field itself. A "go to
-            // Settings" sentence that lands somewhere near the answer is a
-            // scavenger hunt.
-            AppState.shared.requestedSettingsTab = "api"
+            // "connect", not "models". The latter resolves to the pane with no
+            // anchor and opens the top of a long screen; "connect" opens the
+            // section that offers both routes the sentence names, a local
+            // model to download and the key field (W4 pass 2, 2026-10-13). A
+            // "go to Settings" sentence that lands somewhere near the answer is
+            // a scavenger hunt.
+            AppState.shared.requestedSettingsTab = "connect"
             AppState.shared.requestedTab = "settings"
         }
     }
@@ -926,13 +974,20 @@ struct ChatView: View {
                             .foregroundStyle(.white)
                     }
                 }.buttonStyle(.plain)
-                    .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty || !readiness.canSend)
-                    .opacity(draft.trimmingCharacters(in: .whitespaces).isEmpty || !readiness.canSend ? 0.4 : 1)
+                    .disabled(!canSendDraft)
+                    .opacity(canSendDraft ? 1 : 0.4)
                     .help(readiness.canSend ? "Send" : readiness.headline)
             }
+                if returnRefused, let why = ChatComposerSend.refusal(readiness) {
+                    Label(why, systemImage: "exclamationmark.circle")
+                        .font(.caption)
+                        .foregroundStyle(GruxTheme.warnAmber)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 composerMetaRow
             }
             .padding(.horizontal, GruxSpacing.l).padding(.vertical, GruxSpacing.m)
+            .fixedSize(horizontal: false, vertical: true)
         }
         // `.behindWindow` samples what is BEHIND the app, which means the
         // composer's colour depended on the user's desktop. Measured
@@ -970,36 +1025,41 @@ struct ChatView: View {
     // onKeyPress+onDrop was tripping "unable to type-check in reasonable
     // time" when inlined.
     private var draftEditor: some View {
-        TextEditor(text: $draft)
-            .overlay(alignment: .topLeading) {
-                // A TextEditor has no placeholder of its own. This is the one
-                // line that tells a person the new thing about 3.0, so it is
-                // honest about the microphone: inviting speech from a Mac
-                // that is not listening is a lie.
-                if draft.isEmpty {
-                    Text(ComposerPlaceholder.text(for: listeningTell))
-                        .font(.body)
-                        .foregroundStyle(GruxTheme.textTertiary)
-                        .padding(.horizontal, GruxSpacing.m + 4)
-                        .padding(.vertical, GruxSpacing.s + 8)
-                        .allowsHitTesting(false)
-                }
-            }
+        // A TextEditor's own height is its maximum, so an empty box sat open
+        // at 160pt. A vertical field opens at two lines, so it reads as a
+        // place to write, grows with the draft, and stops at six.
+        TextField(
+            "",
+            text: $draft,
+            prompt: Text(ComposerPlaceholder.text(for: listeningTell))
+                .font(.body)
+                .foregroundStyle(GruxTheme.textTertiary),
+            axis: .vertical
+        )
+            .lineLimit(Self.composerLines)
             .font(.body)
             .foregroundStyle(GruxTheme.textPrimary)
             .tint(GruxTheme.accentPrimary)
-            .scrollContentBackground(.hidden)
-            .frame(minHeight: 40, maxHeight: 160)
+            // Hug the text. A flexible parent was handing the field the
+            // leftover pane, so an empty draft still opened as a tall well.
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxHeight: 120, alignment: .topLeading)
             .padding(.horizontal, GruxSpacing.m).padding(.vertical, GruxSpacing.s)
             .background(draftEditorBackground)
             .focused($inputFocused)
-            // Enter submits; Shift+Enter falls through to TextEditor's
-            // native newline handling. Returning .ignored for the shifted
-            // case is important - it lets SwiftUI insert the newline into
-            // the text binding as normal.
+            // Enter submits. Shift+Enter falls through so the field inserts
+            // a newline. Returning .ignored for the shifted case is what
+            // lets that newline land in the draft.
             .onKeyPress(keys: [.return], phases: .down) { press in
                 if press.modifiers.contains(.shift) {
                     return .ignored
+                }
+                // The Send button's own rule. Return used to send whatever
+                // the button would have refused, straight into a provider
+                // error (PR 34 review). Held back, the composer says why.
+                if !ChatComposerSend.allowed(draft: draft, hasImage: pendingImageData != nil, readiness: readiness) {
+                    returnRefused = !readiness.canSend
+                    return .handled
                 }
                 send()
                 return .handled
@@ -1124,6 +1184,7 @@ struct ChatView: View {
                 speech.stop(reason: "manual barge-in")
             }
             draftBeforeVoice = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+            MicController.userWantsMicrophone()
             Task { await voice.start() }
         }
     }
@@ -1153,7 +1214,8 @@ struct ChatView: View {
                         // out of a working terminal session to fix a chat error.
                         Button("Open key settings") { openKeySettings() }
                             .buttonStyle(.borderedProminent).controlSize(.small)
-                        if ModelRegistry.shared.local != nil {
+                        // Offered only when a local model can take the turn.
+                        if ModelRegistry.shared.localUsable {
                             Button("Use local model") { continueOfflineAndRetry(recovery) }
                                 .buttonStyle(.bordered).controlSize(.small)
                         }
@@ -1389,7 +1451,17 @@ struct ChatView: View {
         return ComposerFooter.cost(usd)
     }
 
+    /// One rule for the Send button and the Return key.
+    private var canSendDraft: Bool {
+        ChatComposerSend.allowed(draft: draft, hasImage: pendingImageData != nil, readiness: readiness)
+    }
+
     private func send() {
+        // Every way in asks the same question the button does.
+        guard canSendDraft else {
+            returnRefused = !readiness.canSend
+            return
+        }
         if voice.isRecording { voice.stop() }
         let t = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         // With an image staged, allow a blank text payload - Grux sees the

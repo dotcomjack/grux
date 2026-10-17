@@ -116,6 +116,7 @@ struct BackupView: View {
         // Measured on the Mini 2026-08-30: content started 73pt left of where
         // General started and ran 80pt wider.
         .formStyle(.grouped)
+        .settingsPaneBackground()
         .confirmationDialog(
             "Restore this backup?",
             isPresented: $showRestoreConfirm,

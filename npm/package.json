@@ -1,7 +1,7 @@
 {
   "name": "@dotcomjack/grux",
-  "version": "3.0.1",
-  "description": "The one command front door to Grux OS. Finds the app, puts grux on your PATH, and hands you to the real command line.",
+  "version": "3.1.0",
+  "description": "The one command front door to Grux AI. It does not install the app: it prints the Grux.dmg link when Grux.app is missing, and otherwise puts grux on your PATH and hands you to the real command line.",
   "bin": {
     "grux": "bin/grux.js"
   },

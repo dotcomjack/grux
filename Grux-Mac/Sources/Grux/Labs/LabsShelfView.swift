@@ -51,6 +51,8 @@ enum LabsShelf {
 struct LabsShelfView: View {
     /// Opens a card: a tab key, or nil for a surface that is a window.
     let open: (String?) -> Void
+    /// Not private: the memberwise init stays callable.
+    @Environment(\.paneTitles) var paneTitles
 
     /// Two columns where two cards each get `labsCardMin`, one below that:
     /// two at a 360pt pane left each card a word per line.
@@ -62,9 +64,11 @@ struct LabsShelfView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 HStack(spacing: 8) {
-                    Text("Labs")
-                        .font(GruxType.title)
-                        .foregroundStyle(GruxTheme.textPrimary)
+                    if !PaneHeading.repeats("Labs", paneTitles: paneTitles) {
+                        Text("Labs")
+                            .font(GruxType.title)
+                            .foregroundStyle(GruxTheme.textPrimary)
+                    }
                     BetaBadge()
                 }
                 Text(LabsShelf.intro)

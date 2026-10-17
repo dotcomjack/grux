@@ -520,7 +520,7 @@ final class AmbientListener {
         // still the headset the guard was about to move off. Voice processing
         // rebuilt the pairing and hid it; without voice processing the engine
         // kept the headset's microphone (see MicDevices.bindInput).
-        let engine = AVAudioEngine()
+        let engine = AudioFactory.engine("ambient")
         let input = engine.inputNode
         // The global switch is read here as well as in VoiceInput. Until
         // 2026-08-22 this path consulted only the per-mic whitelist, so turning

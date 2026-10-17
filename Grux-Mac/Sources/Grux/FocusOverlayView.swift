@@ -130,6 +130,9 @@ struct FocusOverlayView: View {
         }
         .buttonStyle(.plain)
         .help("Collapse to Grux orb")
+        // Named for what it does: the chevron image alone was read as "Go
+        // Down", which is not what anyone would say to it (W4 build 10).
+        .accessibilityLabel("Collapse to orb")
     }
 
     private var orbBadge: some View {

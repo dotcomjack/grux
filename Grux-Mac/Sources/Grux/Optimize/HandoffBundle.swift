@@ -150,7 +150,7 @@ enum HandoffBundle {
             "## Rules that come with Grux",
             "",
             "- The smallest change that does it. If a setting already does what was asked, changing the setting IS the work: no code.",
-            "- Colours, type, spacing and radii come from `Sources/Grux/DesignSystem`. Never hard code one in a view.",
+            "- Colors, type, spacing and radii come from `Sources/Grux/DesignSystem`. Never hard code one in a view.",
             "- Nothing new leaves the Mac: no telemetry, no new network calls, no keys in code.",
             "- Anything that sends, deletes or spends still goes through Approvals.",
             "- Grux applies config.json and theme.json live while it runs. For macros.json, quit Grux first, then `open -a Grux`.",

@@ -160,16 +160,113 @@ public enum ShellSafety {
     // Catches the "command reaches outside the filesystem" footguns that snapshots
     // cannot undo. User confirmation required in guarded + strict. Public so the
     // app-side Touch ID gate (ShellTool) can classify trust-mode commands too.
+    /// The flags of each `git branch` in `command`. Short flags one letter at a
+    /// time and in their own case (`-M` and `-C` overwrite an existing branch,
+    /// `-m` and `-c` do not), long flags lowercased. Global options such as
+    /// `-C dir` or `--git-dir=foo` may come before `branch`, and a backslash
+    /// newline joins a command split over two lines.
+    static func gitBranchFlags(_ command: String) -> [(short: Set<Character>, long: Set<String>)] {
+        gitInvocations(command).filter { $0.subcommand == "branch" }.map { flags(of: $0.args) }
+    }
+
+    /// Every git invocation in `command`: its real subcommand, found past
+    /// global options (`-C dir`, `--git-dir=x`, `--no-pager`), and the words
+    /// after it. Words are quote aware, so `-m "fix -f flag"` is one value
+    /// word rather than a stray `-f`.
+    static func gitInvocations(_ command: String) -> [(subcommand: String, args: [String])] {
+        var found: [(subcommand: String, args: [String])] = []
+        let joined = command.replacingOccurrences(of: "\\\n", with: " ")
+        for segment in joined.components(separatedBy: CharacterSet(charactersIn: ";|&\n")) {
+            let tokens = tokenize(segment)
+            guard let git = tokens.firstIndex(where: { $0.lowercased() == "git" }) else { continue }
+            var i = git + 1
+            while i < tokens.count, tokens[i].hasPrefix("-") {
+                i += gitOptionsWithValue.contains(tokens[i]) ? 2 : 1
+            }
+            guard i < tokens.count else { continue }
+            found.append((tokens[i].lowercased(), Array(tokens[(i + 1)...])))
+        }
+        return found
+    }
+
+    /// Short flags one letter at a time and in their own case, long flags
+    /// lowercased without any `=value`. `valued` names options whose next
+    /// word is their value (`tag -m "-f"`), which is then not read as a flag.
+    static func flags(of args: [String], valued: Set<String> = []) -> (short: Set<Character>, long: Set<String>) {
+        var short = Set<Character>(), long = Set<String>()
+        var skip = false
+        for token in args {
+            if skip { skip = false; continue }
+            if token == "--" { break }
+            guard token.hasPrefix("-"), token.count > 1 else { continue }
+            if token.hasPrefix("--") {
+                long.insert(String(token.lowercased().split(separator: "=", maxSplits: 1)[0]))
+            } else {
+                short.formUnion(token.dropFirst())
+            }
+            if valued.contains(token) { skip = true }
+        }
+        return (short, long)
+    }
+
+    /// Whether a git invocation forces: push and fetch (`-f`, `--force`, or a
+    /// `+refspec`; push also `--force-with-lease`), tag (`-f`, `--force`),
+    /// and a real `--force` flag on any other subcommand. Not
+    /// `config -f file`, where `-f` names a file, and never a quoted value.
+    static func gitForces(subcommand: String, args: [String]) -> Bool {
+        switch subcommand {
+        case "push":
+            let f = flags(of: args, valued: ["-o", "--push-option", "--repo", "--receive-pack", "--exec"])
+            if f.short.contains("f")
+                || !f.long.isDisjoint(with: ["--force", "--force-with-lease", "--force-if-includes"]) {
+                return true
+            }
+            return args.contains { $0.hasPrefix("+") && $0.count > 1 }
+        case "fetch":
+            let f = flags(of: args, valued: ["-j", "--jobs", "--depth", "--upload-pack"])
+            return f.short.contains("f") || f.long.contains("--force") || args.contains { $0.hasPrefix("+") && $0.count > 1 }
+        case "tag":
+            let f = flags(of: args, valued: ["-m", "-F", "-u", "--message", "--file", "--local-user"])
+            return f.short.contains("f") || f.long.contains("--force")
+        default:
+            return flags(of: args, valued: ["-m", "-F", "--message", "--file"]).long.contains("--force")
+        }
+    }
+
+    /// Git global options that take their value as the next word. Known gap:
+    /// a value-taking option missing from this list (`git --exec-path /p
+    /// branch -D x`) makes its value read as the subcommand, so that
+    /// `git branch` is not read here.
+    private static let gitOptionsWithValue: Set<String> = [
+        "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env",
+    ]
+
     public static func detectNetworkOrExternalEffect(command: String) -> String? {
         let lc = command.lowercased()
-        // git push - any form
-        if lc.contains("git push") { return "git push reaches the remote; snapshots can't undo a push" }
-        // force push extra flag
-        if lc.contains("--force") || lc.contains(" -f ") {
-            if lc.contains("git") { return "git --force operation is destructive on the remote" }
+        let gits = gitInvocations(command)
+        // A forced push, fetch or tag, read past global options. 3.0's text
+        // net caught `git -C repo push -f`; narrowing it to `git branch -f`
+        // (to stop flagging `git config -f file`) dropped that case. The
+        // tokenizer reads the real subcommand, so both hold.
+        if gits.contains(where: { $0.subcommand != "branch" && gitForces(subcommand: $0.subcommand, args: $0.args) }) {
+            return "git --force operation is destructive on the remote"
+        }
+        // git push, any form, global options or not.
+        if lc.contains("git push") || gits.contains(where: { $0.subcommand == "push" }) {
+            return "git push reaches the remote; snapshots can't undo a push"
+        }
+        // Each `git branch` is read flag by flag before the text checks below.
+        // Those read lowercased text, so a force rename `-M` looks like a plain
+        // `-m` and combined flags hide. A delete wins over a force: `-D` is
+        // itself a forced delete.
+        for flags in gitBranchFlags(command) {
+            if !flags.short.isDisjoint(with: "dD") || flags.long.contains("--delete") { return "branch deletion" }
+            if !flags.short.isDisjoint(with: "fMC") || flags.long.contains("--force") {
+                return "git --force operation is destructive on the remote"
+            }
         }
         // destructive remote ops
-        if lc.contains("git branch -d") || lc.contains("git branch -d") { return "branch deletion" }
+        if lc.contains("git branch -d") || lc.contains("git branch --delete") { return "branch deletion" }
         // curl with destructive verbs or pipe-to-shell
         if lc.range(of: #"curl[^|]*-x\s+(post|put|delete|patch)"#, options: .regularExpression) != nil {
             return "curl with destructive HTTP verb"

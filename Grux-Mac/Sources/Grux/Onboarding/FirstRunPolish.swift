@@ -57,6 +57,20 @@ enum ModelGate {
     /// not got. Looking first costs one request to a loopback address.
     static let foundTitle = "There is already a model on this Mac"
 
+    /// Under "Use a local model instead". The old line promised Grux fetches a
+    /// model whatever is running, which is false with no Ollama (W4, 2026-10-13).
+    static let localLine = "Runs on this Mac. No key, no account, and nothing leaves the machine. "
+        + "With Ollama running, Grux fetches the best model this Mac can run."
+    static let ollamaLink = "Get Ollama, free, at ollama.com"
+    static let ollamaURL = URL(string: "https://ollama.com")!
+
+    /// The way past this step with no key and no local model. On a clean Mac
+    /// Continue stayed disabled with nothing else to press (W4, 2026-10-13).
+    /// Grux finishes setting up without a model; Now and Chat both say
+    /// "Connect a model" and go to the same place.
+    static let skip = "Skip for now"
+    static let skipNote = "You can connect a model any time; Chat will ask for one."
+
     static func foundDetail(model: String) -> String {
         "Grux found \(model) running here. Use it and nothing leaves this Mac, "
             + "no key and no account. You can add a key later in Settings, Models."

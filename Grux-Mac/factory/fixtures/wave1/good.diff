@@ -1,0 +1,7 @@
+diff --git a/factory/wave1-marker.txt b/factory/wave1-marker.txt
+new file mode 100644
+index 0000000..86393b9
+--- /dev/null
++++ b/factory/wave1-marker.txt
+@@ -0,0 +1 @@
++wave-1

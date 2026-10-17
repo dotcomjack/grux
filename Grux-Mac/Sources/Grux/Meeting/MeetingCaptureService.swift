@@ -149,6 +149,9 @@ final class MeetingCaptureService: ObservableObject {
 
     @discardableResult
     func start(title: String? = nil, sourceApp: String? = nil, sourceAppName: String? = nil) async -> MeetingRecord? {
+        // Every caller is someone starting a recording: a button, a hotkey, a
+        // spoken or typed request, the CLI. That is an ask for the microphone.
+        MicController.userWantsMicrophone()
         guard !isCapturing, !isInitializing else { return activeMeeting }
         guard isSystemAudioSupported else {
             lastError = "System audio capture requires macOS 14.0 or later."

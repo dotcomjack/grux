@@ -42,6 +42,9 @@ enum FirstPrompt {
     /// For somebody who would rather pick from a list than describe it: the
     /// three levels, which were the front door before this.
     static let pickFromAList = "I would rather pick from a list"
+
+    /// The disclosure that holds `listening.body` on the first screen.
+    static let howListeningWorks = "How listening works"
 }
 
 /// The doors in the rail, explained once, for Settings and the first-run flow.

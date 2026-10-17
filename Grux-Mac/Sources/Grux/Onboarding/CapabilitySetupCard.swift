@@ -129,6 +129,21 @@ struct CapabilitySetupCard: View {
                                       groups: FeatureRegistry.row(forTab: featureKey)?.anyOf ?? [])
     }
 
+    /// Blocking items of this feature that are already done. Mail with no
+    /// account has none, and "Everything else is ready" over an empty mailbox
+    /// claimed a readiness nothing had earned (audit 2026-10-13, item 5).
+    private var readyBesides: Int {
+        guard let row = FeatureRegistry.row(forTab: featureKey) else { return 0 }
+        return max(0, row.requires.count + row.steps.count - missing.count)
+    }
+
+    /// The line under the headline, counting what the card lists. It says the
+    /// rest is ready only when there is a rest and it is.
+    static func subtitle(missing: Int, readyBesides: Int) -> String {
+        let count = missing == 1 ? "One item is missing." : "\(missing) items are missing."
+        return readyBesides > 0 ? count + " Everything else is ready." : count
+    }
+
     private var featureLabel: String {
         FeatureRegistry.row(forTab: featureKey)?.label ?? "This feature"
     }
@@ -177,9 +192,7 @@ struct CapabilitySetupCard: View {
                  : "\(featureLabel) needs \(entries.count) more things")
                 .font(.system(size: 17, weight: .bold))
                 .foregroundStyle(GruxTheme.textPrimary)
-            Text(entries.count == 1
-                 ? "One item is missing. Everything else is ready."
-                 : "\(entries.count) items are missing. Everything else is ready.")
+            Text(Self.subtitle(missing: entries.count, readyBesides: readyBesides))
                 .font(GruxTheme.Font.body)
                 .foregroundStyle(GruxTheme.textSecondary)
         }

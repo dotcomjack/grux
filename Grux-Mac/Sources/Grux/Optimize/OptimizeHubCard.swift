@@ -283,8 +283,11 @@ struct OptimizeHubCard: View {
                     Image(systemName: "wand.and.stars")
                         .font(GruxType.caption)
                         .foregroundStyle(GruxTheme.accentPrimary)
+                    // A row at the weight of the Now rows above it. In the
+                    // title size it was the largest type in the panel and led
+                    // the eye away from what needs you (audit 2026-10-13, item 8).
                     Text(OptimizeCopy.title)
-                        .font(GruxType.title)
+                        .font(GruxType.body)
                         .foregroundStyle(GruxTheme.textPrimary)
                     if store.waitingOnYou > 0 {
                         Circle().fill(GruxTheme.warnAmber)
@@ -315,9 +318,11 @@ struct OptimizeHubCard: View {
                 if !store.orders.isEmpty { ordersList }
             }
         }
-        .padding(GruxSpacing.l)
-        .background(RoundedRectangle(cornerRadius: GruxTheme.Radius.card)
-            .fill(GruxTheme.accentPrimary.opacity(0.08)))
+        // Collapsed, the Now row's own padding and fill; open, a card.
+        .padding(.vertical, hub.isExpanded ? GruxSpacing.l : GruxSpacing.s)
+        .padding(.horizontal, hub.isExpanded ? GruxSpacing.l : GruxSpacing.m)
+        .background(RoundedRectangle(cornerRadius: hub.isExpanded ? GruxTheme.Radius.card : GruxTheme.Radius.chip)
+            .fill(hub.isExpanded ? GruxTheme.accentPrimary.opacity(0.08) : GruxTheme.textTertiary.opacity(0.08)))
         // Spec 3.2: expanded whenever an order waits at a review, including
         // one that was already waiting when the app launched.
         .onAppear { hub.noteReviewsWaiting(store.waitingOnYou) }

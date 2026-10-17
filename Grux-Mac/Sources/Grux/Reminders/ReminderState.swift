@@ -21,7 +21,7 @@ enum GruxReminderKind: String, Codable, Hashable {
         case .dailyRecap: return "DAILY RECAP"
         case .energyRecap: return "ENERGY RECAP"
         case .morningBrief: return "MORNING BRIEF"
-        case .info: return "GRUX OS"
+        case .info: return "GRUX AI"
         }
     }
 

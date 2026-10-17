@@ -69,3 +69,13 @@ real microphone to one channel and leaves the rest silent, so a naive channel-0
 read measures silence and reports a bug that is not there. `tonetest` and
 `dropout` both pick the highest-energy channel, the same way the ambient
 listener does.
+
+## Launch smoke check: no audio unit at launch
+
+`launch-audio-unit.sh /path/to/Grux.app [seconds]` launches a built app, waits
+15 s, quits it, and fails if the app's own log shows CoreAudio building an
+AUHAL ("Selecting device N from constructor"). On a clean Mac building one at
+launch made coreaudiod ask for the microphone before any Grux window appeared
+(W4 build 10, 2026-10-13). Exit 1 on a unit built, 2 when nothing could be
+measured (no executable, a Grux already running, or no log lines for the pid).
+Proven both ways on a test Mac: build 10 exited 1, build 11 exited 0.

@@ -23,7 +23,7 @@ enum VoiceLiveRailModel {
         // Listening off means there is no stream. Muted is different: the
         // person muted a second ago and the last thing Grux did is exactly
         // what they want to see.
-        guard tell != .off else { return [] }
+        guard !tell.listenerOff else { return [] }
         let live = events.filter { now.timeIntervalSince($0.at) <= window }
         return Array(live.suffix(expanded ? expandedCount : collapsedCount).reversed())
     }
@@ -50,7 +50,8 @@ struct VoiceLiveRail: View {
                               micMuted: state.micMuted,
                               isSpeaking: speech.isSpeaking || speech.isBuffering,
                               isThinking: state.isThinking,
-                              notHearing: micHealth.notHearing)
+                              notHearing: micHealth.notHearing,
+                              awaitingConsent: state.config.listeningAwaitingConsent)
     }
 
     private var rows: [VoiceDecisionEvent] {

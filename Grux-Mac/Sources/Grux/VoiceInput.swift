@@ -100,7 +100,9 @@ final class VoiceInput: ObservableObject {
     // shared mic HAL can get into a wedged state if we reuse the same
     // instance after SpeechEngine (with AEC) has also used the mic. A
     // fresh engine per session sidesteps all of that.
-    private var audioEngine = AVAudioEngine()
+    // Lazy: the first-run screen observes VoiceInput, and nothing on it may
+    // build the input side before someone presses the microphone.
+    private lazy var audioEngine = AudioFactory.engine("dictation")
     private var silenceTimer: Timer?
     private var levelTimer: Timer?
     private var startedAt: Date = .distantPast
@@ -159,8 +161,10 @@ final class VoiceInput: ObservableObject {
     /// `prewarm` replaces the model load, so a test proves the prewarm is asked for
     /// without starting a real Whisper load that outlives it.
     init(canDictate: @MainActor () -> Bool = {
-        !MicDevices.listInputs().isEmpty
-            && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        // Authorization first: listing input devices before access is granted
+        // is itself what made coreaudiod prompt at launch (W4, 2026-10-13).
+        AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+            && !MicDevices.listInputs().isEmpty
     }, prewarm: (@MainActor (VoiceInput) async -> Void)? = nil) {
         guard canDictate() else {
             whisperStatus = "loads on first dictation (no microphone Grux may use yet)"
@@ -288,7 +292,7 @@ final class VoiceInput: ObservableObject {
         // Built AFTER the preferred mic is applied, never before: an engine
         // built first keeps whatever input was the default at that moment
         // (see MicDevices.bindInput and the same note in AmbientListener).
-        audioEngine = AVAudioEngine()
+        audioEngine = AudioFactory.engine("dictation")
 
         // Mic tap pipeline:
         //   1) explicit channel averaging (AVAudioConverter's default multi→mono

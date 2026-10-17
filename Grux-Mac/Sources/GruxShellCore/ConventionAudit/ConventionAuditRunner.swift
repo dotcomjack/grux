@@ -1,5 +1,9 @@
 import Foundation
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 
 // Runs the convention-audit suite over a project directory. The worker always
 // gets the audit report and decides what to do to keep moving forward: this is

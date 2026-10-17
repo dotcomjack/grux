@@ -63,6 +63,8 @@ enum SettingsTabAliases {
         // it is separately addressable.
         "sessions":   SettingsLocation(pane: .voiceAmbient, sub: "sessions"),
         "api":        SettingsLocation(pane: .models, sub: "models", anchor: "models.api"),
+        // The panel's "Connect a model": Models, at the section that gets one.
+        "connect":    SettingsLocation(pane: .models, sub: "models", anchor: "models.connect"),
         "upgrades":   SettingsLocation(pane: .models, sub: "models", anchor: "models.tier"),
         "tuning":     SettingsLocation(pane: .general, anchor: "general.tuning"),
         "presets":    SettingsLocation(pane: .models, sub: "presets"),

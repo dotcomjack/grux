@@ -239,7 +239,7 @@ enum CapabilityRequest {
     /// switch actually lives. macOS has a house style for this and Grux should use it rather
     /// than invent one.
     ///
-    /// Rendered as "System Settings > Notifications > Grux OS". The arrow separator, the
+    /// Rendered as "System Settings > Notifications > Grux AI". The arrow separator, the
     /// pane names and the capitalisation all match what the person will see when they get
     /// there, because a path that does not match what is on screen is worse than no path:
     /// they will look for the wrong words and conclude Grux is out of date.
@@ -247,7 +247,7 @@ enum CapabilityRequest {
         let trail: [String]
         switch requirement {
         case .permNotifications:
-            trail = ["Notifications", "Grux OS"]
+            trail = ["Notifications", "Grux AI"]
         case .permMicrophone:
             trail = ["Privacy & Security", "Microphone"]
         case .permCalendar:
@@ -271,7 +271,7 @@ enum CapabilityRequest {
     /// One sentence telling somebody what to do, naming the path and the control.
     ///
     /// Two shapes, because the two cases genuinely differ. Notifications has a per-app row
-    /// with a switch; the Privacy panes have a list you tick Grux OS in. Saying "turn it on"
+    /// with a switch; the Privacy panes have a list you tick Grux AI in. Saying "turn it on"
     /// for a list you have to find yourself is the kind of almost-right instruction that
     /// wastes more time than none.
     static func howToGrant(_ requirement: SetupRequirement) -> String {
@@ -281,7 +281,7 @@ enum CapabilityRequest {
             return "To turn this on, go to \(path) and switch on Allow Notifications. "
                  + "Grux checks again when you come back."
         default:
-            return "To turn this on, go to \(path) and tick Grux OS in the list. "
+            return "To turn this on, go to \(path) and tick Grux AI in the list. "
                  + "Grux checks again when you come back."
         }
     }

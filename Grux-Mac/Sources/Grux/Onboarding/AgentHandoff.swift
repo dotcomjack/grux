@@ -223,7 +223,7 @@ enum AgentHandoff {
         // ---- CONTEXT ---------------------------------------------------------------------
         out.append("CONTEXT")
         out.append(wrap("""
-            I am setting up Grux OS on my Mac and I would like you to do the parts you can. \
+            I am setting up Grux AI on my Mac and I would like you to do the parts you can. \
             Grux is a native macOS assistant. It reads the window I am working in and handles \
             my mail, calendar, notes and files from this machine. It has no account and no \
             server: every credential lives in the macOS Keychain and every model call goes \

@@ -63,7 +63,7 @@ enum ProposalHandoff {
     }
 
     static let acceptance: [String] = [
-        "The behaviour in the request is visible in the running app.",
+        "The behavior in the request is visible in the running app.",
         "A test covers it, and you watched that test fail before your change.",
         "Every existing test still passes.",
         "The Self-Upgrade evidence above no longer describes the app.",

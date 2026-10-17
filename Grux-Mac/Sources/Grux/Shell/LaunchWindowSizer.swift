@@ -70,7 +70,9 @@ struct LaunchWindowSizer {
     /// Sets the content width to `width` and the content minimum width to
     /// `minWidth`. Anchored at the top-left, so the panel does not walk across
     /// the screen; pulled back left only when growing would leave the screen.
-    /// Animates unless `GruxTheme.reduceMotion`.
+    /// The resize is immediate. AppKit's animated `setFrame` runs on the main
+    /// thread and does not return until the animation ends (measured 351ms
+    /// growing from 420 to 1100), which held the first paint of the pane.
     ///
     /// `keepingExplicitWidth`: the current width was asked for at launch
     /// (`--win-w`). It is kept unless it is under `minWidth`, and then it is
@@ -86,6 +88,6 @@ struct LaunchWindowSizer {
         if let screen = window.screen?.visibleFrame, f.maxX > screen.maxX {
             f.origin.x = max(screen.minX, screen.maxX - f.size.width)
         }
-        window.setFrame(f, display: true, animate: animated && !GruxTheme.reduceMotion)
+        window.setFrame(f, display: true, animate: false)
     }
 }

@@ -36,6 +36,7 @@ struct SecuritySettingsView: View {
             recentFlagsSection
         }
         .formStyle(.grouped)
+        .settingsPaneBackground()
         .onAppear { refreshFlags() }
     }
 

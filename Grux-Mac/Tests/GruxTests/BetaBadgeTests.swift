@@ -42,8 +42,7 @@ final class SetupCardPluralisationTests: XCTestCase {
     }
 
     private func subtitle(_ missing: Int) -> String {
-        missing == 1 ? "One item is missing. Everything else is ready."
-                     : "\(missing) items are missing. Everything else is ready."
+        CapabilitySetupCard.subtitle(missing: missing, readyBesides: 1)
     }
 
     func testHeadlineAndSubtitleAgreeOnCount() {
@@ -384,5 +383,34 @@ final class BetaBadgeTests: XCTestCase {
             i = source.index(after: i)
         }
         return nil
+    }
+}
+
+/// Audit 2026-10-13, item 5: Mail with no account drew the setup card over a
+/// dimmed second empty state and a ghosted toolbar, and the card said
+/// "Everything else is ready" when there was nothing else.
+@MainActor
+final class MailSetupCardOnlyTests: XCTestCase {
+    func test_theCardSaysTheRestIsReadyOnlyWhenThereIsARest() {
+        XCTAssertEqual(CapabilitySetupCard.subtitle(missing: 1, readyBesides: 0), "One item is missing.")
+        XCTAssertEqual(CapabilitySetupCard.subtitle(missing: 2, readyBesides: 0), "2 items are missing.")
+        XCTAssertTrue(CapabilitySetupCard.subtitle(missing: 1, readyBesides: 2).hasSuffix("Everything else is ready."))
+    }
+
+    func test_mailWithNoAccountHasNothingElseReady() throws {
+        let row = try XCTUnwrap(FeatureRegistry.row(forTab: "mailbox"))
+        XCTAssertEqual(row.requires + row.steps, [.endpointImap],
+                       "Mail gained a second blocking item; check the card's ready count still holds")
+    }
+
+    func test_mailShowsOnlyTheCardWhileItNeedsSetup() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let pane = try String(contentsOf: root.appendingPathComponent("Sources/Grux/Shell/SurfacePane.swift"), encoding: .utf8)
+        XCTAssertTrue(pane.contains(#"MailboxView().capabilityGated("mailbox", showsFeatureBehind: false)"#),
+                      "Mail draws its own empty state, dimmed, behind the setup card again")
+        let gate = try String(contentsOf: root.appendingPathComponent("Sources/Grux/Onboarding/CapabilityGate.swift"), encoding: .utf8)
+        XCTAssertTrue(gate.contains("if !needsSetup || showsFeatureBehind {"),
+                      "the gate no longer drops the feature when asked to")
     }
 }

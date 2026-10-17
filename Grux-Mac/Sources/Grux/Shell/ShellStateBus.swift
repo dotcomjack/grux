@@ -225,8 +225,36 @@ enum ListeningTell: String, CaseIterable, Sendable {
     /// Listening is on, but the microphone is sending no sound. Grux keeps
     /// retrying on its own, and a tap on the orb retries now.
     case notHearing
+    /// Listening is chosen in Tuning, but the microphone stays closed until
+    /// the person agrees to it. Before this the surfaces said OFF while Tuning
+    /// said Always on, and both were half true (audit 2026-10-13, item 2).
+    case waiting
 
-    var label: String { self == .notHearing ? "NOT HEARING" : rawValue.uppercased() }
+    var label: String {
+        switch self {
+        case .notHearing: return "NOT HEARING"
+        case .waiting:    return "NEEDS YOUR OK"
+        default:          return rawValue.uppercased()
+        }
+    }
+
+    /// The tell with its noun, for a chip or a status that stands alone:
+    /// "OFF" on its own does not say what is off.
+    var phrase: String {
+        switch self {
+        case .armed:      return "Listening"
+        case .muted:      return "Mic muted"
+        case .speaking:   return "Speaking"
+        case .thinking:   return "Thinking"
+        case .off:        return "Listening off"
+        case .notHearing: return "Mic not hearing"
+        case .waiting:    return "Listening needs your OK"
+        }
+    }
+
+    /// No listener is running because of a setting or a missing yes, not a
+    /// mute: the orb hands its glow to the shell bus and the mic reads closed.
+    var listenerOff: Bool { self == .off || self == .waiting }
 
     /// Priority, highest first: speaking and thinking are things happening
     /// right now, and you must not miss them; muted beats the configured
@@ -234,11 +262,11 @@ enum ListeningTell: String, CaseIterable, Sendable {
     /// `notHearing` comes from `MicHealth`: an ARMED that is not hearing
     /// anything is the one word here that would be a lie.
     static func resolve(mode: ListeningMode, micMuted: Bool, isSpeaking: Bool, isThinking: Bool,
-                        notHearing: Bool = false) -> ListeningTell {
+                        notHearing: Bool = false, awaitingConsent: Bool = false) -> ListeningTell {
         if isSpeaking { return .speaking }
         if isThinking { return .thinking }
         if micMuted { return .muted }
-        if mode == .off { return .off }
+        if mode == .off { return awaitingConsent ? .waiting : .off }
         return notHearing ? .notHearing : .armed
     }
 
@@ -251,6 +279,7 @@ enum ListeningTell: String, CaseIterable, Sendable {
         case .thinking: return .thinking
         case .off:      return .idle
         case .notHearing: return .muted
+        case .waiting:  return .idle
         }
     }
 
@@ -263,6 +292,7 @@ enum ListeningTell: String, CaseIterable, Sendable {
         case .thinking: return "Grux is working on it."
         case .off:      return "Listening is off. Turn it on in Tuning."
         case .notHearing: return "The microphone is not sending any sound. Grux keeps trying; tap the orb to try now."
+        case .waiting:  return "Listening is on in Tuning, but the microphone stays closed until you agree. Choose Allow listening to read what it does and say yes."
         }
     }
 }
@@ -278,7 +308,17 @@ extension ListeningTell {
                 micMuted: state.micMuted,
                 isSpeaking: speech.isSpeaking || speech.isBuffering,
                 isThinking: state.isThinking,
-                notHearing: notHearing)
+                notHearing: notHearing,
+                awaitingConsent: state.config.listeningAwaitingConsent)
+    }
+
+    /// The one action that fixes `.waiting`: apply the chosen mode, which
+    /// shows its consent dialog. A yes opens the microphone; a no saves the
+    /// mode as off, so Tuning and every tell agree again either way.
+    static let allowTitle = "Allow listening"
+    @MainActor
+    static func allow() {
+        Task { @MainActor in await ListeningController.shared.apply() }
     }
 }
 
@@ -294,6 +334,13 @@ extension GruxConfig {
     /// must never say falsely. Each mode counts only once its own consent is
     /// given: agreeing to ambient is not agreeing to the wake word, whose audio
     /// can leave the Mac.
+    /// Listening is chosen (always on or after the wake word) but its consent
+    /// has not been given, so nothing is listening yet. The tell says
+    /// `.waiting` for exactly this, never a bare OFF beside Tuning's ON.
+    var listeningAwaitingConsent: Bool {
+        listeningMode != .off && listeningModeInEffect == .off
+    }
+
     var listeningModeInEffect: ListeningMode {
         switch listeningMode {
         case .alwaysOn: return ambientConsentAcknowledged ? .alwaysOn : .off

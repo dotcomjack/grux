@@ -33,7 +33,7 @@ machine, your data.
 
 If it earns it, a star is the whole ask.
 
-**Status: shipping, currently 3.0.** 37 features ship in 14 surfaces, and a command line drives all of them. 25 are
+**Status: shipping, currently 3.1.** 37 features ship in 14 surfaces, and a command line drives all of them. 25 are
 core and 12 are labs: real, but rough at the edges, and labelled so. Those are
 two different counts on purpose. A feature is a capability the app has; a surface
 is a place to open. 3.0 folded nine things into where they belonged, so the list
@@ -70,7 +70,7 @@ those are not yours to look at.
 
 ## Install
 
-**[Download Grux 3.0 for Apple silicon](https://github.com/dotcomjack/grux/releases/latest/download/Grux.dmg)** (Grux.dmg, 27 MB, macOS 14 or later)
+**[Download Grux AI 3.1 for Apple silicon](https://github.com/dotcomjack/grux/releases/latest/download/Grux.dmg)** (Grux.dmg, 27 MB, macOS 14 or later)
 
 1. Open `Grux.dmg`.
 2. Drag Grux into Applications.
@@ -456,7 +456,7 @@ catches already happened here:
 
 ```sh
 cd Grux-Mac
-swift test                          # 3878 tests
+swift test                          # 4038 tests
 python3 scripts/check-contract.py   # the setup contract is frozen
 ```
 

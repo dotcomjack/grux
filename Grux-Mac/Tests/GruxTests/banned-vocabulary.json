@@ -38,7 +38,9 @@
     "\"author\": \"DotcomJack\"",
     "com.dcj.",
     "bundleIdPrefix: com.gruxai",
-    "dotcomjack-grux-"
+    "dotcomjack-grux-",
+    "Built by DotcomJack",
+    "https://dotcomjack.com"
   ],
   "allowed_contexts_why": {
     "com.gruxai.grux": "The shipping bundle id. Changing it revokes every macOS TCC permission grant the app holds.",
@@ -51,7 +53,9 @@
     "com.dcj.": "The old bundle id prefix. It survives ONLY in KeychainServiceMigrator and its tests, whose whole job is to hold the names an install may still be storing credentials under, and in private mini-services that never ship. Nothing user-facing carries it: the Mac app moved to com.gruxai.grux in August and the phone followed on 2026-09-22.",
     "dotcomjack/tap/": "The Homebrew tap, `brew install --cask dotcomjack/tap/grux`. Same class as github.com/dotcomjack/ and @dotcomjack/: a published package-registry namespace, which is project identity a stranger has to type, not a personal detail. Homebrew derives the tap name from the GitHub org, so this string is not a choice that could have been made differently.",
     "bundleIdPrefix: com.gruxai": "The prefix declared in the iOS project file, where it has no trailing dot. `com.gruxai` since the phone was renamed on 2026-09-22.",
-    "dotcomjack-grux-": "The tarball `npm pack` writes for the PUBLIC package `@dotcomjack/grux`: npm derives the filename from the scope, so it is the same published identity as @dotcomjack/ and dotcomjack/tap/, not a private detail. Recorded with the trailing hyphen so it matches the version-prefixed filename and nothing else. Added 2026-09-22, when the 3.0.0 release evidence quoted the real artifact name and turned this guard red on main."
+    "dotcomjack-grux-": "The tarball `npm pack` writes for the PUBLIC package `@dotcomjack/grux`: npm derives the filename from the scope, so it is the same published identity as @dotcomjack/ and dotcomjack/tap/, not a private detail. Recorded with the trailing hyphen so it matches the version-prefixed filename and nothing else. Added 2026-09-22, when the 3.0.0 release evidence quoted the real artifact name and turned this guard red on main.",
+    "Built by DotcomJack": "The About pane's credit line (3.1, owner's brief 2026-10-13). DotcomJack is the sanctioned PUBLIC builder alias, the same one the LICENSE line and the npm author field carry. Recorded as the whole phrase so a bare DotcomJack anywhere else still fails.",
+    "https://dotcomjack.com": "The destination of that credit: the builder's public site. Recorded with its scheme so it matches the link and not a mention in prose."
   },
   "banned_why": {
     "dcj": "Word boundary matched, so it catches `DCJ Command` without catching `com.gruxai.grux`.",

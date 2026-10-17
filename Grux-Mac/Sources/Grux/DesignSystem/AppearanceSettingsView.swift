@@ -34,6 +34,7 @@ struct AppearanceSettingsView: View {
                 orbOverlaysSection
             }
             .formStyle(.grouped)
+            .settingsPaneBackground()
         }
         .onAppear {
             draftHue = theme.accentHue

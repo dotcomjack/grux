@@ -28,10 +28,24 @@ struct FirstPromptStep: View {
     /// True only while THIS screen started dictation, so a transcript from
     /// anywhere else never lands in the field.
     @State private var dictating = false
+    /// "How listening works", folded under the one line that names it.
+    @State private var listeningOpen = false
 
     var body: some View {
         VStack(spacing: 26) {
             Spacer(minLength: 40)
+            // Who is asking, before the question (audit 2026-10-13, item 3):
+            // the first screen had no orb and no name, so nothing said what
+            // had just opened. The same orb and wordmark as the panel head.
+            VStack(spacing: 10) {
+                OrbView(state: .idle, level: 0)
+                    .frame(width: GruxLayout.railOrb, height: GruxLayout.railOrb)
+                    .accessibilityHidden(true)
+                Text(PanelCopy.wordmark)
+                    .font(GruxType.microCaps)
+                    .kerning(GruxType.wordmarkTracking)
+                    .foregroundStyle(GruxTheme.textSecondary)
+            }
             Text(FirstPrompt.question)
                 .font(.system(size: 34, weight: .bold))
                 .foregroundStyle(GruxTheme.textPrimary)
@@ -70,19 +84,31 @@ struct FirstPromptStep: View {
                     .font(GruxTheme.Font.caption).foregroundStyle(GruxTheme.warnAmber)
             }
 
-            HStack(alignment: .top, spacing: 12) {
-                Circle().fill(GruxTheme.textTertiary).frame(width: 8, height: 8).padding(.top, 6)
-                (Text(FirstPrompt.listening.lead + " ").bold().foregroundColor(GruxTheme.textPrimary)
-                    + Text(FirstPrompt.listening.body).foregroundColor(GruxTheme.textSecondary))
-                    .font(GruxTheme.Font.body)
+            // One line names listening and its off state; the whole promise
+            // (what it hears, what it keeps, what always asks) is one click
+            // under it, word for word, instead of a grey paragraph.
+            VStack(alignment: .leading, spacing: 8) {
+                Text(FirstPrompt.listening.lead)
+                    .font(GruxTheme.Font.body.weight(.semibold))
+                    .foregroundStyle(GruxTheme.textPrimary)
                     .fixedSize(horizontal: false, vertical: true)
+                DisclosureGroup(FirstPrompt.howListeningWorks, isExpanded: $listeningOpen) {
+                    Text(FirstPrompt.listening.body)
+                        .font(GruxTheme.Font.caption)
+                        .foregroundStyle(GruxTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, 4)
+                }
+                .font(GruxTheme.Font.caption)
+                .foregroundStyle(GruxTheme.textSecondary)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             Button(FirstPrompt.pickFromAList) { model.pickFromAList() }
-                .buttonStyle(.plain)
-                .font(GruxTheme.Font.caption)
-                .underline()
-                .foregroundStyle(GruxTheme.textTertiary)
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .disabled(picking)
             Spacer(minLength: 40)
         }
         .onChange(of: voice.transcript) { _, new in
@@ -143,6 +169,7 @@ struct FirstPromptStep: View {
 
     private func startDictation() {
         dictating = true
+        MicController.userWantsMicrophone()
         Task { await voice.start() }
     }
 
@@ -340,6 +367,8 @@ struct SetupStep: View {
     /// dialog, so the button becomes the one that can still work.
     @State private var declined: Set<SetupRequirement> = []
 
+    init(plan: SetupOrder.Plan? = nil) { _plan = State(initialValue: plan) }
+
     private var screens: [SetupOrder.Screen] {
         guard let plan else { return [] }
         return Setup.screens(for: plan, oneAtATime: oneAtATime, extrasAccepted: extrasAccepted)
@@ -440,11 +469,24 @@ struct SetupStep: View {
     private func content(_ screen: SetupOrder.Screen) -> some View {
         switch screen {
         case .ready(let ids):
-            Text(Setup.readyLead).font(GruxTheme.Font.body).foregroundStyle(GruxTheme.textSecondary)
-            ForEach(ids, id: \.self) { id in
-                Label(Setup.name(of: id), systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(GruxTheme.successMint)
-                    .font(GruxTheme.Font.body)
+            if !ids.isEmpty {
+                Text(Setup.readyLead).font(GruxTheme.Font.body).foregroundStyle(GruxTheme.textSecondary)
+                ForEach(ids, id: \.self) { id in
+                    Label(Setup.name(of: id), systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(GruxTheme.successMint)
+                        .font(GruxTheme.Font.body)
+                }
+            }
+            if let waiting = plan?.needsModel, !waiting.isEmpty {
+                Text(Setup.needsModelLead).font(GruxTheme.Font.body).foregroundStyle(GruxTheme.textSecondary)
+                    .padding(.top, ids.isEmpty ? 0 : 8)
+                ForEach(waiting, id: \.self) { id in
+                    Label(Setup.name(of: id), systemImage: "circle")
+                        .foregroundStyle(GruxTheme.textPrimary)
+                        .font(GruxTheme.Font.body)
+                }
+                Text(Setup.needsModelNote).font(GruxTheme.Font.caption).foregroundStyle(GruxTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             nextRow(primary: "Continue")
         case .one(let item, _):
@@ -501,12 +543,15 @@ struct SetupStep: View {
         if Setup.isListening(item) && !listeningChosen {
             // The listening item: its own consent, then macOS asks for the
             // microphone. Declining the consent is an answer, and leaves it off.
+            // Off is the primary, first and on Return. Listening is off until you
+            // turn it on, and the screen used to say otherwise: "Listen all the
+            // time" was the filled default and "Keep it off" a faint link (W4
+            // pass 1, 2026-10-13).
             HStack(spacing: 8) {
-                Button("Listen all the time") { listen(.alwaysOn, walking: walking) }
+                Button(Setup.keepListeningOff) { listen(.off, walking: walking) }
                     .keyboardShortcut(walking ? .defaultAction : nil)
-                Button("Only after \u{201C}Hey Grux\u{201D}") { listen(.wakeWord, walking: walking) }
-                Button("Keep it off") { listen(.off, walking: walking) }
-                    .buttonStyle(.plain).font(GruxTheme.Font.caption).foregroundStyle(GruxTheme.textTertiary)
+                Button(Setup.listenAfterWakeWord) { listen(.wakeWord, walking: walking) }
+                Button(Setup.listenAllTheTime) { listen(.alwaysOn, walking: walking) }
             }
             .disabled(working)
             Text(MicConsent.runningNote).font(GruxTheme.Font.caption).foregroundStyle(GruxTheme.textTertiary)
@@ -583,6 +628,15 @@ struct SetupStep: View {
             // take here. Said plainly, and left for the tab that needs it.
             Text(req.instructions).font(GruxTheme.Font.caption).foregroundStyle(GruxTheme.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
+            // The card said "in Settings" and offered only Skip (W4 pass 1,
+            // 2026-10-13). This opens Settings on the row that takes it.
+            if let tag = Setup.settingsTag(for: req) {
+                HStack {
+                    Spacer()
+                    Button(Setup.openSettings) { Setup.openSettings(at: tag) }
+                        .accessibilityLabel(Setup.actionName(Setup.openSettings, for: item, walking: walking))
+                }
+            }
         }
     }
 
@@ -633,6 +687,9 @@ struct SetupStep: View {
     /// Record every unfinished item on the CURRENT screen as skipped, then move on.
     /// A screen with no items (the ready list, the Decisions key) just moves on.
     private func moveOn() {
+        // Passing listening by is not turning it on: "Listening is off until
+        // you turn it on" is what the first screen says (W4 build 11, 25).
+        if itemsOnScreen.contains(where: Setup.isListening), !listeningChosen { Setup.leaveListeningOff() }
         for item in itemsOnScreen where !done(item) { model.markSkipped(item.requirement) }
         next()
     }
@@ -716,12 +773,48 @@ enum Setup {
     static let title = "Set up what you picked"
     static let wholeList = "See the whole list"
     static let readyLead = "Already working, nothing to do:"
+    static let openSettings = "Open Settings"
+    static let keepListeningOff = "Keep it off"
+    static let listenAfterWakeWord = "Only after \u{201C}Hey Grux\u{201D}"
+    static let listenAllTheTime = "Listen all the time"
+    static let needsModelLead = "Still needs a model:"
+    static let needsModelNote = "Connect one any time from \u{201C}Connect a model\u{201D} in the panel, or Settings, then Models."
     static let decisionsKeyTitle = "A Decisions key"
     static let decisionsKeyWhy = "Grux decides on this Mac for free, so this is optional. A Decisions key (Jev, from "
         + "TypeSafe) makes those calls faster and surer: a busy day of 265 decisions measured $0.02. "
         + "It lives in Integrations if you add it later, and Tuning shows what it spends."
 
     static func left(_ n: Int) -> String { n == 1 ? "1 left" : "\(n) left" }
+
+    /// Where Settings takes an item set up there: a key or a server lands on
+    /// its own row, a step on the place it is done. Nothing for a permission
+    /// (System Settings has its own button) or a step only first run answers.
+    static func settingsTag(for req: SetupRequirement) -> String? {
+        switch req.kind {
+        case .key, .endpoint: return req.rawValue
+        case .perm: return nil
+        case .step:
+            guard !SettingsTabAliases.stepNeedsFirstRun(req) else { return nil }
+            return SettingsTabAliases.stepDestination(req)
+        }
+    }
+
+    /// Listening stays off: the mode is saved as Off, so Tuning, Settings and
+    /// the panel say Off rather than "Always on, waiting for your OK".
+    static func leaveListeningOff() {
+        guard AppState.shared.config.listeningMode != .off else { return }
+        AppState.shared.config.listeningMode = .off
+        AppState.shared.saveConfig()
+        // Off by name, not "whatever the config says by then": nothing here
+        // may start a listener or put up its consent dialog.
+        Task { _ = await ListeningController.shared.apply(mode: .off) }
+    }
+
+    /// The Grux Settings window, opened at `tag`, beside the first-run window.
+    static func openSettings(at tag: String) {
+        AppState.shared.requestedSettingsTab = tag
+        WindowOpener.openSettings()
+    }
 
     /// Names for controls that repeat on the whole list, each starting with the words the
     /// person sees, so "Click Save the Notion token" reaches the right one by voice.

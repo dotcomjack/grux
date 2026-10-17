@@ -67,7 +67,7 @@ struct OperatorTool: Equatable {
             label: "Social",
             plainly: "Social embeds a posting dashboard by URL. The one it was built around is a tuning board I run for my own brands. It is not in this repository, and it would not fit your business if it were.",
             prompt: """
-            I am running Grux OS, an open source macOS assistant, and I have its source checked out.
+            I am running Grux AI, an open source macOS assistant, and I have its source checked out.
 
             Its Social tab embeds an external dashboard by URL, and the author pointed it at his own, so it is empty for me.
 
@@ -81,7 +81,7 @@ struct OperatorTool: Equatable {
             label: "Meta Ads",
             plainly: "Meta Ads drives real ad accounts for my brands through a service I run. With no brands configured it has nothing to show you, and the numbers it is shaped around are mine.",
             prompt: """
-            I am running Grux OS, an open source macOS assistant, and I have its source checked out.
+            I am running Grux AI, an open source macOS assistant, and I have its source checked out.
 
             Its Meta Ads tab drives ad accounts through a service the author runs, so it shows me no brands and no data.
 
@@ -95,7 +95,7 @@ struct OperatorTool: Equatable {
             label: "Feature Review",
             plainly: "Feature Review reads the commits of the repository it was pointed at and turns each one into a pitch you approve or reject. Pointed at nothing, it starts empty.",
             prompt: """
-            I am running Grux OS, an open source macOS assistant, and I have its source checked out.
+            I am running Grux AI, an open source macOS assistant, and I have its source checked out.
 
             Its Feature Review tab turns commits into pitches I approve or reject, but it is empty because it has not been pointed at a repository.
 

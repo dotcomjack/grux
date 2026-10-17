@@ -1,0 +1,19 @@
+# Exact candidate expressions that already lost a scored wave. One line, no spaces around the line.
+# A later runner exits 2 before create when one of its bets equals a line here.
+# Branch-delete losers, measured 2026-10-12, winner delete-flag prefix 7d152cdd. The winner is not listed.
+lc.contains("delete")
+lc.contains("git branch")
+lc.contains("git branch --delete")
+lc.contains("git")
+command.contains("git branch --DELETE")
+lc.contains("git branch - d") || lc.contains("git branch -- delete")
+lc.contains("git branch -d") || lc.contains("git branch -d")
+
+# Force-check losers, measured 2026-10-12, winner force-flag prefix eb234924. The winner is not listed.
+lc.contains("--force") || lc.contains(" -f ")
+lc.contains("--force") || lc.contains("-f")
+lc.contains("--force")
+lc.contains("git branch -f")
+command.contains("--FORCE") || command.contains("git branch -F")
+lc.contains("-- force") || lc.contains("git branch - f")
+lc.contains("force")

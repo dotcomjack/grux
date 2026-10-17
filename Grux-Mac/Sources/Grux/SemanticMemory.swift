@@ -25,7 +25,7 @@ import NaturalLanguage
 // search_memory (RAGClient) and HybridRetriever (local), the two halves this
 // stitches together.
 
-public enum SemanticMemoryKind: String, Codable, CaseIterable {
+public enum SemanticMemoryKind: String, Codable, CaseIterable, Sendable {
     case chatUser       // user turn in chat
     case chatAssistant  // assistant reply
     case ambient        // ambient-listener memory (intent/commitment/fact)
@@ -35,7 +35,7 @@ public enum SemanticMemoryKind: String, Codable, CaseIterable {
     case corpus         // Jax you-ness corpus (sent mail, iMessage, notes, chat history). Uncapped: this is the user's durable voice, not a hot cache.
 }
 
-public struct SemanticEntry: Codable, Identifiable {
+public struct SemanticEntry: Codable, Identifiable, Sendable {
     public let id: UUID
     public let kind: SemanticMemoryKind
     public let text: String
@@ -159,14 +159,106 @@ public final class SemanticMemory: ObservableObject {
     // when it exceeds the cap), not a precise per-id ledger.
     private var recentMirroredContentHashes: Set<Int> = []
 
+    // Disk read plus the sentence model are about 1.6s on this Mac
+    // (48 MB hot file, 196 MB corpus). That used to run inside init, on the
+    // main thread, and the first Settings open was the first caller, so the
+    // window sat at the panel width until the decode finished. Init returns
+    // immediately. The first caller does not wait.
+    private var didFinishBoot = false
+    private var pendingClear = false
+    private var queuedStores: [(kind: SemanticMemoryKind, text: String, metadata: [String: String])] = []
+    private var queuedFolderEdits: [(oldId: UUID, newId: UUID?)] = []
+
+    private struct DiskSnapshot: Sendable {
+        var entries: [SemanticEntry]
+        var needsMigration: Bool
+    }
+
     private init() {
-        load()
-        // Sentence embedding model load is ~100-500ms on first access, then
-        // cached for the process lifetime. We do it synchronously here -
-        // cost is paid once at app launch during startup while the UI is
-        // already idle loading persisted state.
-        self.embedding = NLEmbedding.sentenceEmbedding(for: .english)
-        self.isReady = self.embedding != nil
+        let hotURL = Persistence.semanticMemoryURL
+        let corpusURL = Persistence.semanticCorpusURL
+        Task.detached(priority: .userInitiated) {
+            let loaded = SemanticMemory.readFromDisk(hotURL: hotURL, corpusURL: corpusURL)
+            let model = NLEmbedding.sentenceEmbedding(for: .english)
+            await SemanticMemory.shared.finishBoot(loaded: loaded, model: model)
+        }
+    }
+
+    #if DEBUG
+    /// An instance that has already booted from `entries`, with no disk read.
+    /// Tests only, so a release build has no second store: the app uses `shared`.
+    init(bootedWith entries: [SemanticEntry], model: NLEmbedding?) {
+        finishBoot(loaded: DiskSnapshot(entries: entries, needsMigration: false), model: model)
+    }
+    #endif
+
+    /// Entry counts by kind once the files are read, or nil if that takes
+    /// longer than `seconds`. Gated on the read, not on the sentence model:
+    /// a Mac whose model fails to load still has entries to count.
+    func countsWhenLoaded(seconds: TimeInterval) async -> [SemanticMemoryKind: Int]? {
+        let start = Date()
+        while !didFinishBoot {
+            if Date().timeIntervalSince(start) > seconds { return nil }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        return countByKind()
+    }
+
+    /// True once the sentence model is loaded. Callers that store or search
+    /// before this returns false get an empty result, same as a missing model.
+    func waitUntilReady(seconds: TimeInterval = 10) async -> Bool {
+        let start = Date()
+        while !isReady {
+            if Date().timeIntervalSince(start) > seconds { return false }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+        return true
+    }
+
+    nonisolated private static func readFromDisk(hotURL: URL, corpusURL: URL) -> DiskSnapshot {
+        let hot = Persistence.load([SemanticEntry].self, from: hotURL, fallback: [])
+        let corpusFileExists = FileManager.default.fileExists(atPath: corpusURL.path)
+        let corpus = Persistence.load([SemanticEntry].self, from: corpusURL, fallback: [])
+        let entries = (hot + corpus).sorted { $0.timestamp > $1.timestamp }
+        let needsMigration = !corpusFileExists && entries.contains(where: { $0.kind == .corpus })
+        return DiskSnapshot(entries: entries, needsMigration: needsMigration)
+    }
+
+    private func finishBoot(loaded: DiskSnapshot, model: NLEmbedding?) {
+        let wasClear = pendingClear
+        pendingClear = false
+        entries = wasClear ? [] : loaded.entries
+        embedding = model
+        isReady = model != nil
+        didFinishBoot = true
+        if !wasClear {
+            let edits = queuedFolderEdits
+            queuedFolderEdits.removeAll()
+            for edit in edits {
+                reassignFolder(from: edit.oldId, to: edit.newId)
+            }
+        } else {
+            queuedFolderEdits.removeAll()
+        }
+        if loaded.needsMigration && !wasClear {
+            let hot = entries.filter { $0.kind != .corpus }
+            let corpus = entries.filter { $0.kind == .corpus }
+            let hotURL = Persistence.semanticMemoryURL
+            let corpusURL = Persistence.semanticCorpusURL
+            Task.detached(priority: .utility) {
+                Persistence.save(corpus, to: corpusURL)
+                Persistence.save(hot, to: hotURL)
+            }
+        }
+        let queued = queuedStores
+        queuedStores.removeAll()
+        for item in queued {
+            store(kind: item.kind, text: item.text, metadata: item.metadata)
+        }
+        if wasClear && queued.isEmpty {
+            scheduleSave()
+            scheduleCorpusSave()
+        }
         NSLog("[SemanticMemory] ready=\(isReady), entries=\(entries.count)")
     }
 
@@ -175,6 +267,12 @@ public final class SemanticMemory: ObservableObject {
     public func store(kind: SemanticMemoryKind, text: String, metadata: [String: String] = [:]) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count >= 3 else { return }
+        if !didFinishBoot {
+            if queuedStores.count < 500 {
+                queuedStores.append((kind, trimmed, metadata))
+            }
+            return
+        }
         guard let vec = vector(for: trimmed) else { return }
 
         let entry = SemanticEntry(kind: kind, text: trimmed, metadata: metadata, vector: vec)
@@ -307,6 +405,12 @@ public final class SemanticMemory: ObservableObject {
     }
 
     public func clearAll() {
+        guard didFinishBoot else {
+            pendingClear = true
+            queuedStores.removeAll()
+            queuedFolderEdits.removeAll()
+            return
+        }
         // Fix 2: clearing the local store must also tear down the rows we
         // mirrored to the companion, or "clear memory" leaves orphaned documents_v2
         // rows live and still findable by search_memory. Snapshot the ids of
@@ -353,6 +457,10 @@ public final class SemanticMemory: ObservableObject {
     // Rewrite entries whose folderId matches oldId to point at newId (or
     // strip the key when newId is nil). Called by FolderStore.delete.
     public func reassignFolder(from oldId: UUID, to newId: UUID?) {
+        guard didFinishBoot else {
+            queuedFolderEdits.append((oldId, newId))
+            return
+        }
         let oldKey = oldId.uuidString
         var didChange = false
         for i in entries.indices {
@@ -549,21 +657,6 @@ public final class SemanticMemory: ObservableObject {
 
     // MARK: - Persistence
 
-    private func load() {
-        let hot = Persistence.load([SemanticEntry].self, from: Persistence.semanticMemoryURL, fallback: [])
-        let corpusFileExists = FileManager.default.fileExists(atPath: Persistence.semanticCorpusURL.path)
-        let corpus = Persistence.load([SemanticEntry].self, from: Persistence.semanticCorpusURL, fallback: [])
-        entries = (hot + corpus).sorted { $0.timestamp > $1.timestamp }
-        // One-time migration: older builds stored corpus INSIDE the hot file. If
-        // the dedicated corpus file does not exist yet but the hot file carried
-        // corpus entries, split them out now (write the corpus file, then rewrite
-        // the hot file without corpus) so a quit-before-ingest cannot drop them.
-        if !corpusFileExists && entries.contains(where: { $0.kind == .corpus }) {
-            saveCorpusNow()
-            saveNow()
-        }
-    }
-
     private func scheduleSave() {
         pendingSave?.cancel()
         let work = DispatchWorkItem { [weak self] in
@@ -602,6 +695,9 @@ public final class SemanticMemory: ObservableObject {
     // followed by a quit inside the 1.5s debounce was silently lost, the
     // same teach-then-quit window SkillStore.flush() closes.
     public func flush() {
+        // A quit during the background load must not write the still-empty
+        // in-memory list over the files on disk.
+        guard didFinishBoot else { return }
         pendingSave?.cancel()
         pendingSave = nil
         pendingCorpusSave?.cancel()

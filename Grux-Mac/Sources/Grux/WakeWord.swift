@@ -227,7 +227,7 @@ final class WakeWordListener: ObservableObject {
         // Same rule as ambient: the wake word listens on the Mac's own
         // microphone, never a borrowed one. Released in stop().
         ListeningMicGuard.shared.claim("wake")
-        let engine = AVAudioEngine()
+        let engine = AudioFactory.engine("wake word")
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
         WakeLog.shared.log("start engine  format=\(format) sampleRate=\(format.sampleRate) channels=\(format.channelCount)")

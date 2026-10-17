@@ -70,12 +70,16 @@ final class SettingsAnchorTests: XCTestCase {
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let settings = try String(contentsOf: root.appendingPathComponent("Sources/Grux/SettingsView.swift"),
                                   encoding: .utf8)
-        // Two call sites per wired pane: onAppear and onChange.
-        let wired = settings.components(separatedBy: "scrollToPendingAnchor(proxy)").count - 1
+        // Every wired pane listens on appear and on change. General has a third
+        // call, once its later sections mount, so total call sites are not
+        // counted: each listener is.
+        let onAppear = settings.components(separatedBy: ".onAppear { scrollToPendingAnchor(proxy) }").count - 1
+        let onChange = settings.components(
+            separatedBy: ".onChange(of: pendingAnchor) { _, _ in scrollToPendingAnchor(proxy) }").count - 1
         let readers = settings.components(separatedBy: "ScrollViewReader { proxy in").count - 1
-        XCTAssertEqual(wired % 2, 0, "a pane listens on appear and not on change, or the other way round")
-        XCTAssertEqual(wired / 2, readers,
-                       "\(readers) panes scroll and \(wired / 2) listen: one of them cannot honour a deep link")
+        XCTAssertEqual(onAppear, onChange, "a pane listens on appear and not on change, or the other way round")
+        XCTAssertEqual(onAppear, readers,
+                       "\(readers) panes scroll and \(onAppear) listen: one of them cannot honour a deep link")
         XCTAssertGreaterThanOrEqual(readers, 6, "a pane lost its scroll wiring entirely")
 
         // AND THE PANE IS REACHED THROUGH THE WRAPPER. Counting readers is not

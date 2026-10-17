@@ -793,8 +793,11 @@ final class OpenAICompatStreamFixtureTests: XCTestCase {
         let body = try XCTUnwrap(try JSONSerialization.jsonObject(with: server.requestBody) as? [String: Any])
         let options = try XCTUnwrap(body["options"] as? [String: Any], "no options went on the wire: \(body)")
         XCTAssertEqual(options["num_ctx"] as? Int, OpenAICompatBackend.ollamaContextTokens)
-        XCTAssertGreaterThanOrEqual(OpenAICompatBackend.ollamaContextTokens, 32_768,
-                                    "a Grux chat prompt is over 21,000 tokens")
+        // By this Mac's memory (W4 pass 2): 32768 on 8 GB was a cache the
+        // machine did not have. A local chat turn is built to fit the window
+        // instead of the window to fit the cloud prompt (LeanLocalTurnTests).
+        XCTAssertEqual(OpenAICompatBackend.ollamaContextTokens,
+                       LocalTurn.contextTokens(memoryGB: HardwareProfile.detect().physicalMemoryGB))
         XCTAssertEqual(options["num_predict"] as? Int, 64)
         XCTAssertEqual(body["stream"] as? Bool, true)
         let sent = body["messages"] as? [[String: Any]] ?? []

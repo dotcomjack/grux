@@ -32,7 +32,7 @@ final class GruxSweepHeadlessTests: XCTestCase {
         let workspace = """
         {"headless":true,"windows":[
           {"id":7,"title":"","visible":false,"frame":[0,0,500,500]},
-          {"id":42,"title":"Grux OS","visible":true,"frame":[1070,636,1100,592]}]}
+          {"id":42,"title":"Grux AI","visible":true,"frame":[1070,636,1100,592]}]}
         """
         try workspace.write(to: grux.appendingPathComponent("headless-workspace/workspace.json"),
                             atomically: true, encoding: .utf8)

@@ -96,6 +96,21 @@ struct ModelUpdateReport: Equatable {
     /// key that local models are a downgrade is useless, because for them it is
     /// that or nothing.
     var qualityWarning: String {
+        // NOTHING CONNECTED IS ITS OWN TRUTH. With no key and no usable local
+        // model the route still reads "cloud", because that is where a turn
+        // falls back to, and this paragraph told a Mac with neither that "Grux
+        // keeps using your cloud model by default" (W4 pass 1, 2026-10-13).
+        if !hasCloudModel && !hasUsableLocalModel {
+            guard headline != nil else {
+                return "There is no cloud key and no local model this machine can run, so Grux "
+                    + "cannot think yet. Adding a key is the one thing that changes that."
+            }
+            return "No model is connected yet: there is no cloud key and no local model Grux can use, "
+                + "so Chat waits for one. A local model runs on "
+                + "your Mac and costs nothing per use, and it is noticeably worse than the cloud "
+                + "model at anything hard: longer reasoning, code, and following detailed "
+                + "instructions. Settings, then Models, downloads one, or add a key there."
+        }
         // Keyed on the ROUTE, not on key presence, or this contradicts the line
         // directly above it for anybody who chose local while holding a key.
         switch (routesToCloud, headline) {
@@ -127,6 +142,11 @@ struct ModelUpdateReport: Equatable {
             return "There is no cloud key and no local model this machine can run, so Grux "
                 + "cannot think yet. Adding a key is the one thing that changes that."
         }
+    }
+
+    /// A local server is up and holds a model Grux can drive.
+    var hasUsableLocalModel: Bool {
+        localServerRunning && !GruxConfig.usableLocalModels(installedTags).isEmpty
     }
 
     /// Whether the screen has anything worth saying about local models at all.

@@ -18,6 +18,16 @@ struct GruxApp: App {
             MenuBarLabel()
         }
         .menuBarExtraStyle(.window)
+        // The app menu's standard Settings… item and Cmd-comma. There is no
+        // SwiftUI Settings scene (Grux Settings is its own window), so macOS
+        // never added one and the clean-Mac walk found the app menu without
+        // it (W4, 2026-10-13). It opens the same window every other door does.
+        .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button(AppMenu.settingsTitle) { WindowOpener.openSettings() }
+                    .keyboardShortcut(AppMenu.settingsKey, modifiers: .command)
+            }
+        }
 
         Window("Grux Chat", id: "chat") {
             ChatView().environmentObject(state).id(theme.revision)
@@ -45,13 +55,19 @@ struct GruxApp: App {
     }
 }
 
+/// The app menu's own items.
+enum AppMenu {
+    static let settingsTitle = "Settings…"
+    static let settingsKey: KeyEquivalent = ","
+}
+
 struct MenuBarLabel: View {
     @ObservedObject private var state = AppState.shared
     @ObservedObject private var wake = WakeWordListener.shared
 
     var body: some View {
         HStack(spacing: 5) {
-            Text("GRUX OS")
+            Text("GRUX AI")
                 .font(.system(size: 12, weight: .black, design: .default))
                 .kerning(0.5)
                 .opacity(state.watching ? 1.0 : 0.45)
@@ -201,6 +217,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Items 23+26: apply the persisted appearance (dark/light/auto) before
         // the first window renders. ThemeConfig loads theme.json in its init.
         ThemeConfig.shared.applyAppearance()
+        // Home's pictures decode off this thread so the first Today open
+        // does not wait on a 3.8 MB orb.
+        HomeAssets.shared.preload()
         let args = CommandLine.arguments
         let isSmokeTest = args.contains("--smoke-test")
 
@@ -1393,7 +1412,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let hosting = NSHostingController(rootView: SettingsView().environmentObject(AppState.shared))
         hosting.sizingOptions = []
         let win = NSWindow(contentViewController: hosting)
-        win.title = "Grux Settings"
+        win.title = "Grux AI Settings"
         win.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         win.isReleasedWhenClosed = false
         win.isRestorable = false
@@ -1450,6 +1469,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func openLaunchWindow(tab: String = "chat") {
+        // Not the launch's own open, which builds the window: only a request
+        // made while the flow is already up.
+        if OnboardingModel.shared.isPresenting, tab != PanelKeys.none, launchWindow != nil {
+            OnboardingModel.shared.setupFirstNotice = OnboardingModel.setupFirstNotice(
+                for: SidebarIA.railLabel(forKey: tab))
+        }
         AppState.shared.requestedTab = tab
         if let win = launchWindow {
             // makeKeyAndOrderFront does NOT restore a minimized window and does
@@ -1487,7 +1512,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // which on some relaunches it otherwise applies after first layout.
         hosting.sizingOptions = []
         let win = NSWindow(contentViewController: hosting)
-        win.title = "Grux OS"
+        win.title = "Grux AI"
         win.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         win.isReleasedWhenClosed = false
         // Disable AppKit state restoration so a narrow frame from an
@@ -1508,7 +1533,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // The Command Panel's floor is the panel itself: 420 wide with no pane
         // (a floor below the fixed panel would clip it), and the sizer raises
         // it while a pane is open.
-        let minContent = Self.launchWindowFloor(legacy: legacy)
+        // First run opens at the flow's own size. The panel used to ask for it
+        // from onAppear, which runs before `launchWindow` is set, so the ask
+        // was dropped and a clean Mac got the 420pt panel with every step
+        // clipped on both edges and Continue off the window (W4, 2026-10-13).
+        let onboarding = OnboardingModel.shared.isPresenting
+        let minContent = Self.launchContentSize(legacy: legacy, onboarding: onboarding).minimum
         let sizer = LaunchWindowSizer(window: win)
         sizer.setMinimum(minContent)
         // Force an explicit initial content size every launch (was getting
@@ -1521,8 +1551,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let a = argv.first(where: { $0.hasPrefix(flag + "=") }) else { return nil }
             return Double(a.dropFirst(flag.count + 1))
         }
-        let resting = legacy ? Self.legacyRestingContent
-            : NSSize(width: GruxLayout.panelWidth, height: GruxLayout.panelIdealHeight)
+        let resting = Self.launchContentSize(legacy: legacy, onboarding: onboarding).initial
         let explicitW = argValue("--win-w")
         let initW = max(minContent.width, explicitW ?? resting.width)
         // The panel's first sizing pass would otherwise put an explicit
@@ -1563,6 +1592,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The classic shell's resting content size.
     static let legacyRestingContent = NSSize(width: 1040, height: 700)
 
+    /// The launch window's first content size and its floor. First run, in
+    /// either shell, opens at the flow's ideal size over its minimum; after
+    /// it, the panel at rest or the classic sidebar's resting size.
+    static func launchContentSize(legacy: Bool, onboarding: Bool) -> (initial: NSSize, minimum: NSSize) {
+        if onboarding {
+            return (NSSize(width: GruxLayout.onboardingIdealWidth, height: GruxLayout.onboardingIdealHeight),
+                    NSSize(width: GruxLayout.onboardingMinWidth, height: GruxLayout.onboardingMinHeight))
+        }
+        let resting = legacy ? legacyRestingContent
+            : NSSize(width: GruxLayout.panelWidth, height: GruxLayout.panelIdealHeight)
+        return (resting, launchWindowFloor(legacy: legacy))
+    }
+
     /// The launch window's content floor for a shell with no pane open.
     static func launchWindowFloor(legacy: Bool) -> NSSize {
         legacy ? NSSize(width: GruxLayout.windowFloorWidth, height: GruxLayout.windowFloorHeight)
@@ -1573,6 +1615,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The minimum moves with it, so a user cannot drag the pane off the edge.
     /// The first call after a `--win-w` launch keeps that width (see
     /// `LaunchWindowSizer.setContentWidth`).
+    /// Runs `body` on the launch window now, or on the next main-queue turn
+    /// when the window is still being built. The root's first `onAppear`
+    /// runs inside `NSWindow(contentViewController:)`, before `launchWindow`
+    /// is assigned, and a size asked for then was silently dropped.
+    static func withLaunchWindow(_ body: @escaping @MainActor (NSWindow) -> Void) {
+        if let win = shared?.launchWindow { body(win); return }
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                if let win = shared?.launchWindow { body(win) }
+            }
+        }
+    }
+
     func setLaunchWindowContentWidth(_ width: CGFloat, minWidth: CGFloat, animated: Bool) {
         guard let win = launchWindow else { return }
         let keepExplicit = explicitLaunchWidthPending
@@ -1757,10 +1812,11 @@ enum Bootstrap {
                 _ = KeychainStore.set(.elevenLabsApiKey, env)
             }
         }
-        // Seed a starter task if stack is empty
-        if state.tasks.isEmpty {
-            state.addTask("Wire up Grux and confirm focus reminders fire", project: "GruxAI", priority: .now)
-        }
+        // No starter task. It used to seed "Wire up Grux and confirm focus
+        // reminders fire" into an empty stack, so a stranger's first launch
+        // showed a developer's chore as CURRENT FOCUS with a timer running
+        // (W4, 2026-10-13). Installs that already hold it keep it: this only
+        // stops adding it.
     }
 
 }

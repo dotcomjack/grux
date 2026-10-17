@@ -79,6 +79,9 @@ enum MusicKitPlayer {
         guard AudioOutput.permit(.music, source: "MusicKitPlayer.probe", text: testStoreID) else {
             return "STOP: silent mode (~/.grux/SILENT), nothing played"
         }
+        guard !AudioOutput.outputWouldAskForMic else {
+            return "STOP: the microphone question is unanswered, and playing here would raise it"
+        }
         var out: [String] = []
         let cur = MusicAuthorization.currentStatus
         out.append("currentStatus=\(cur)")

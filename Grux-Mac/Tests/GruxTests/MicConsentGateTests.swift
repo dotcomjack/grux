@@ -305,7 +305,7 @@ final class MicListenerLifecycleTests: XCTestCase {
         // file, function signature, and the line that takes the device.
         let cases: [(String, String, String)] = [
             ("Ambient/AmbientListener.swift", "func start() async {", "try startEngine()"),
-            ("VoiceInput.swift", "func start(autoSendOnSilence: Bool = false", "audioEngine = AVAudioEngine()"),
+            ("VoiceInput.swift", "func start(autoSendOnSilence: Bool = false", "audioEngine = AudioFactory.engine(\"dictation\")"),
             ("WakeWord.swift", "func start() async {", "try startEngineAndTask()")
         ]
 

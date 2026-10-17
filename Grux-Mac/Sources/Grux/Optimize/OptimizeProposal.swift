@@ -149,7 +149,7 @@ extension OptimizeProposal {
 
     2. A Settings toggle. In Sources/Grux/SettingsView.swift, the General pane has a `Section("Shell")` with a `Toggle("Classic sidebar", ...)` bound to `state.config.legacyShell` that calls `state.saveConfig()` in its setter. Add `Toggle("Keep Grux on top", ...)` right after it, bound the same way to `state.config.keepOnTop`, with one caption line under it: "The panel stays above other windows. Off by default." Use the same modifiers the Classic sidebar caption uses (`GruxType.caption`, `GruxTheme.textTertiary`).
 
-    3. The window level. The panel window is created once in `AppDelegate.openLaunchWindow(tab:)` in Sources/Grux/GruxApp.swift: an NSWindow titled "Grux OS", hosting `ShellRootView`, which shows `CommandPanelRoot` (the Command Panel) or `LaunchRootView` (the classic sidebar shell) depending on `legacyShell`. The delegate keeps it as `launchWindow`, and `LaunchWindowSizer` (Sources/Grux/Shell/LaunchWindowSizer.swift) does its sizing. Add a pure mapping, for example on `LaunchWindowSizer`:
+    3. The window level. The panel window is created once in `AppDelegate.openLaunchWindow(tab:)` in Sources/Grux/GruxApp.swift: an NSWindow titled "Grux AI", hosting `ShellRootView`, which shows `CommandPanelRoot` (the Command Panel) or `LaunchRootView` (the classic sidebar shell) depending on `legacyShell`. The delegate keeps it as `launchWindow`, and `LaunchWindowSizer` (Sources/Grux/Shell/LaunchWindowSizer.swift) does its sizing. Add a pure mapping, for example on `LaunchWindowSizer`:
 
        static func level(keepOnTop: Bool, legacyShell: Bool) -> NSWindow.Level
 

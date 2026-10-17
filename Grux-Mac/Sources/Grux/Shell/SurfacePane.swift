@@ -80,7 +80,7 @@ struct SurfacePane: View {
                         }
                     }
                 case .contacts: ContactsView().capabilityGated("contacts")
-                case .mailbox: MailboxView().capabilityGated("mailbox")
+                case .mailbox: MailboxView().capabilityGated("mailbox", showsFeatureBehind: false)
                 case .roadmap: RoadmapView()
                 case .commands: CommandsView().capabilityGated("commands")
                 case .metaAds: MetaAdsView().capabilityGated("metaAds")

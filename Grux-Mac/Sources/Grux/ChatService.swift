@@ -177,6 +177,11 @@ final class ChatService {
         }
         let userMsg = ChatMessage(role: .user, content: userText,
                                   imageData: imageData, imageMediaType: imageMediaType)
+        // In flight BEFORE the message lands, so the thread's background calls
+        // (title, compaction) see the turn and, on a local model, wait for the
+        // reply instead of queueing ahead of it (W4 pass 2).
+        state.beginChatTurn()
+        defer { state.endChatTurn() }
         state.appendChat(userMsg)
         // A new send supersedes any prior recovery banner. The success path
         // leaves it nil; the catch block re-sets it if this turn also fails.
@@ -722,9 +727,16 @@ final class ChatService {
     // the preset-filtered tool set, the suffix(30) message window, and the
     // ModelRegistry routing resolved once. Called by send() and reused by the
     // pre-run cost estimator so both price and send the exact same request.
-    func assemblePendingContext(state: AppState) -> PendingTurnContext {
+    /// `lean` and `window` exist for tests: nil decides from the route.
+    func assemblePendingContext(state: AppState, lean forced: Bool? = nil,
+                                window: Int = LocalTurn.contextTokens,
+                                ceiling: Int = LocalTurn.promptCeiling) -> PendingTurnContext {
         let presetApp = PresetStore.shared.activeChatApplication()
-        var systemBlocks = buildSystemBlocks(state: state)
+        // A LOCAL TURN IS A LEAN TURN (W4 pass 2): a window this Mac can hold
+        // and a prompt that fits it. See LocalTurn.
+        let lean = forced ?? Self.isLocalTurn(providerOverride: presetApp?.providerOverride,
+                                              resolved: ModelRegistry.shared.resolvedProvider)
+        var systemBlocks = buildSystemBlocks(state: state, lean: lean)
         if let block = presetApp?.systemBlockText() {
             systemBlocks.append(["type": "text", "text": block])
         }
@@ -737,7 +749,21 @@ final class ChatService {
             utterance: lastUser?.content ?? "",
             recentToolNames: RecentToolUse.shared.names(),
             hasImage: lastUser?.imageData != nil))
-        let messages = Self.modelFacingMessages(Array(state.chat.suffix(30)))
+        var messages = Self.modelFacingMessages(Array(state.chat.suffix(30)))
+        if lean {
+            tools = LocalTurn.rank(tools, utterance: lastUser?.content ?? "")
+            // Room for the line naming what is left out, at its longest.
+            let worstLine = LocalTurn.cutToolsLine(tools.map(\.name))?.count ?? 0
+            let systemChars = systemBlocks.compactMap { $0["text"] as? String }.reduce(0) { $0 + $1.count }
+            let fit = LocalTurn.fit(systemChars: systemChars + worstLine, messageChars: messages.map(LocalTurn.chars),
+                                    toolChars: tools.map(LocalTurn.chars),
+                                    window: min(window, ceiling))
+            messages = Array(messages.suffix(fit.messages))
+            if let line = LocalTurn.cutToolsLine(tools.dropFirst(fit.tools).map(\.name)) {
+                systemBlocks.append(["type": "text", "text": line])
+            }
+            tools = Array(tools.prefix(fit.tools))
+        }
         let routing = ModelRegistry.shared.resolvedRouting(
             provider: presetApp?.providerOverride, modelOverride: presetApp?.modelIdOverride)
         return PendingTurnContext(
@@ -746,7 +772,7 @@ final class ChatService {
             tools: tools,
             modelId: routing.modelId,
             provider: Self.providerString(presetApp: presetApp),
-            maxTokens: 2000,
+            maxTokens: lean ? LocalTurn.replyTokens : 2000,
             backend: routing.backend,
             apiKey: routing.apiKey,
             presetApp: presetApp)
@@ -767,6 +793,17 @@ final class ChatService {
             modelId: pending.modelId,
             provider: pending.provider,
             maxOutputTokens: pending.maxTokens)
+    }
+
+    /// Whether this turn runs on a local model: a preset pinned to local, or
+    /// no pin and the router resolving local. A hosted OpenAI-compatible
+    /// endpoint (`.custom`) is not local and keeps the full prompt.
+    nonisolated static func isLocalTurn(providerOverride: String?, resolved: ActiveProvider) -> Bool {
+        switch providerOverride {
+        case "local": return true
+        case nil: return resolved == .local
+        default: return false
+        }
     }
 
     // The provider tag for cost purposes, mirroring resolvedRouting's own switch
@@ -860,7 +897,9 @@ final class ChatService {
         imageMediaType: String?
     ) -> ChatRecovery {
         let offlineOn = AppState.shared.offlineMode
-        let localFound = ModelRegistry.shared.local != nil
+        // A model that can take the retry, not a server that merely answers:
+        // "Continue offline" on an Ollama with nothing pulled fails again.
+        let localFound = ModelRegistry.shared.localUsable
 
         // 1. Anthropic 429 / monthly usage limit.
         if case ClaudeError.http(let code, let body) = error {
@@ -2126,7 +2165,7 @@ final class ChatService {
     //
     // Cache invalidates when block [0] bytes change (e.g., the user teaches a
     // new slang term). That's fine - next call rebuilds the cache.
-    private func buildSystemBlocks(state: AppState) -> [[String: Any]] {
+    private func buildSystemBlocks(state: AppState, lean: Bool = false) -> [[String: Any]] {
         let profile = ProfileMemoryStore.shared.asSystemContext()
         let skillsContext = SkillStore.shared.asSystemContext()
         let jaxPersona = JaxProfile.shared.persona
@@ -2524,6 +2563,13 @@ final class ChatService {
             utterance: lastUserUtterance,
             recentToolNames: RecentToolUse.shared.names(),
             hasImage: lastUserHasImage))
+        if lean {
+            // The cloud model's tool manual and the developer block stay out;
+            // who the user is and what Grux can do stay in.
+            let leanStable = LocalTurn.leanStable(stable, tail: [jaxIdentity, profile, capabilities])
+            return Self.composeSystemBlocks(stable: leanStable, developer: nil,
+                                            summary: summaryBlock, volatile: volatile)
+        }
         return Self.composeSystemBlocks(stable: stable, developer: developerRides ? developerBlock : nil,
                                         summary: summaryBlock, volatile: volatile)
     }

@@ -227,6 +227,10 @@ enum GruxLayout {
     /// the window grows to it while onboarding presents and returns after.
     static let onboardingMinWidth: CGFloat = 640
     static let onboardingMinHeight: CGFloat = 520
+    /// 720 x 640pt: what a first launch opens at, centered, with room around
+    /// every step's widest row and its pinned Continue.
+    static let onboardingIdealWidth: CGFloat = 720
+    static let onboardingIdealHeight: CGFloat = 640
 }
 
 // MARK: - Type scale

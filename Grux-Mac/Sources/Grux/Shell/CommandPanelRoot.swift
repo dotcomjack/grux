@@ -104,17 +104,15 @@ final class PanelModel: ObservableObject {
          clock: @escaping () -> Date = Date.init,
          schedule: Scheduler? = nil,
          sizeWindow: @escaping WindowSizer = { width, minWidth in
-             AppDelegate.shared?.setLaunchWindowContentWidth(width, minWidth: minWidth, animated: true)
+             AppDelegate.withLaunchWindow { _ in
+                 AppDelegate.shared?.setLaunchWindowContentWidth(width, minWidth: minWidth, animated: true)
+             }
          },
          floorHeight: @escaping HeightFloor = { minHeight in
-             if let win = AppDelegate.shared?.launchWindow {
-                 LaunchWindowSizer(window: win).setMinimumHeight(minHeight)
-             }
+             AppDelegate.withLaunchWindow { LaunchWindowSizer(window: $0).setMinimumHeight(minHeight) }
          },
          floorWidth: @escaping WidthFloor = { minWidth in
-             if let win = AppDelegate.shared?.launchWindow {
-                 LaunchWindowSizer(window: win).setMinimumWidth(minWidth)
-             }
+             AppDelegate.withLaunchWindow { LaunchWindowSizer(window: $0).setMinimumWidth(minWidth) }
          },
          paneMinimum: @escaping @MainActor (LaunchRootView.Tab) -> CGFloat = { PaneMinimum.width(for: $0) }) {
         self.stateProvider = stateProvider
@@ -196,9 +194,31 @@ final class PanelModel: ObservableObject {
     /// same key from any source is a change the root sees.
     private func show(_ tab: LaunchRootView.Tab) {
         let key = LaunchRootView.tabKey(for: tab)
+        // Widen before the pane lays out, so the first layout is at the
+        // final width instead of laying out narrow and then again wide.
+        prepareWidth(for: tab)
         pane = tab
         if AppState.shared.requestedTab != key { AppState.shared.requestedTab = key }
         SidebarStateStore.shared.recordRecent(key)
+    }
+
+    /// Same width rules as `sizeForPane`, applied before `pane` changes.
+    /// The later `sizeForPane` pass then finds the floor already set.
+    private func prepareWidth(for tab: LaunchRootView.Tab) {
+        let floor = paneMinimum(tab)
+        let opening = pane == nil
+        if paneWasOpen == nil { floorHeight(GruxLayout.panelMinHeight) }
+        if opening || paneWasOpen != true {
+            paneWasOpen = true
+            paneFloor = floor
+            sizeWindow(GruxLayout.panelWidth + max(GruxLayout.paneWidth, floor),
+                       GruxLayout.panelWidth + floor)
+            return
+        }
+        if floor != paneFloor {
+            paneFloor = floor
+            floorWidth(GruxLayout.panelWidth + floor)
+        }
     }
 
     /// `requestedTab` is a String and `onChange` fires only on a change, so
@@ -243,6 +263,10 @@ final class PanelModel: ObservableObject {
             }
         case .claudeSignIn:
             signIn()
+        case .connectModel:
+            // The Settings window, as the foot gear opens it (spec 3.6), at Models.
+            AppState.shared.requestedSettingsTab = "connect"
+            WindowOpener.openSettings()
         case .revealClaudeSettings:
             let settings = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude/settings.json")
             if WindowFacade.isHeadless {
@@ -329,7 +353,9 @@ final class PanelModel: ObservableObject {
     func sizeForOnboarding() {
         paneWasOpen = nil
         floorHeight(GruxLayout.onboardingMinHeight)
-        sizeWindow(GruxLayout.onboardingMinWidth, GruxLayout.onboardingMinWidth)
+        // The ideal width over the minimum: asking for the minimum put a
+        // first launch at 640 once this ask stopped being dropped.
+        sizeWindow(GruxLayout.onboardingIdealWidth, GruxLayout.onboardingMinWidth)
     }
 
     /// Refresh when any input to Now changes: approvals, mail, agent jobs,
@@ -485,7 +511,7 @@ struct CommandPanelRoot: View {
                        onSend: { text in
                 model.open(.chat, via: .input)
                 Task { await ChatService.shared.send(userText: text) }
-            })
+            }, onConnectModel: { model.perform(.connectModel) })
             // The middle scrolls (R9.6): an expanded Optimize card is taller
             // than a short window, and the head, input and foot stay put.
             ScrollView(.vertical) {
@@ -512,10 +538,12 @@ struct CommandPanelRoot: View {
         let binding = Binding<LaunchRootView.Tab>(
             get: { model.pane ?? tab },
             set: { model.move(to: $0) })
+        let key = LaunchRootView.tabKey(for: LaunchRootView.host(of: tab))
+        let title = SidebarIA.railLabel(forKey: key)
         return VStack(spacing: 0) {
             // Spec 3.3: the surface name on the left, a close control on the right.
             HStack(spacing: GruxSpacing.s) {
-                Text(SidebarIA.railLabel(forKey: LaunchRootView.tabKey(for: LaunchRootView.host(of: tab))))
+                Text(title)
                     .font(GruxType.title)
                     .foregroundStyle(GruxTheme.textPrimary)
                     .lineLimit(1)
@@ -536,6 +564,7 @@ struct CommandPanelRoot: View {
             Divider()
             SurfacePane(selection: binding)
                 .environment(\.hostedInPane, true)
+                .environment(\.paneTitles, PaneHeading.names(forKey: key))
         }
         // Escape closes the pane when focus is in it. Not a window-wide
         // cancel shortcut: surfaces inside the pane bind their own (Tasks,

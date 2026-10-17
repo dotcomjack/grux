@@ -28,7 +28,7 @@ final class CaptureEngineOrderTests: XCTestCase {
         let body = try XCTUnwrap(src.components(separatedBy: "private func startEngine(deafAttempt: Int = 0) throws {").dropFirst().first)
         let claim = try offset(of: "ListeningMicGuard.shared.claim(\"ambient\")", in: body, file: "AmbientListener")
         let preferred = try offset(of: "MicWhitelist.applyPreferredInputIfPossible()", in: body, file: "AmbientListener")
-        let engine = try offset(of: "let engine = AVAudioEngine()", in: body, file: "AmbientListener")
+        let engine = try offset(of: "let engine = AudioFactory.engine(\"ambient\")", in: body, file: "AmbientListener")
         XCTAssertGreaterThan(engine, claim, "ambient builds its engine before the guard moves the mic off a headset")
         XCTAssertGreaterThan(engine, preferred, "ambient builds its engine before the preferred mic is applied")
         XCTAssertTrue(body.contains("MicDevices.bindInput(input, toUID: activeInputUID)"),
@@ -41,9 +41,9 @@ final class CaptureEngineOrderTests: XCTestCase {
     func test_dictationBuildsItsEngineAfterThePreferredMic() throws {
         let src = try source("VoiceInput.swift")
         let preferred = try offset(of: "MicWhitelist.applyPreferredInputIfPossible()", in: src, file: "VoiceInput")
-        // The property initializer `private var audioEngine = AVAudioEngine()`
+        // The lazy property `audioEngine = AudioFactory.engine("dictation")`
         // is not a build of the session's engine; the rebuild is its own line.
-        let engine = try offset(of: "\n        audioEngine = AVAudioEngine()", in: src, file: "VoiceInput")
+        let engine = try offset(of: "\n        audioEngine = AudioFactory.engine(\"dictation\")", in: src, file: "VoiceInput")
         XCTAssertGreaterThan(engine, preferred, "dictation builds its engine before the preferred mic is applied")
         XCTAssertTrue(src.contains("MicDevices.bindInput(input, toUID: activeInputUID)"))
         XCTAssertTrue(src.contains("MicDevices.tapFormat(for: input, bound: boundToChosenMic)"),
@@ -54,7 +54,7 @@ final class CaptureEngineOrderTests: XCTestCase {
     func test_wakeWordBuildsItsEngineAfterTheGuard() throws {
         let src = try source("WakeWord.swift")
         let claim = try offset(of: "ListeningMicGuard.shared.claim(\"wake\")", in: src, file: "WakeWord")
-        let engine = try offset(of: "let engine = AVAudioEngine()", in: src, file: "WakeWord")
+        let engine = try offset(of: "let engine = AudioFactory.engine(\"wake word\")", in: src, file: "WakeWord")
         XCTAssertGreaterThan(engine, claim)
     }
 }

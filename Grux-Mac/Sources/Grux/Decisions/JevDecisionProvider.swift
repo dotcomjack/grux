@@ -87,7 +87,7 @@ struct JevDecisionProvider: DecisionProvider {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         req.setValue("https://gruxai.com", forHTTPHeaderField: "HTTP-Referer")
-        req.setValue("Grux OS: decisions", forHTTPHeaderField: "X-Title")
+        req.setValue("Grux AI: decisions", forHTTPHeaderField: "X-Title")
         req.httpBody = try JSONSerialization.data(withJSONObject: Self.requestBody(state: state, questions: questions))
         let started = Date()
         let (data, response) = try await session.data(for: req)

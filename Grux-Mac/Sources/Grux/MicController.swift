@@ -37,7 +37,7 @@ enum MicController {
     ///
     /// Returns true iff the app is (or became) authorized.
     static func ensureAuthorized() async -> Bool {
-        let status = AVCaptureDevice.authorizationStatus(for: .audio)
+        let status = authorizationStatus()
         switch status {
         case .authorized:
             UserDefaults.standard.set(true, forKey: priorGrantKey)
@@ -55,9 +55,14 @@ enum MicController {
                     "mic: status=.notDetermined despite prior grant - TCC csreq binding likely broken, prompt will re-appear"
                 )
             }
-            let ok = await withCheckedContinuation { (c: CheckedContinuation<Bool, Never>) in
-                AVCaptureDevice.requestAccess(for: .audio) { c.resume(returning: $0) }
+            // Only after the person asked for the microphone. A clean Mac got
+            // the macOS prompt at launch, before any Grux window, while the
+            // first screen said listening is off until later (W4, 2026-10-13).
+            guard mayAsk() else {
+                WakeLog.shared.log("mic: undecided, and nobody has asked for it yet; not prompting")
+                return false
             }
+            let ok = await requestAccess()
             if ok { UserDefaults.standard.set(true, forKey: priorGrantKey) }
             return ok
         @unknown default:
@@ -65,7 +70,35 @@ enum MicController {
         }
     }
 
+    // MARK: - Asking macOS
+
+    /// Set by the explicit actions that want the microphone: a mic or
+    /// dictation button, the orb, starting a meeting, Allow listening. Until
+    /// one of them, or a listening consent already given, an undecided
+    /// microphone is left undecided rather than asked about.
+    private(set) static var userAskedThisSession = false
+
+    static func userWantsMicrophone() { userAskedThisSession = true }
+
+    /// Whether an undecided microphone may be asked about now.
+    static func mayAsk() -> Bool {
+        let config = AppState.shared.config
+        return userAskedThisSession || config.ambientConsentAcknowledged || config.wakeWordConsentAcknowledged
+    }
+
+    /// Seams for tests: the live answer, and the one call that raises the prompt.
+    static var authorizationStatus: () -> AVAuthorizationStatus = { AVCaptureDevice.authorizationStatus(for: .audio) }
+    static var requestAccess: () async -> Bool = {
+        await withCheckedContinuation { (c: CheckedContinuation<Bool, Never>) in
+            AVCaptureDevice.requestAccess(for: .audio) { c.resume(returning: $0) }
+        }
+    }
+
+    /// For tests: forget the session's ask.
+    static func resetUserAskForTests() { userAskedThisSession = false }
+
     static func toggle(source: String = "unnamed caller") {
+        userWantsMicrophone()
         let state = AppState.shared
         if state.micMuted {
             unmute()
@@ -134,6 +167,7 @@ enum MicController {
     }
 
     static func unmute() {
+        userWantsMicrophone()
         let state = AppState.shared
         guard state.micMuted else { return }
         state.micMuted = false

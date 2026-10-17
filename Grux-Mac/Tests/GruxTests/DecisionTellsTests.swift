@@ -34,7 +34,9 @@ final class DecisionTellsTests: XCTestCase {
             let text = try source(file)
             XCTAssertTrue(text.contains("ListeningTell.resolve("),
                           "\(file) no longer asks ListeningTell for the state")
-            XCTAssertTrue(text.contains("listeningTell.label"),
+            // The Chat chip shows the tell with its noun (audit 2026-10-13,
+            // item 10); it is still the shared tell's own word.
+            XCTAssertTrue(text.contains("listeningTell.label") || text.contains("listeningTell.phrase"),
                           "\(file) shows a word that is not the shared tell")
         }
     }

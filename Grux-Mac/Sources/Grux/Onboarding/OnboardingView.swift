@@ -52,6 +52,15 @@ struct OnboardingView: View {
             // have: it compiles, it passes every behavioural test, and at a
             // comfortable window size it looks finished.
             VStack(spacing: 0) {
+            if let notice = model.setupFirstNotice {
+                Label(notice, systemImage: "hand.raised")
+                    .font(GruxTheme.Font.caption)
+                    .foregroundStyle(GruxTheme.textPrimary)
+                    .padding(.horizontal, 16).padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(GruxTheme.accentPrimary.opacity(0.14))
+                    .accessibilityAddTraits(.isStaticText)
+            }
             ScrollView {
                 Self.column(for: model.stage)
             }
@@ -298,11 +307,13 @@ struct ModelKeyStep: View {
                     }
                 }
 
-                Text("Runs on this Mac. No key, no account, and nothing leaves the machine. "
-                     + "If there is no model here yet, Grux fetches the best one this Mac can run.")
+                Text(ModelGate.localLine)
                     .font(GruxTheme.Font.caption)
                     .foregroundStyle(GruxTheme.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                Link(ModelGate.ollamaLink, destination: ModelGate.ollamaURL)
+                    .font(GruxTheme.Font.caption)
+                    .gruxLink()
 
                 // THE UPSELL, said once and said honestly.
                 //
@@ -335,6 +346,17 @@ struct ModelKeyStep: View {
             }
 
             openRouterPath
+
+            // Never a dead end: with nothing to connect yet, carry on without.
+            HStack(spacing: 8) {
+                Button(ModelGate.skip) { model.completeModelKey() }
+                    .buttonStyle(.bordered)
+                    .disabled(model.validating || probingLocal || probingOpenRouter)
+                Text(ModelGate.skipNote)
+                    .font(GruxTheme.Font.caption)
+                    .foregroundStyle(GruxTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .task { await probeForLocalModel() }
         .onboardingPrimary(primaryTitle, stage: .modelKey, enabled: primaryEnabled, run: runPrimary)
@@ -457,12 +479,7 @@ struct ModelKeyStep: View {
     /// What the spinner is actually doing right now.
     private var pullLabel: String {
         guard let pulling else { return "Looking for a local model" }
-        let progress = ollama.pulls[pulling.id]
-        if let fraction = progress?.fraction {
-            return String(format: "Downloading %@, %.1f GB, %d%%",
-                          pulling.displayName, pulling.diskGB, Int(fraction * 100))
-        }
-        return String(format: "Downloading %@, %.1f GB", pulling.displayName, pulling.diskGB)
+        return ConnectModelCopy.downloading(pulling, ollama.pulls[pulling.id])
     }
 
     /// Where discovery looks, read for the failure sentence rather than assumed.
@@ -504,8 +521,10 @@ struct ModelKeyStep: View {
             // returning with the spinner still turning, so the screen would have
             // sat there working forever on a run that had already stopped.
             defer { probingLocal = false }
+            // The spinner stays up through the download: it carries the
+            // progress line, and turning it off here hid a 2 GB download
+            // behind nothing at all (W4 pass 2, 2026-10-13).
             await ModelRegistry.shared.discoverLocal()
-            probingLocal = false
             guard ModelRegistry.shared.local != nil else {
                 // SAYS WHAT OLLAMA IS. "Start Ollama" assumes the reader has
                 // heard of Ollama, and the person most likely to press a button
@@ -555,12 +574,14 @@ struct ModelKeyStep: View {
                 // the best thing their machine can run rather than a fixed tag
                 // chosen for somebody else's hardware.
                 pulling = pick
-                await OllamaManager.shared.pull(pick.id)
+                // TO THE END OF THE STREAM. `pull` returns once the download
+                // is registered, and reading the tags then said "did not
+                // finish" 5 s into a download that completed 70 s later.
+                let ended = await OllamaManager.shared.pullToEnd(pick.id)
                 pulling = nil
                 await OllamaManager.shared.refreshInstalled()
                 guard !GruxConfig.usableLocalModels(OllamaManager.shared.installedTags).isEmpty else {
-                    localError = OllamaManager.shared.lastError
-                        ?? "Downloading \(pick.displayName) did not finish. Try again, or paste a key."
+                    localError = ConnectModelCopy.downloadFailed(pick, ended)
                     return
                 }
                 // Re-discover, so the registry knows about what was just pulled.

@@ -1,6 +1,10 @@
 import Foundation
 import GruxGuardrails
+#if canImport(Darwin)
 import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 // MARK: - ShellOutputGuard
 //

@@ -38,7 +38,7 @@ struct AgentsView: View {
         // once renamed the window to "Agents" and every tab visited afterwards
         // kept that title: Usage, Settings and the rest all showed "Agents" in
         // the title bar. A stale name is worse than the app name, the sidebar
-        // already shows which tab is active, and "Grux OS" in the title bar is
+        // already shows which tab is active, and "Grux AI" in the title bar is
         // the standard single-window macOS pattern. If per-tab titles are ever
         // wanted, all 36 have to set one, not just this one.
         .task {

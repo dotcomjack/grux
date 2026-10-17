@@ -36,7 +36,7 @@ enum ScreenElementChoice {
         let fx = (frame.midX - bounds.minX) / bounds.width
         let fy = (frame.midY - bounds.minY) / bounds.height
         let v = fy < 0.34 ? "top" : (fy > 0.66 ? "bottom" : "middle")
-        let h = fx < 0.34 ? "left" : (fx > 0.66 ? "right" : "centre")
+        let h = fx < 0.34 ? "left" : (fx > 0.66 ? "right" : "center")
         return "\(v) \(h)"
     }
 

@@ -16,9 +16,10 @@ import XCTest
 @MainActor
 final class SemanticMemoryKindsFilterTests: XCTestCase {
 
-    func test_retrieve_honorsKindsFilter_excludingChatUser() throws {
+    func test_retrieve_honorsKindsFilter_excludingChatUser() async throws {
         let mem = SemanticMemory.shared
-        guard mem.isReady else {
+        let ready = await mem.waitUntilReady()
+        guard ready else {
             throw XCTSkip("NLEmbedding unavailable in this test environment")
         }
 
@@ -40,9 +41,10 @@ final class SemanticMemoryKindsFilterTests: XCTestCase {
                       "beacon should still be retrievable when no kinds filter is applied")
     }
 
-    func test_retrievedAsSystemBlock_honorsKindsFilter() throws {
+    func test_retrievedAsSystemBlock_honorsKindsFilter() async throws {
         let mem = SemanticMemory.shared
-        guard mem.isReady else {
+        let ready = await mem.waitUntilReady()
+        guard ready else {
             throw XCTSkip("NLEmbedding unavailable in this test environment")
         }
 

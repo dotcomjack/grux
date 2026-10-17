@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import AVFoundation
+import AudioToolbox
 import UserNotifications
 import GruxShellCore
 import GruxAgentCore
@@ -55,12 +56,92 @@ enum AudioOutput {
     }
 
     /// Plays the first of `preferred` this install has. Some installs lack a
-    /// named sound, so callers pass fallbacks.
+    /// named sound, so callers pass fallbacks. Before the microphone question,
+    /// the system sound server plays it, never Grux (`outputWouldAskForMic`).
+    @MainActor
     static func chime(_ preferred: [Chime], source: String) {
         guard permit(.chime, source: source, text: preferred.first?.rawValue ?? "") else { return }
+        let outside = outputWouldAskForMic
         for c in preferred {
+            if outside {
+                let url = URL(fileURLWithPath: "/System/Library/Sounds/\(c.rawValue).aiff")
+                guard FileManager.default.fileExists(atPath: url.path) else { continue }
+                playSystemSound(url)
+                return
+            }
             if let s = NSSound(named: NSSound.Name(c.rawValue)) { s.play(); return }
         }
+    }
+
+    // MARK: - Sound before the microphone question
+
+    /// True while the person has not been asked about the microphone. Then any sound
+    /// Grux plays in its own process raises the microphone prompt on a Mac whose output
+    /// device also has inputs (a USB or Bluetooth headset, a virtual machine): coreaudiod
+    /// asks TCC for the microphone on behalf of an app holding the audio-input
+    /// entitlement as soon as it starts audio on such a device. Measured 2026-10-14 on
+    /// the clean VM (one virtual device, 2 in and 2 out), a signed probe with Grux's
+    /// entitlements prompted for an output-only AVAudioEngine, AVSpeechSynthesizer.speak,
+    /// NSSpeechSynthesizer, AVAudioPlayer, NSSound, an AudioQueue, and a child `say` or
+    /// `afplay`. Two paths did not: a system sound, and a player started as its own
+    /// responsible process. The first spoken reply on that VM prompted (W4 build 11).
+    /// Once the person has answered either way, nothing prompts and sound plays in Grux.
+    @MainActor
+    static var outputWouldAskForMic: Bool { MicController.authorizationStatus() == .notDetermined }
+
+    /// Seam for tests: plays a system sound file through the system sound server.
+    nonisolated(unsafe) static var playSystemSound: (URL) -> Void = { url in
+        var sound: SystemSoundID = 0
+        guard AudioServicesCreateSystemSoundID(url as CFURL, &sound) == noErr else { return }
+        AudioServicesPlaySystemSoundWithCompletion(sound) { AudioServicesDisposeSystemSoundID(sound) }
+    }
+
+    /// Plays a sound file in `afplay`, a process macOS holds responsible for itself, so a
+    /// microphone check coreaudiod makes for it is not Grux's and prompts nobody.
+    /// `ended` runs on the main queue when playback finishes or is stopped. Returns the
+    /// stop, or nil when nothing could start (then `ended` never runs). The caller has
+    /// already asked `permit`. A seam for tests.
+    nonisolated(unsafe) static var playDetached: (_ file: URL, _ volume: Float, _ ended: @escaping @Sendable () -> Void) -> (() -> Void)? = { file, volume, ended in
+        guard let pid = spawnOwnResponsibility(["/usr/bin/afplay", "-v", String(volume), file.path], ended: ended) else { return nil }
+        return { _ = kill(pid, SIGTERM) }
+    }
+
+    /// Starts `argv` as its own responsible process (stdio on /dev/null, no inherited
+    /// descriptors) and reaps it, calling `ended` on the main queue. Without the disclaim,
+    /// macOS charges a child's privacy requests to the app that started it: a child `say`
+    /// prompted for Grux on the VM. The disclaim is SPI with no header; Chromium, iTerm2
+    /// and LLDB use it for the same reason. If it is missing, nothing starts.
+    static func spawnOwnResponsibility(_ argv: [String], ended: @escaping @Sendable () -> Void) -> pid_t? {
+        typealias Disclaim = @convention(c) (UnsafeMutablePointer<posix_spawnattr_t?>, Int32) -> Int32
+        guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "responsibility_spawnattrs_setdisclaim") else {
+            WakeLog.shared.log("audio: no responsibility disclaim on this macOS, not starting \(argv.first ?? "")")
+            return nil
+        }
+        var attr: posix_spawnattr_t?
+        posix_spawnattr_init(&attr)
+        defer { posix_spawnattr_destroy(&attr) }
+        guard unsafeBitCast(sym, to: Disclaim.self)(&attr, 1) == 0 else { return nil }
+        // After the disclaim on purpose; test_theDetachedProcessAnswersForItself proves it survives.
+        posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_CLOEXEC_DEFAULT))
+        var actions: posix_spawn_file_actions_t?
+        posix_spawn_file_actions_init(&actions)
+        defer { posix_spawn_file_actions_destroy(&actions) }
+        for fd: Int32 in [0, 1, 2] {
+            posix_spawn_file_actions_addopen(&actions, fd, "/dev/null", fd == 0 ? O_RDONLY : O_WRONLY, 0)
+        }
+        var cargs: [UnsafeMutablePointer<CChar>?] = argv.map { strdup($0) } + [nil]
+        defer { cargs.forEach { free($0) } }
+        var pid: pid_t = 0
+        guard posix_spawn(&pid, argv[0], &actions, &attr, &cargs, environ) == 0 else { return nil }
+        let watch = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: .main)
+        watch.setEventHandler {
+            var status: Int32 = 0
+            waitpid(pid, &status, 0)
+            watch.cancel()
+            ended()
+        }
+        watch.resume()
+        return pid
     }
 
     /// The sound for a posted notification: nil (a silent banner) when silent
@@ -79,10 +160,36 @@ enum AudioOutput {
     }
 
     /// A player for a video clip. Muted in silent mode so the picture still plays.
+    /// Before the microphone question it plays the picture alone: a muted player still
+    /// starts audio output in Grux, which would raise the prompt (measured 2026-10-14 on
+    /// a test Mac, a muted AVPlayer and one with its audio track disabled both started
+    /// the output device; a video-only composition did not).
+    @MainActor
     static func videoPlayer(url: URL, source: String) -> AVPlayer {
-        let player = AVPlayer(url: url)
-        if !permit(.video, source: source, text: url.lastPathComponent) { player.isMuted = true }
+        let allowed = permit(.video, source: source, text: url.lastPathComponent)
+        guard outputWouldAskForMic else {
+            let player = AVPlayer(url: url)
+            if !allowed { player.isMuted = true }
+            return player
+        }
+        let player = AVPlayer()
+        if !allowed { player.isMuted = true }
+        Task { @MainActor in player.replaceCurrentItem(with: await pictureOnly(url)) }
         return player
+    }
+
+    /// The clip's video tracks with no audio track at all, or nil if it has none.
+    static func pictureOnly(_ url: URL) async -> AVPlayerItem? {
+        let asset = AVURLAsset(url: url)
+        guard let duration = try? await asset.load(.duration),
+              let tracks = try? await asset.loadTracks(withMediaType: .video), !tracks.isEmpty else { return nil }
+        let picture = AVMutableComposition()
+        for track in tracks {
+            guard let copy = picture.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else { continue }
+            try? copy.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: track, at: .zero)
+            copy.preferredTransform = (try? await track.load(.preferredTransform)) ?? .identity
+        }
+        return AVPlayerItem(asset: picture)
     }
 
     /// Points the shell doors (`ShellSilence` in GruxShellCore) and the agent sandboxes

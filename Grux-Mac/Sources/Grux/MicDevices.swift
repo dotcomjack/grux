@@ -31,8 +31,28 @@ enum MicDevices {
         var id: String { uid }
     }
 
+    /// Whether Grux may read input devices from CoreAudio at all: only once
+    /// macOS has granted the microphone.
+    ///
+    /// READING IS ENOUGH TO PROMPT. On a clean Mac the launch scan for known
+    /// external mics read each input device's streams, and coreaudiod asked
+    /// TCC for the microphone on Grux's behalf: the prompt came up 80 ms after
+    /// launch, before any window (W4 tccd log, 2026-10-13: Grux's own
+    /// preflight, then coreaudiod's request). With access not yet granted,
+    /// every input query here answers "none" instead. The capture paths ask
+    /// for access first (MicController.ensureAuthorized), so they read real
+    /// devices; the launch scan and the first-run screen simply wait.
+    static var inputQueriesAllowed: () -> Bool = {
+        AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+    }
+
+    /// For tests: how many input queries reached CoreAudio.
+    private(set) static var inputQueriesMade = 0
+
     /// Enumerate every device that exposes input streams.
     static func listInputs() -> [Device] {
+        guard inputQueriesAllowed() else { return [] }
+        inputQueriesMade += 1
         var out: [Device] = []
         var size: UInt32 = 0
         var addr = AudioObjectPropertyAddress(
@@ -61,6 +81,8 @@ enum MicDevices {
 
     /// UID of the system-wide default input device (what Audio MIDI Setup shows).
     static func systemDefaultInputUID() -> String? {
+        guard inputQueriesAllowed() else { return nil }
+        inputQueriesMade += 1
         var id: AudioDeviceID = 0
         var size = UInt32(MemoryLayout<AudioDeviceID>.size)
         var addr = AudioObjectPropertyAddress(
@@ -75,7 +97,12 @@ enum MicDevices {
     }
 
     /// Resolve a Device UID → AudioDeviceID (CoreAudio's runtime handle).
+    /// Guarded itself, not only through its callers: it enumerates every
+    /// device, and a future caller outside an access check would reopen the
+    /// launch prompt.
     static func deviceID(forUID uid: String) -> AudioDeviceID? {
+        guard inputQueriesAllowed() else { return nil }
+        inputQueriesMade += 1
         var size: UInt32 = 0
         var addr = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,
@@ -102,6 +129,7 @@ enum MicDevices {
     /// permanent mic" toggle so the user does not have to visit Sound prefs.
     @discardableResult
     static func setSystemDefaultInput(toUID uid: String) -> Bool {
+        guard inputQueriesAllowed() else { return false }
         guard let id = deviceID(forUID: uid) else { return false }
         var target = id
         var addr = AudioObjectPropertyAddress(

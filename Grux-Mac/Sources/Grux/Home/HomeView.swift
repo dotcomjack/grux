@@ -30,46 +30,54 @@ struct HomeView: View {
     private var b: HomeBriefing { model.briefing }
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 0) {
-                HomeHeroView(greeting: b.greeting, dateLine: b.dateLine)
+        GeometryReader { pane in
+            ScrollView {
+                VStack(spacing: 0) {
+                    HomeHeroView(greeting: b.greeting, dateLine: b.dateLine,
+                                 height: HomeHeroView.heroHeight(forPane: pane.size.height))
 
-                VStack(spacing: GruxSpacing.l) {
-                    todayCards
+                    VStack(spacing: GruxSpacing.l) {
+                        todayCards
 
-                    VStack(spacing: GruxSpacing.s) {
-                        startMyDayButton
-                        sayItLine
-                        Button("Tune how Grux works") { AppState.shared.requestedTab = "tuning" }
-                            .buttonStyle(.borderless)
-                            .font(GruxType.caption)
+                        VStack(spacing: GruxSpacing.s) {
+                            startMyDayButton
+                            sayItLine
+                            Button("Tune how Grux works") { AppState.shared.requestedTab = "tuning" }
+                                .buttonStyle(.borderless)
+                                .font(GruxType.caption)
+                        }
+
+                        if briefingEngine.latest != nil {
+                            jaxBriefingCard
+                        }
+                        briefingStack
                     }
-
-                    if briefingEngine.latest != nil {
-                        jaxBriefingCard
-                    }
-                    briefingStack
+                    .padding(.horizontal, GruxSpacing.xl)
+                    .padding(.bottom, GruxSpacing.xl)
+                    // Pull the card stack up so it overlaps the hero's faded base,
+                    // making hero and briefing read as one continuous surface.
+                    .padding(.top, GruxSpacing.s)
+                    // Cap the CARD STACK only. The hero above stays full bleed,
+                    // because a hero image is supposed to run edge to edge; the
+                    // stack under it is not. At a 2400pt window "Wrap up the day"
+                    // rendered as a single button roughly 2200pt wide, with the four
+                    // quick actions stretched to match. Inert at the 840pt floor.
+                    .frame(maxWidth: GruxLayout.contentMax)
                 }
-                .padding(.horizontal, GruxSpacing.xl)
-                .padding(.bottom, GruxSpacing.xl)
-                // Pull the card stack up so it overlaps the hero's faded base,
-                // making hero and briefing read as one continuous surface.
-                .padding(.top, GruxSpacing.s)
-                // Cap the CARD STACK only. The hero above stays full bleed,
-                // because a hero image is supposed to run edge to edge; the
-                // stack under it is not. At a 2400pt window "Wrap up the day"
-                // rendered as a single button roughly 2200pt wide, with the four
-                // quick actions stretched to match. Inert at the 840pt floor.
-                .frame(maxWidth: GruxLayout.contentMax)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(GruxTheme.base)
         .onAppear {
-            model.refresh()
-            // Keep the spoken briefing live: if the shown one is stale or from an
-            // earlier part of the day, silently regenerate it time-framed for now.
-            Task { await briefingEngine.refreshIfStale() }
+            // The first paint is the greeting and the cards' empty state.
+            // The live read used to run here, on the main thread, before
+            // that paint, and subscribing to the stores already did the
+            // same read seven more times inside init.
+            Task { @MainActor in
+                await Task.yield()
+                model.refresh()
+                await briefingEngine.refreshIfStale()
+            }
         }
     }
 
@@ -343,14 +351,25 @@ struct HomeView: View {
     /// thinking are left out on purpose: they are moments, and observing the
     /// speech engine here would redraw Today at audio rate while Grux talks.
     private var sayItLine: some View {
-        Text(TodayModel.sayItLine(ListeningTell.resolve(mode: state.config.listeningModeInEffect,
-                                                        micMuted: state.micMuted,
-                                                        isSpeaking: false, isThinking: false,
-                                                        notHearing: micHealth.notHearing)))
-            .font(GruxType.caption)
-            .foregroundStyle(GruxTheme.textTertiary)
-            .frame(maxWidth: .infinity)
-            .multilineTextAlignment(.center)
+        let tell = ListeningTell.resolve(mode: state.config.listeningModeInEffect,
+                                         micMuted: state.micMuted,
+                                         isSpeaking: false, isThinking: false,
+                                         notHearing: micHealth.notHearing,
+                                         awaitingConsent: state.config.listeningAwaitingConsent)
+        return VStack(spacing: GruxSpacing.xs) {
+            Text(TodayModel.sayItLine(tell))
+                .font(GruxType.caption)
+                .foregroundStyle(GruxTheme.textTertiary)
+                .multilineTextAlignment(.center)
+            // Waiting is the one state the line cannot fix by itself: the yes.
+            if tell == .waiting {
+                Button(ListeningTell.allowTitle) { ListeningTell.allow() }
+                    .buttonStyle(.borderless)
+                    .font(GruxType.caption)
+                    .help(tell.help)
+            }
+        }
+        .frame(maxWidth: .infinity)
     }
 
     private func emptyLine(_ text: String) -> some View {

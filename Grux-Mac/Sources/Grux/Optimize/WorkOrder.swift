@@ -251,7 +251,7 @@ enum WorkOrderPrompt {
         ]
         lines += sourceLines(context)
         lines += [
-            "- Settings: `\(context.supportDir)/config.json` and `\(context.supportDir)/theme.json` (accent colour, appearance). Grux watches both and applies an edit the moment the file changes, so edit them while Grux runs. Grux's own data is in `~/.grux`. The log is `\(context.supportDir)/wake.log`.",
+            "- Settings: `\(context.supportDir)/config.json` and `\(context.supportDir)/theme.json` (accent color, appearance). Grux watches both and applies an edit the moment the file changes, so edit them while Grux runs. Grux's own data is in `~/.grux`. The log is `\(context.supportDir)/wake.log`.",
             "- Build, sign, install and relaunch: `./build.sh` inside `Grux-Mac`. Tests: `swift test` inside `Grux-Mac`.",
             "- Report EVERY station, the reviews included, the moment you reach it, by appending one line `<stage> | <note>` to `\(progress)`, for example `echo \"analysis | it is a setting in theme.json\" >> \"\(progress)\"`. Grux shows it live under Optimize Grux. The words, in order: \(WorkOrderStage.line.map(\.rawValue).joined(separator: ", ")), then done or stopped.",
             "",
@@ -259,11 +259,11 @@ enum WorkOrderPrompt {
             "",
             "- Read `CLAUDE.md` in `Grux-Mac` and `CONTRIBUTING.md` in the repository first. Where they disagree with this order, they win.",
             "- The smallest change that does it. If a setting already does what was asked, changing the setting IS the work: no code.",
-            "- Colours, type, spacing and radii come from `Sources/Grux/DesignSystem`. Never hard code one in a view.",
+            "- Colors, type, spacing and radii come from `Sources/Grux/DesignSystem`. Never hard code one in a view.",
             "- No em dash (U+2014) and no en dash (U+2013) anywhere: code, comments, copy, tests or the commit message. Use a comma, a colon or parentheses.",
             "- Nothing new leaves the Mac: no telemetry, no new network calls, no key, token or password in any file (Grux reads credentials from the Keychain only). Audio never leaves the machine.",
             "- Anything that sends, deletes or spends still goes through Approvals.",
-            "- Every existing test keeps passing. If behaviour changed, add a test and show it failing without the change.",
+            "- Every existing test keeps passing. If behavior changed, add a test and show it failing without the change.",
             "- The person's yes at review-3 covers committing the change on the source checkout's current branch and installing it. Push only if they ask, or if `CLAUDE.md` says to.",
             "",
             "## The line",

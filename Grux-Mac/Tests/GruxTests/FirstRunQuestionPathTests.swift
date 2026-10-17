@@ -304,6 +304,31 @@ final class FirstRunQuestionPathTests: XCTestCase {
         }
     }
 
+    /// Audit 2026-10-13, item 3: the first screen had no orb and no name, a
+    /// grey paragraph under the field, and the list option as underlined
+    /// small print. Who is asking comes first now, listening is one line with
+    /// every word of the old paragraph one click under it, and the list is a
+    /// real button.
+    func test_theQuestionScreenSaysWhoIsAskingAndFoldsTheDetail() throws {
+        let prompt = try body(of: "struct FirstPromptStep",
+                              in: try source("Sources/Grux/Onboarding/FirstRunScreens.swift"))
+        let orb = try XCTUnwrap(prompt.range(of: "OrbView("), "the first screen has no orb")
+        let mark = try XCTUnwrap(prompt.range(of: "Text(PanelCopy.wordmark)"), "the first screen has no name")
+        let question = try XCTUnwrap(prompt.range(of: "Text(FirstPrompt.question)"))
+        XCTAssertLessThan(orb.lowerBound, question.lowerBound, "the orb comes after the question")
+        XCTAssertLessThan(mark.lowerBound, question.lowerBound, "the name comes after the question")
+        XCTAssertEqual(PanelCopy.wordmark, "GRUX AI")
+        let fold = try XCTUnwrap(prompt.range(of: "DisclosureGroup(FirstPrompt.howListeningWorks"),
+                                 "the listening detail is not behind How listening works")
+        let detail = try XCTUnwrap(prompt.range(of: "Text(FirstPrompt.listening.body)"),
+                                   "the promise in the old paragraph is no longer reachable")
+        XCTAssertGreaterThan(detail.lowerBound, fold.lowerBound, "the detail sits outside the disclosure")
+        XCTAssertEqual(FirstPrompt.howListeningWorks, "How listening works")
+        let list = try XCTUnwrap(prompt.components(separatedBy: "Button(FirstPrompt.pickFromAList)").dropFirst().first).prefix(160)
+        XCTAssertTrue(list.contains(".buttonStyle(.bordered)"), "pick from a list is not a real button")
+        XCTAssertFalse(list.contains(".underline()"), "pick from a list is still underlined small print")
+    }
+
     func test_theQuestionScreenSaysWhatTheAcceptedRenderSays() {
         XCTAssertEqual(FirstPrompt.listening.lead, "Listening is off until you turn it on, later in this setup.")
         XCTAssertEqual(FirstPrompt.pickFromAList, "I would rather pick from a list")

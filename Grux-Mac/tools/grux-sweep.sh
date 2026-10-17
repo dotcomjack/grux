@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Fast tab sweep: switch a LIVE Grux OS to each tab and screenshot it.
+# Fast tab sweep: switch a LIVE Grux AI to each tab and screenshot it.
 #
 #   Grux-Mac/tools/grux-sweep.sh <prefix> <tab>...
 #   GRUX_SWEEP_OUT=/tmp/shots Grux-Mac/tools/grux-sweep.sh floor home chat mailbox
@@ -198,7 +198,7 @@ resolve_window() {
       line=$(python3 -c '
 import json, sys
 for w in json.load(open(sys.argv[1])).get("windows", []):
-    if w.get("title") == "Grux OS" and w.get("visible"):
+    if w.get("title") == "Grux AI" and w.get("visible"):
         print("%d\t%dx%d" % (w["id"], w["frame"][2], w["frame"][3])); break
 ' "$WORKSPACE" 2>/dev/null)
       if [ -n "$line" ]; then
@@ -209,12 +209,12 @@ for w in json.load(open(sys.argv[1])).get("windows", []):
       sleep 0.2
       continue
     fi
-    # The MAIN window is the one titled "Grux OS". Since 3.0 the Ambient HUD
+    # The MAIN window is the one titled "Grux AI". Since 3.0 the Ambient HUD
     # panel (untitled, 392x1020) is up at launch too and can list first, and
     # a sweep that captured it reported NEVER DIVERGED for every tab, which
     # was true of the HUD and said nothing about the tabs. Prefer the title;
     # fall back to the first Grux window only when no titled one is on screen.
-    line=$(xcrun swift "$HERE/winid.swift" Grux 2>/dev/null | awk -F'\t' '$4 == "Grux OS" {print; exit}')
+    line=$(xcrun swift "$HERE/winid.swift" Grux 2>/dev/null | awk -F'\t' '$4 == "Grux AI" {print; exit}')
     [ -z "$line" ] && line=$(xcrun swift "$HERE/winid.swift" Grux 2>/dev/null | head -1)
     if [ -n "$line" ]; then
       WINID=$(print -r -- "$line" | cut -f1)
@@ -265,7 +265,7 @@ done
 # reason is worth writing down because the obvious fix was wrong. When Grux is
 # running with no window, the trigger DOES reach openLaunchWindow and a window
 # IS created: CGWindowListCopyWindowInfo with .optionAll lists it at 1040x732,
-# titled "Grux OS". It simply never becomes ON-SCREEN, so winid.swift, which
+# titled "Grux AI". It simply never becomes ON-SCREEN, so winid.swift, which
 # asks for .optionOnScreenOnly, cannot see it.
 #
 # The cause is macOS activation policy, not window state. A background app

@@ -80,7 +80,9 @@ final class LocalModelProvisioningTests: XCTestCase {
                       "The pick is not scored against this Mac's hardware.")
         // `pullRefusal` CONTAINS "pull", so the loose substring matched a plant
         // that had deleted the fetch entirely. The call has to be named exactly.
-        XCTAssertTrue(body.contains("await OllamaManager.shared.pull(pick.id)"),
+        // To the END of the stream: `pull` returns once the download is
+        // registered, and reading the tags then failed a live download (W4).
+        XCTAssertTrue(body.contains("await OllamaManager.shared.pullToEnd(pick.id)"),
                       "Nothing actually fetches a model, so a bare Ollama still dead-ends.")
     }
 
@@ -139,9 +141,13 @@ final class LocalModelProvisioningTests: XCTestCase {
         let src = try source("Sources/Grux/Onboarding/OnboardingView.swift")
         XCTAssertTrue(src.contains("private var pullLabel"),
                       "There is no label for the download.")
-        XCTAssertTrue(src.contains("Downloading"),
+        // The line is shared with Settings, Models (W4 pass 2): one formatter.
+        XCTAssertTrue(src.contains("ConnectModelCopy.downloading(pulling, ollama.pulls[pulling.id])"),
+                      "The label no longer reads the streamed progress.")
+        let copy = try source("Sources/Grux/Settings/ConnectModelSection.swift")
+        XCTAssertTrue(copy.contains("Downloading"),
                       "The spinner still says only that it is looking.")
-        XCTAssertTrue(src.contains("pulling.diskGB"),
+        XCTAssertTrue(copy.contains("m.diskGB"),
                       "The download does not say how big it is.")
     }
 }

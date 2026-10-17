@@ -49,7 +49,7 @@ enum TriageCategory: String, Codable, CaseIterable, Identifiable {
         case .commandPhases: return "Commands"
         case .emailTriage: return "Email triage"
         case .meeting: return "Meetings"
-        case .foundry: return "Foundry"
+        case .foundry: return "Self-Upgrade"
         case .system: return "System"
         }
     }

@@ -5,7 +5,14 @@ import Combine
 @MainActor
 final class AppState: ObservableObject {
     @Published var tasks: [FocusTask] = []
-    @Published var currentTaskId: UUID?
+    @Published var currentTaskId: UUID? {
+        didSet { if currentTaskId != oldValue { currentTaskSince = currentTaskId == nil ? nil : Date() } }
+    }
+    /// When the current task became current: what the menu bar's focus time
+    /// counts from. It counted from the last focus check, so it read a few
+    /// seconds every time the menu opened (W4, 2026-10-13). After a relaunch
+    /// the task's own creation time is the best start Grux has.
+    @Published private(set) var currentTaskSince: Date?
     @Published var events: [FocusEvent] = []
     // Active chat thread's messages, mirrored here so SwiftUI reacts to
     // appends/clears without every view having to subscribe to the store.
@@ -32,6 +39,36 @@ final class AppState: ObservableObject {
     @Published var consecutiveDrifts: Int = 0
     @Published var snoozedUntil: Date?
     @Published var isThinking: Bool = false
+    /// A CHAT turn is in flight. Set only by `ChatService.send`, never
+    /// `isThinking`: FocusWatcher toggles that around its own vision calls,
+    /// and a watcher tick ending mid-reply would release the deferred title
+    /// call onto the local model ahead of the reply (PR 40 W2d review).
+    @Published private(set) var chatTurnInFlight: Bool = false {
+        didSet {
+            guard chatTurnInFlight != oldValue else { return }
+            thinkingSince = chatTurnInFlight ? Date() : nil
+            if !chatTurnInFlight, let id = backgroundAfterTurn {
+                backgroundAfterTurn = nil
+                runThreadBackground(threadId: id)
+            }
+        }
+    }
+    /// Chat turns can overlap (typed, voice, a resend), so the flag is a
+    /// count: it clears when the LAST one ends, not when the first does (PR
+    /// 40 W2d review).
+    private var chatTurns = 0
+    func beginChatTurn() {
+        chatTurns += 1
+        chatTurnInFlight = true
+    }
+    func endChatTurn() {
+        chatTurns = max(0, chatTurns - 1)
+        if chatTurns == 0 { chatTurnInFlight = false }
+    }
+    /// When the chat turn in flight started, for the elapsed line under it.
+    @Published private(set) var thinkingSince: Date?
+    /// A thread whose title and compaction wait for the turn in flight to end.
+    private var backgroundAfterTurn: UUID?
     @Published var lastOcrSnippet: String = ""
     // Capture privacy, surfaced rather than silent. A privacy control the user
     // cannot see working is one they cannot trust, and the failure mode of a
@@ -74,6 +111,36 @@ final class AppState: ObservableObject {
     // switches its TabView selection, then clears it back to nil so a stale
     // value never re-fires the next time Settings opens.
     @Published var requestedSettingsTab: String?
+    /// The deep link a Settings view took last, and when. Two Settings can be
+    /// alive at once (the window, kept after closing, and the pane), and the
+    /// first to see a request cleared it, so the one actually opening landed
+    /// on General: the panel's "Connect a model" did exactly that (W4 pass 2,
+    /// 2026-10-13). A request taken moments ago is still the next one's to honour.
+    private(set) var takenSettingsRequest: (tag: String, at: Date)?
+    static let settingsRequestWindow: TimeInterval = 2
+
+    /// The pending Settings deep link, or the one another Settings took within
+    /// `settingsRequestWindow`. Clears the pending one.
+    ///
+    /// `appearing` is a Settings that is opening right now, or one already on
+    /// screen, so it is the one the request was for: once it has it, the
+    /// request is spent, and closing
+    /// Settings and reopening it from the gear a moment later opens plainly
+    /// rather than at the old section (PR 40 review). A Settings that only saw
+    /// the change, such as a closed window kept alive, does not spend it.
+    func takeSettingsRequest(now: Date = Date(), appearing: Bool = false) -> String? {
+        var tag: String?
+        if let tab = requestedSettingsTab, !tab.isEmpty {
+            requestedSettingsTab = nil
+            takenSettingsRequest = (tab, now)
+            tag = tab
+        } else if let taken = takenSettingsRequest,
+                  now.timeIntervalSince(taken.at) < Self.settingsRequestWindow {
+            tag = taken.tag
+        }
+        if appearing, tag != nil { takenSettingsRequest = nil }
+        return tag
+    }
     // A section inside a tab, for a folded child with no key of its own:
     // `fire-open-tab integrations:webhooks` opens Integrations scrolled to
     // Outbound Webhooks (Phase C C5, "a child opens its parent at the
@@ -190,6 +257,7 @@ final class AppState: ObservableObject {
         self.events = Persistence.load([FocusEvent].self, from: Persistence.eventsURL, fallback: [])
         self.currentTaskId = tasks.first(where: { $0.priority == .now && !$0.completed })?.id
             ?? tasks.first(where: { !$0.completed })?.id
+        self.currentTaskSince = currentTask?.createdAt
         // ChatThreadStore.shared migrates any legacy chat.json on init, so by
         // the time we read its index we either see migrated threads, an
         // explicitly-created thread from a previous session, or an empty
@@ -567,6 +635,23 @@ final class AppState: ObservableObject {
         // Fire-and-forget title generation + auto-compaction in the
         // background. Both bail out on missing key, failure, or no-op
         // conditions, so they're safe to call every turn.
+        //
+        // ON A LOCAL MODEL THEY WAIT FOR THE REPLY. There is one model and
+        // LocalModelGate serves it in order, so a title call fired with the
+        // person's message ran first and the reply queued behind it: the W4
+        // VM's first turn was three calls, 19.8 s, 4 min 51 s and 34.6 s.
+        if Self.backgroundWaitsForTurn(thinking: chatTurnInFlight, resolved: ModelRegistry.shared.resolvedProvider) {
+            backgroundAfterTurn = threadId
+        } else {
+            runThreadBackground(threadId: threadId)
+        }
+    }
+
+    nonisolated static func backgroundWaitsForTurn(thinking: Bool, resolved: ActiveProvider) -> Bool {
+        thinking && resolved == .local
+    }
+
+    private func runThreadBackground(threadId: UUID) {
         Task { await autoTitleIfNeeded(threadId: threadId) }
         Task { await autoCompactIfNeeded() }
     }

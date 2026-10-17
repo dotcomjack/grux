@@ -404,7 +404,9 @@ public actor ACPConnection {
     }
 
     private func suppressSigpipe(on handle: FileHandle) {
+#if !os(Linux)
         _ = fcntl(handle.fileDescriptor, F_SETNOSIGPIPE, 1)
+#endif
     }
 
     private func attachReader(_ handle: FileHandle) {

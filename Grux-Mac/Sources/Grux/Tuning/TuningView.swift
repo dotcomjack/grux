@@ -18,7 +18,7 @@ enum TuningCopy {
     static let title = "Tuning"
     static let subtitle = "What Grux does for you. Open one to change how it does it."
     static let optimizeTitle = "Tell Grux what you want"
-    static let optimizeBody = "Anything these dials cannot do, from a colour to a new surface. Your coding agent builds it; you approve it."
+    static let optimizeBody = "Anything these dials cannot do, from a color to a new surface. Your coding agent builds it; you approve it."
     static let pointer = "Now in Tuning, with everything else about how Grux acts, interrupts, spends and remembers."
     static let settingsLink = "How Grux acts on what you say, talks back, interrupts you, works on its own, spends and remembers. Every one of those dials is in Tuning."
     static let spokenPointer = "Speaking aloud and voice speed are in Tuning. The voice itself and its key stay here."
@@ -30,8 +30,22 @@ enum TuningCopy {
     /// promise something nothing does.
     static let interrupt = "To cut Grux off mid-sentence, press the microphone in Chat to answer, or mute its voice."
 
-    static func tierPointer(_ tier: GruxTier) -> String {
-        "\(tier.label), about $\(tier.estimatedMonthlyUSD) a month. How often Grux looks, and what that costs, is in Tuning."
+    /// `spends` is whether anything on this setup is billed. The estimate is
+    /// for a cloud key; a fresh install with none read "about $60 a month"
+    /// while nothing could be charged (W4 pass 2, 2026-10-13).
+    static func tierPointer(_ tier: GruxTier, spends: Bool = true) -> String {
+        guard spends else {
+            return "\(tier.label), $0 a month as set up: there is no cloud key, so nothing is billed. "
+                + "How often Grux looks, and what a key would cost, is in Tuning."
+        }
+        return "\(tier.label), about $\(tier.estimatedMonthlyUSD) a month. How often Grux looks, and what that costs, is in Tuning."
+    }
+
+    /// Whether this setup can be billed at all: a cloud key, or a hosted endpoint.
+    @MainActor static var tierSpends: Bool {
+        if KeychainStore.exists(.anthropicApiKey) { return true }
+        if case .custom = ModelRegistry.shared.resolvedProvider { return true }
+        return false
     }
 
     /// Every entry point opens the same tab.
@@ -64,9 +78,26 @@ enum TuningCopy {
 
     // MARK: - One line per card, from live values. Pure.
 
-    static func acts(threshold: Double, mode: ListeningMode) -> String {
-        "Acts at \(String(format: "%.2f", threshold)) or more, listening \(mode.label.lowercased())."
+    /// The headline says the threshold in words; the number stays on the
+    /// dial under it. "Acts at 0.70" asked a person to know what 0.70 of
+    /// what (audit 2026-10-13, item 9).
+    static func acts(threshold: Double, mode: ListeningMode, waiting: Bool = false) -> String {
+        "Acts \(sure(threshold)), listening \(mode.label.lowercased())"
+            + (waiting ? " once you agree." : ".")
     }
+
+    /// How sure Grux must be, in words. The slider runs 0.50 to 0.95.
+    static func sure(_ threshold: Double) -> String {
+        switch threshold {
+        case ..<0.625: return "when it is fairly sure"
+        case ..<0.775: return "when it is sure"
+        case ..<0.875: return "when it is very sure"
+        default:       return "only when it is certain"
+        }
+    }
+
+    /// Under the Listening picker when the mode is chosen but not agreed to.
+    static let waitingNote = "The microphone is still closed: Grux needs your OK first."
 
     static func talks(speaks: Bool, rate: Double) -> String {
         speaks ? "Speaks replies at \(Self.rate(rate))x." : "Quiet: replies stay on screen."
@@ -102,6 +133,7 @@ enum TuningCopy {
 struct TuningView: View {
     @ObservedObject private var state = AppState.shared
     @ObservedObject private var ledger = DecisionLedger.shared
+    @Environment(\.paneTitles) private var paneTitles
     @State private var open: TuningCopy.Card?
 
     /// Opens with "Acts on what I say" unfolded, as the accepted render does.
@@ -110,9 +142,11 @@ struct TuningView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                Text(TuningCopy.title)
-                    .font(GruxType.title)
-                    .foregroundStyle(GruxTheme.textPrimary)
+                if !PaneHeading.repeats(TuningCopy.title, paneTitles: paneTitles) {
+                    Text(TuningCopy.title)
+                        .font(GruxType.title)
+                        .foregroundStyle(GruxTheme.textPrimary)
+                }
                 Text(TuningCopy.subtitle)
                     .font(.callout)
                     .foregroundStyle(GruxTheme.textSecondary)
@@ -137,24 +171,27 @@ struct TuningView: View {
 
     /// Seven cards leave the eighth place for "Tell Grux what you want", so
     /// the way past these dials sits where the eye ends up.
+    ///
+    /// Two columns that size independently. As a Grid, a row's two cards
+    /// matched heights, so the open "Acts on what I say" stretched "Talks
+    /// back" beside it into a 450pt empty card (audit 2026-10-13, item 9).
     private var twoColumns: some View {
         let cards = TuningCopy.Card.allCases
-        return VStack(alignment: .leading, spacing: GruxSpacing.m) {
-            Grid(horizontalSpacing: GruxSpacing.m, verticalSpacing: GruxSpacing.m) {
-                ForEach(Array(stride(from: 0, to: cards.count, by: 2)), id: \.self) { i in
-                    GridRow(alignment: .top) {
-                        cardView(cards[i])
-                        if i + 1 < cards.count { cardView(cards[i + 1]) } else { optimizeCard }
-                    }
-                }
+        let left = stride(from: 0, to: cards.count, by: 2).map { cards[$0] }
+        let right = stride(from: 1, to: cards.count, by: 2).map { cards[$0] }
+        return HStack(alignment: .top, spacing: GruxSpacing.m) {
+            VStack(alignment: .leading, spacing: GruxSpacing.m) {
+                ForEach(left, id: \.self) { cardView($0) }
+                if cards.count % 2 == 0 { optimizeCard }
             }
-            // At its ideal height, always. Every card stretches (maxHeight
-            // .infinity) so a row's two cards match; offered a finite height,
-            // the Grid spread it over every row and drew taller than it had
-            // measured, up over the title (1319 pt in a 1107 pt slot at 680).
-            .fixedSize(horizontal: false, vertical: true)
-            if cards.count % 2 == 0 { optimizeCard }
+            VStack(alignment: .leading, spacing: GruxSpacing.m) {
+                ForEach(right, id: \.self) { cardView($0) }
+                if cards.count % 2 == 1 { optimizeCard }
+            }
         }
+        // At its ideal height, always: offered a finite height, a stack can
+        // spread it over its cards and draw over the title.
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     /// The same cards in one column, the way past them still last.
@@ -192,7 +229,8 @@ struct TuningView: View {
             }
         }
         .padding(20)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        // Its own height: a card never stretches to match a neighbour.
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(RoundedRectangle(cornerRadius: GruxTheme.Radius.card)
             .fill(isOpen ? GruxTheme.accentPrimary.opacity(0.07) : Color.white.opacity(0.035)))
         .overlay(RoundedRectangle(cornerRadius: GruxTheme.Radius.card)
@@ -211,7 +249,9 @@ struct TuningView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(20)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            // Its own height, like every card: stretched, it ran to the
+            // bottom of the taller column as one long empty card.
+            .frame(maxWidth: .infinity, alignment: .topLeading)
             .background(RoundedRectangle(cornerRadius: GruxTheme.Radius.card).fill(GruxTheme.accentPrimary.opacity(0.12)))
             .overlay(RoundedRectangle(cornerRadius: GruxTheme.Radius.card).stroke(GruxTheme.accentPrimary.opacity(0.4), lineWidth: 1))
             .contentShape(Rectangle())
@@ -222,7 +262,8 @@ struct TuningView: View {
     private func summary(_ card: TuningCopy.Card) -> String {
         let c = state.config
         switch card {
-        case .acts: return TuningCopy.acts(threshold: c.listeningThreshold, mode: c.listeningMode)
+        case .acts: return TuningCopy.acts(threshold: c.listeningThreshold, mode: c.listeningMode,
+                                           waiting: c.listeningAwaitingConsent)
         case .talks: return TuningCopy.talks(speaks: c.speakRepliesAloud, rate: c.voicePlaybackRate)
         case .interrupts: return TuningCopy.interrupts(start: c.activeHoursStart, end: c.activeHoursEnd, cooldown: c.focusCooldownMinutes)
         case .alone: return TuningCopy.alone(mode: c.currentMode, ceiling: c.selfUpgradeMaxTier)
@@ -245,7 +286,18 @@ struct TuningView: View {
                     ForEach(ListeningMode.allCases) { Text($0.label).tag($0) }
                 }.pickerStyle(.segmented).labelsHidden()
                 note(state.config.listeningMode.explanation)
-                if state.config.listeningMode != .off { note(MicConsent.runningNote) }
+                if state.config.listeningAwaitingConsent {
+                    // Chosen but not agreed to: say so here, where the choice
+                    // was made, with the one button that opens the microphone.
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(TuningCopy.waitingNote)
+                            .font(.caption).foregroundStyle(GruxTheme.warnAmber)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 8)
+                        Button(ListeningTell.allowTitle) { ListeningTell.allow() }
+                            .buttonStyle(.borderless).font(.caption)
+                    }
+                } else if state.config.listeningMode != .off { note(MicConsent.runningNote) }
             }
             dial("How sure before acting", value: String(format: "%.2f", state.config.listeningThreshold)) {
                 Slider(value: binding(\.listeningThreshold), in: 0.50...0.95, step: 0.05)

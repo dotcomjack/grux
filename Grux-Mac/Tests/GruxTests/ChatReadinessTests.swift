@@ -134,12 +134,13 @@ final class ChatReadinessTests: XCTestCase {
     }
 }
 
-/// The notice has to land the user on the FIELD, not the pane.
+/// The notice has to land the user on what it names, not the pane top.
 ///
 /// "models" resolves to `SettingsLocation(pane: .models)` with no anchor, so it
-/// opens the top of a long pane and leaves the user hunting. "api" resolves to
-/// `anchor: "models.api"`, which is the Anthropic key field itself. Getting this
-/// wrong is how a "go to Settings" sentence becomes a scavenger hunt.
+/// opens the top of a long pane and leaves the user hunting. The notice names a
+/// local model and a key, so it opens "connect", the section offering both (W4
+/// pass 2, 2026-10-13); "api" still resolves to the key field itself. Getting
+/// this wrong is how a "go to Settings" sentence becomes a scavenger hunt.
 final class ChatReadinessRoutingTests: XCTestCase {
 
     func testTheNoticeRoutesToTheKeyFieldNotThePaneTop() throws {
@@ -149,9 +150,9 @@ final class ChatReadinessRoutingTests: XCTestCase {
         guard let r = src.range(of: "ChatReadinessNotice(readiness: readiness)") else {
             return XCTFail("the notice is no longer constructed here")
         }
-        let window = String(src[r.upperBound...].prefix(320))
-        XCTAssertTrue(window.contains("\"api\""),
-                      "the notice opens the Models pane top instead of the Anthropic key field")
+        let window = String(src[r.upperBound...].prefix(900))
+        XCTAssertTrue(window.contains("requestedSettingsTab = \"connect\""),
+                      "the notice opens somewhere other than the section that connects a model")
     }
 
     /// And the destination must actually resolve to that anchor.
@@ -160,5 +161,12 @@ final class ChatReadinessRoutingTests: XCTestCase {
         let loc = SettingsTabAliases.resolve("api")
         XCTAssertEqual(loc.anchor, "models.api",
                        "the api tag no longer points at the key field")
+    }
+
+    @MainActor
+    func testTheConnectTagResolvesToTheConnectSection() {
+        let loc = SettingsTabAliases.resolve("connect")
+        XCTAssertEqual(loc.pane, .models)
+        XCTAssertEqual(loc.anchor, "models.connect")
     }
 }

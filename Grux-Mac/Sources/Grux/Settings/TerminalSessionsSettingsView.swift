@@ -279,6 +279,7 @@ struct TerminalSessionsSettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .settingsPaneBackground()
         .onAppear {
             understood = CapabilityResolver.isSatisfied(.stepTerminalSessionsExplained)
             maxParallel = Self.storedPreference()

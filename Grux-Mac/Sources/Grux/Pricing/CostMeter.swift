@@ -70,7 +70,10 @@ final class CostMeter: ObservableObject {
         // the only field that can be right on an Anthropic turn, where naming the
         // local server the user already runs is the entire point of the offer.
         let discoveredBase = AppState.shared.config.ollamaBaseURL
-        let localModel: String? = (ModelRegistry.shared.local != nil && ModelRates.isLocalBaseURL(discoveredBase))
+        // USABLE, not merely reachable: Ollama answering with no model pulled
+        // cannot serve the turn, which then routes to Anthropic, so "$0 on the
+        // local model" would be a billing claim the send does not keep.
+        let localModel: String? = (ModelRegistry.shared.localUsable && ModelRates.isLocalBaseURL(discoveredBase))
             ? (ModelRegistry.shared.localTags.first ?? AppState.shared.config.offlineLLMModel)
             : nil
         chatEstimate = Self.estimate(

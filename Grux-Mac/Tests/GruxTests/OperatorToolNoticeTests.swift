@@ -73,7 +73,7 @@ final class OperatorToolNoticeTests: XCTestCase {
                 + "their business actually is")
             // A coding agent that does not know which project it is looking at will
             // guess, so every prompt names the app.
-            XCTAssertTrue(tool.prompt.contains("Grux OS"),
+            XCTAssertTrue(tool.prompt.contains("Grux AI"),
                 "\(tool.id) prompt does not say which app it is about")
             // THE UPSTREAM HALF OF ShippedBundleHygieneTests. These strings compile
             // into the binary, so a prompt naming the author puts his handle in the

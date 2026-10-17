@@ -7,6 +7,91 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-10-17
+
+The first five minutes. A stranger installed 3.0, used it for five minutes and
+wrote down everything that confused them; this release fixes those ten things.
+The app is now called Grux AI.
+
+### Changed
+
+- **The app is named Grux AI** in the menu bar, Cmd-Tab, the window title, the
+  panel and Today, About, permission prompts and the System Settings paths
+  Grux tells you to open. Nothing you installed moves: the app is still
+  Grux.app, and your permissions carry over.
+- **About** says what Grux is in one line, shows the version, and credits
+  its builder with a link.
+- **Listening says one thing everywhere.** When listening is chosen in Tuning
+  but you have not agreed to it yet, the panel, Today, Chat and Tuning all say
+  it is waiting for your OK, with an Allow listening button, instead of Tuning
+  saying Always on while everything else said OFF.
+- **First run** opens with the orb and the name, says how listening starts in
+  one line with the full explanation under How listening works, and makes
+  "I would rather pick from a list" a real button.
+- **Today** keeps Start my day on screen in a short window: the picture at the
+  top gets shorter when the window does.
+- **Mail with no account** shows only the setup card, and no longer says
+  everything else is ready when nothing else is set up.
+- **Settings** no longer breaks words in half in a narrow pane, says
+  Self-Upgrade instead of Foundry, names no AI model in its text, and uses the
+  same background as every other pane.
+- **Notes, Documents, Labs and Tuning** no longer print their title twice in
+  a pane.
+- **The panel**: Optimize Grux is a row like the others instead of the biggest
+  thing on screen.
+- **Tuning** sizes each column to its own cards, and says how sure Grux must
+  be in words ("when it is sure"), with the number on the dial.
+- **Chat**: the box you type in opens two lines tall and grows, the status
+  chips say what they are about ("LISTENING OFF", "REPLIES MUTED"), and messages
+  fade out under the header instead of being cut off.
+
+### Fixed
+
+- **Return no longer sends a message Chat cannot deliver.** With no model
+  attached, the Send button was disabled but Return still sent, and the turn
+  came back as a provider error. Return now follows the same rule as the
+  button, and the box says why nothing was sent.
+- **Home draws faster.** It no longer rebuilds Today seven times before the
+  first frame, and it opens on the greeting with the chat box one line tall.
+- **Settings opens without waiting** on memory, and its tabs use the Grux
+  accent.
+- **Safer shell.** Grux asks before any `git branch` force or delete form,
+  including `-M`, `-C`, `-D`, combined flags and options placed before
+  `branch`, and before any forced push, fetch or tag, including
+  `git -C repo push -f` and `+refspec`.
+
+### First run on a new Mac
+
+3.1 was installed on a Mac that had never seen Grux, and everything that got
+in the way is fixed:
+
+- **No microphone request until you ask for one.** macOS now asks only when
+  you press a mic control or turn listening on. Before, starting Grux built an
+  audio engine that made macOS ask right away, and on a Mac whose audio device
+  also has inputs (a headset, a virtual machine) any sound Grux played did the
+  same. Until you answer, a reply read aloud plays outside Grux, chimes play as
+  system sounds, music plays in the Music app and a clip plays without sound.
+- **The setup window fits every step**, and Continue is always on screen.
+- **No sample task.** A new install starts with no current task.
+- **No model yet? Skip for now.** Setup finishes without a model, the panel
+  keeps a Connect a model row until one works, and Settings, Models
+  downloads the best model for this Mac with live progress
+  ("0.6 of 2.0 GB, 31%"). A download no longer reports failure while it is
+  still running.
+- **Faster local replies.** A local turn sends a prompt and context sized to
+  the Mac's memory. Measured on a 16 GB Mac, the same
+  question went from 131.6 s to 40.0 s. The wait says how long it has been.
+- **Nothing you type is lost.** With no model connected, text typed in the
+  panel stays put and says what to connect, and typing never toggles mute.
+- **Voice Control:** every panel control has its own name, so "click
+  Microphone" acts instead of asking which one.
+- **Settings** has Settings… on Cmd-comma, and links into Settings scroll to
+  the section they name.
+- **Skipping the listening step leaves listening Off**, and Tuning says so.
+- **Honest screens:** setup lists Chat as needing a model when it does,
+  screen watching says it needs screen access until you grant it, and no
+  recap pops up before setup is done.
+
 ## [3.0.0] - 2026-09-29
 
 The release where Grux decides quickly, says what it is doing, and opens on
@@ -901,7 +986,8 @@ listed because each was a promise the app made and did not keep.
   deliberately unwired. It is declared as unused rather than removed, because it
   is a half-built feature and not a false claim.
 
-[Unreleased]: https://github.com/dotcomjack/grux/compare/v3.0.0...HEAD
+[Unreleased]: https://github.com/dotcomjack/grux/compare/v3.1.0...HEAD
+[3.1.0]: https://github.com/dotcomjack/grux/compare/v3.0.0...v3.1.0
 [3.0.0]: https://github.com/dotcomjack/grux/compare/v1.2.1...v3.0.0
 [1.2.1]: https://github.com/dotcomjack/grux/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/dotcomjack/grux/compare/v1.1.0...v1.2.0

@@ -18,7 +18,8 @@ final class TuningTests: XCTestCase {
 
     func test_theSummariesSayWhatIsSet() {
         XCTAssertEqual(TuningCopy.acts(threshold: 0.75, mode: .alwaysOn),
-                       "Acts at 0.75 or more, listening \(ListeningMode.alwaysOn.label.lowercased()).")
+                       "Acts when it is sure, listening \(ListeningMode.alwaysOn.label.lowercased()).")
+        XCTAssertTrue(TuningCopy.acts(threshold: 0.7, mode: .alwaysOn, waiting: true).hasSuffix("once you agree."))
         XCTAssertEqual(TuningCopy.talks(speaks: true, rate: 1.25), "Speaks replies at 1.25x.")
         XCTAssertEqual(TuningCopy.talks(speaks: false, rate: 1.5), "Quiet: replies stay on screen.")
         XCTAssertEqual(TuningCopy.interrupts(start: 9, end: 17, cooldown: 20),
@@ -43,7 +44,7 @@ final class TuningTests: XCTestCase {
         let all = [TuningCopy.title, TuningCopy.subtitle, TuningCopy.optimizeTitle, TuningCopy.optimizeBody,
                    TuningCopy.pointer, TuningCopy.settingsLink, TuningCopy.spokenPointer, TuningCopy.memoryPointer,
                    TuningCopy.listeningPointer, TuningCopy.interrupt,
-                   TuningCopy.tierPointer(.tier4_hybrid_8s),
+                   TuningCopy.tierPointer(.tier4_hybrid_8s), TuningCopy.tierPointer(.tier4_hybrid_8s, spends: false),
                    TuningCopy.decisionsKey(saved: true, capped: true), TuningCopy.decisionsKey(saved: false, capped: false)]
             + TuningCopy.Card.allCases.map(\.title)
         for line in all {
@@ -267,5 +268,38 @@ final class TuningTests: XCTestCase {
         let tuning = try source("Sources/Grux/Tuning/TuningView.swift")
         XCTAssertTrue(tuning.contains("note(TuningCopy.interrupt)"))
         XCTAssertFalse(try source("Sources/Grux/Models.swift").contains("var bargeInEnabled"))
+    }
+}
+
+/// Audit 2026-10-13, item 9: the threshold in words on the card, the number
+/// on the dial; and two columns that never stretch a card to its neighbour.
+@MainActor
+final class TuningWordsAndColumnsTests: XCTestCase {
+    func test_everyStopOnTheSliderHasWordsAndNoNumber() {
+        var t = 0.50
+        var seen = Set<String>()
+        while t <= 0.951 {
+            let words = TuningCopy.sure(t)
+            XCTAssertNil(words.rangeOfCharacter(from: .decimalDigits), words)
+            seen.insert(words)
+            t += 0.05
+        }
+        XCTAssertEqual(seen.count, 4, "the slider's range should read as four distinct levels")
+        XCTAssertEqual(TuningCopy.sure(0.70), "when it is sure")
+        XCTAssertEqual(TuningCopy.sure(0.95), "only when it is certain")
+    }
+
+    func test_theCardsSizeThemselves() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let view = try String(contentsOf: root.appendingPathComponent("Sources/Grux/Tuning/TuningView.swift"), encoding: .utf8)
+        let two = try XCTUnwrap(view.components(separatedBy: "private var twoColumns: some View {").dropFirst().first).prefix(900)
+        XCTAssertFalse(two.contains("GridRow"), "the columns are rows again, and a row stretches its shorter card")
+        let card = try XCTUnwrap(view.components(separatedBy: "private func cardView(").dropFirst().first).prefix(2400)
+        XCTAssertFalse(card.contains("maxHeight: .infinity"), "a card stretches to its neighbour's height")
+        let optimize = try XCTUnwrap(view.components(separatedBy: "private var optimizeCard: some View {").dropFirst().first).prefix(1400)
+        XCTAssertFalse(optimize.contains("maxHeight: .infinity"), "Tell Grux what you want stretches to the column's bottom")
+        // The number is still one glance away, on the dial.
+        XCTAssertTrue(view.contains(#"dial("How sure before acting", value: String(format: "%.2f", state.config.listeningThreshold))"#))
     }
 }

@@ -35,6 +35,8 @@ enum PanelAction: Equatable {
     case claudeSignIn
     /// Show `~/.claude/settings.json` in Finder, for a hook Grux left for the person.
     case revealClaudeSettings
+    /// Chat has no model: open Settings at the model key, as Chat's own notice does.
+    case connectModel
 }
 
 /// A work order stopped at one of its three reviews.
@@ -81,6 +83,9 @@ struct RelevanceState: Equatable {
     /// A Claude Code hook still runs the old Terminal Focus script in a way Grux
     /// will not edit, live from the settings file (`TerminalFocusHookState`).
     var oldHookNeedsRemoval: Bool = false
+    /// Chat cannot send anything: no key and no local model it may use
+    /// (`ChatReadiness`). True after "Skip for now" on the model step.
+    var chatNeedsModel: Bool = false
 }
 
 enum Relevance {
@@ -93,6 +98,12 @@ enum Relevance {
             out.append(PanelItem(id: "claude.signIn", cls: .needsYou, icon: "person.crop.circle.badge.exclamationmark",
                                  title: "Claude sign-in expired", detail: "Agents cannot run until you sign in",
                                  action: .claudeSignIn))
+        }
+        // Nothing Grux says back works without a model, so it leads after the sign-in.
+        if s.chatNeedsModel {
+            out.append(PanelItem(id: "model.connect", cls: .needsYou, icon: "cpu",
+                                 title: PanelCopy.connectModel, detail: PanelCopy.connectModelDetail,
+                                 action: .connectModel))
         }
         if s.approvalsPending > 0 {
             out.append(PanelItem(id: "approvals", cls: .needsYou, icon: "checkmark.seal.fill",
@@ -140,7 +151,8 @@ enum Relevance {
         }
 
         // suggested
-        for g in s.setupGaps where s.hasBrand || !g.brandScoped {
+        // Chat's own gap is the row above when it is the model; never both.
+        for g in s.setupGaps where (s.hasBrand || !g.brandScoped) && !(s.chatNeedsModel && g.featureId == "chat") {
             out.append(PanelItem(id: "setup.\(g.featureId)", cls: .suggested, icon: "circle.dotted",
                                  title: "Set up \(g.label)", detail: g.missing,
                                  action: .setup(featureId: g.featureId)))
@@ -148,7 +160,7 @@ enum Relevance {
         if s.proposals > 0 {
             out.append(PanelItem(id: "proposals", cls: .suggested, icon: "hammer.fill",
                                  title: TodayModel.plural(s.proposals, "improvement", "improvements") + " to review",
-                                 detail: "Foundry", action: .open(tabKey: "selfUpgrade")))
+                                 detail: "Self-Upgrade", action: .open(tabKey: "selfUpgrade")))
         }
 
         // Stable sort: class first, insertion order inside a class.

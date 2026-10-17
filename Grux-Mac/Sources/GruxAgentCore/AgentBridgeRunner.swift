@@ -104,6 +104,7 @@ public actor AgentBridgeRunner {
     public weak var observer: (any AgentBridgeObserver)?
 
     private var process: Process?
+    private let executor: LocalExecutor
     private var cancelled = false
     private(set) public var isRunning = false
 
@@ -124,12 +125,14 @@ public actor AgentBridgeRunner {
         runId: String = UUID().uuidString,
         adapter: any AgentAdapter,
         invocation: AdapterInvocation,
-        observer: (any AgentBridgeObserver)?
+        observer: (any AgentBridgeObserver)?,
+        executor: LocalExecutor = LocalExecutor()
     ) {
         self.runId = runId
         self.adapter = adapter
         self.invocation = invocation
         self.observer = observer
+        self.executor = executor
     }
 
     public func cancel() async {
@@ -138,7 +141,9 @@ public actor AgentBridgeRunner {
     }
 
     private func suppressSigpipe(on handle: FileHandle) {
+#if !os(Linux)
         _ = fcntl(handle.fileDescriptor, F_SETNOSIGPIPE, 1)
+#endif
     }
 
     // Split raw subprocess bytes into a decoded complete-lines block plus the
@@ -189,10 +194,10 @@ public actor AgentBridgeRunner {
         let sandboxBin = "/usr/bin/sandbox-exec"
         let confine = FileManager.default.isExecutableFile(atPath: sandboxBin)
         let execPath = invocation.executablePath
-        let proc = Process()
+        let executable: String
         var args: [String] = []
         if confine {
-            proc.executableURL = URL(fileURLWithPath: sandboxBin)
+            executable = sandboxBin
             args.append(contentsOf: ["-p", decision.profile])
             if execPath.contains("/") {
                 args.append(execPath)
@@ -203,27 +208,28 @@ public actor AgentBridgeRunner {
             // sandbox-exec should always exist on macOS; fall back to a direct
             // (UNCONFINED) spawn rather than refusing all work.
             if execPath.contains("/") {
-                proc.executableURL = URL(fileURLWithPath: execPath)
+                executable = execPath
             } else {
-                proc.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+                executable = "/usr/bin/env"
                 args.append(execPath)
             }
         }
         args.append(contentsOf: invocation.args)
-        proc.arguments = args
 
         // Env: adapter-supplied, with PATH augmented for GUI-launched context.
         var env = invocation.env
         env["PATH"] = AgentCLIRegistry.augmentedPATH(base: invocation.env)
-        proc.environment = env
-        proc.currentDirectoryURL = URL(fileURLWithPath: invocation.cwd)
-
-        let stdinPipe = Pipe()
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        proc.standardInput = stdinPipe
-        proc.standardOutput = stdoutPipe
-        proc.standardError = stderrPipe
+        let prepared = executor.prepare(CommandRequest(
+            executable: executable,
+            arguments: args,
+            cwd: invocation.cwd,
+            env: env,
+            timeoutSec: ttlSeconds
+        ))
+        let proc = prepared.process
+        let stdinPipe = prepared.stdin
+        let stdoutPipe = prepared.stdout
+        let stderrPipe = prepared.stderr
         self.process = proc
 
         do {

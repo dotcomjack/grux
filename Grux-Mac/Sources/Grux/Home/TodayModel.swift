@@ -206,6 +206,7 @@ enum TodayModel {
         case .muted:    return "Your microphone is muted. Tap the orb to just say it."
         case .off:      return "Listening is off. Turn it on in Tuning to just say it."
         case .notHearing: return "Grux can't hear your microphone right now. Tap the orb to try again."
+        case .waiting:  return "Listening is on, and waits for your OK before the microphone opens."
         }
     }
 

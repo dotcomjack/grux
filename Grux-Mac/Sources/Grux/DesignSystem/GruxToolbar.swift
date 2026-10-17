@@ -12,6 +12,7 @@ struct GruxToolbar<Trailing: View>: View {
     var subtitle: String? = nil
     var style: Style = .title
     @ViewBuilder var trailing: () -> Trailing
+    @Environment(\.paneTitles) private var paneTitles
 
     init(_ title: String,
          subtitle: String? = nil,
@@ -50,11 +51,14 @@ struct GruxToolbar<Trailing: View>: View {
             // line limit a long title pushes the actions off the edge or
             // stacks itself into two lines and shoves the whole header
             // taller.
-            Text(title)
-                .font(style == .display ? GruxType.display : GruxType.title)
-                .foregroundStyle(GruxTheme.textPrimary)
-                .lineLimit(1)
-                .truncationMode(.tail)
+            // In a pane whose bar already says it, the title would print twice.
+            if !PaneHeading.repeats(title, paneTitles: paneTitles) {
+                Text(title)
+                    .font(style == .display ? GruxType.display : GruxType.title)
+                    .foregroundStyle(GruxTheme.textPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
             if let subtitle {
                 Text(subtitle)
                     .font(GruxType.caption)

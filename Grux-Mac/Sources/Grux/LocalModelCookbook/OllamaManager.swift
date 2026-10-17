@@ -223,6 +223,9 @@ final class OllamaManager: ObservableObject {
         var status: String = "queued"
         var fraction: Double? = nil   // nil while Ollama hasn't reported sizes yet
         var failed: Bool = false
+        /// Bytes of the layer being pulled, as Ollama streams them.
+        var completedBytes: Double? = nil
+        var totalBytes: Double? = nil
     }
 
     @Published private(set) var binaryPath: String? = nil
@@ -794,6 +797,18 @@ final class OllamaManager: ObservableObject {
         pullGenerations[modelId] = generation
     }
 
+    /// Starts the pull and returns when it has ENDED, with its last row.
+    ///
+    /// `pull` returns once the download is registered, not when it finishes.
+    /// First run awaited it as if it finished, read /api/tags a few seconds
+    /// later, found nothing, and said "did not finish" while the download
+    /// ran on and completed 70 s later (W4 pass 2, 2026-10-13).
+    func pullToEnd(_ modelId: String) async -> PullProgress? {
+        await pull(modelId)
+        if let task = pullTasks[modelId] { await task.value }
+        return pulls[modelId]
+    }
+
     func cancelPull(_ modelId: String) {
         cancelEpochs[modelId, default: 0] &+= 1
         pullTasks[modelId]?.cancel()
@@ -845,15 +860,20 @@ final class OllamaManager: ObservableObject {
                       let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
                 let status = (obj["status"] as? String) ?? "working"
                 var fraction: Double? = pulls[modelId]?.fraction
+                var completedBytes = pulls[modelId]?.completedBytes
+                var totalBytes = pulls[modelId]?.totalBytes
                 if let total = obj["total"] as? Double, total > 0,
                    let completed = obj["completed"] as? Double {
                     fraction = min(1.0, completed / total)
+                    completedBytes = completed
+                    totalBytes = total
                 }
                 if let err = obj["error"] as? String {
                     publish(PullProgress(status: err, fraction: fraction, failed: true))
                     return
                 }
-                publish(PullProgress(status: status, fraction: fraction))
+                publish(PullProgress(status: status, fraction: fraction,
+                                     completedBytes: completedBytes, totalBytes: totalBytes))
                 if status == "success" {
                     publish(PullProgress(status: "installed", fraction: 1.0))
                     await refreshInstalled()

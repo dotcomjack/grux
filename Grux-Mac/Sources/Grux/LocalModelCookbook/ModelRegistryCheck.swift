@@ -143,7 +143,7 @@ enum ModelRegistryCheck {
                       session: URLSession = .shared) async throws -> Result {
         var req = URLRequest(url: libraryURL)
         req.timeoutInterval = 15
-        req.setValue("Grux OS model check", forHTTPHeaderField: "User-Agent")
+        req.setValue("Grux AI model check", forHTTPHeaderField: "User-Agent")
         let (data, response) = try await session.data(for: req)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             throw RegistryError.badResponse((response as? HTTPURLResponse)?.statusCode ?? -1)

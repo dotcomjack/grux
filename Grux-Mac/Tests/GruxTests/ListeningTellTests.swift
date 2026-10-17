@@ -66,6 +66,57 @@ final class ListeningTellTests: XCTestCase {
         XCTAssertEqual(ListeningTell.off.orbState, .idle)
     }
 
+    // MARK: - Chosen but not agreed to (audit 2026-10-13, item 2)
+    //
+    // Tuning said Always on while the foot, the input, Today and Chat said
+    // OFF. Both read real state: the preference was on and its consent had
+    // never been given. The tell now names that state and every surface
+    // reads it from the same config, so they cannot disagree.
+
+    func test_chosenButNotAgreedReadsWaitingNotOff() {
+        XCTAssertEqual(ListeningTell.resolve(mode: .off, micMuted: false, isSpeaking: false,
+                                             isThinking: false, awaitingConsent: true), .waiting)
+        XCTAssertEqual(tell(.off), .off, "switched off in Tuning is still plain off")
+    }
+
+    func test_theConfigSaysWaitingExactlyWhenAModeIsChosenWithoutItsConsent() {
+        var c = GruxConfig.default
+        c.listeningMode = .alwaysOn; c.ambientConsentAcknowledged = false
+        XCTAssertTrue(c.listeningAwaitingConsent)
+        c.ambientConsentAcknowledged = true
+        XCTAssertFalse(c.listeningAwaitingConsent)
+        c.listeningMode = .wakeWord; c.wakeWordConsentAcknowledged = false
+        XCTAssertTrue(c.listeningAwaitingConsent, "agreeing to ambient is not agreeing to the wake word")
+        c.listeningMode = .off
+        XCTAssertFalse(c.listeningAwaitingConsent)
+    }
+
+    func test_muteAndSpeechStillOutrankWaiting() {
+        XCTAssertEqual(ListeningTell.resolve(mode: .off, micMuted: true, isSpeaking: false,
+                                             isThinking: false, awaitingConsent: true), .muted)
+        XCTAssertEqual(ListeningTell.resolve(mode: .off, micMuted: false, isSpeaking: true,
+                                             isThinking: false, awaitingConsent: true), .speaking)
+    }
+
+    func test_waitingClosesTheListenerAndNamesTheFix() {
+        XCTAssertTrue(ListeningTell.waiting.listenerOff)
+        XCTAssertTrue(ListeningTell.off.listenerOff)
+        XCTAssertFalse(ListeningTell.muted.listenerOff, "a mute is not a setting")
+        XCTAssertTrue(ListeningTell.waiting.help.contains(ListeningTell.allowTitle),
+                      "the help must name the action that fixes it")
+        XCTAssertTrue(TodayModel.sayItLine(.waiting).lowercased().contains("ok"))
+        XCTAssertTrue(ComposerPlaceholder.text(for: .waiting).contains("Allow listening"))
+        XCTAssertEqual(PanelInput.placeholder(for: .waiting), PanelCopy.placeholderWaiting)
+    }
+
+    func test_everyPhraseCarriesItsNoun() {
+        // A chip or a status that stands alone must say what is on or off.
+        for t in ListeningTell.allCases where t != .speaking && t != .thinking {
+            let p = t.phrase.lowercased()
+            XCTAssertTrue(p.contains("listening") || p.contains("mic"), "\(t) phrase \(t.phrase) has no noun")
+        }
+    }
+
     func test_noTwoTellsShareAWord() {
         let words = Set(ListeningTell.allCases.map(\.label))
         XCTAssertEqual(words.count, ListeningTell.allCases.count)

@@ -34,12 +34,13 @@ struct MenuBarView: View {
                               micMuted: state.micMuted,
                               isSpeaking: speech.isSpeaking || speech.isBuffering,
                               isThinking: state.isThinking,
-                              notHearing: micHealth.notHearing)
+                              notHearing: micHealth.notHearing,
+                              awaitingConsent: state.config.listeningAwaitingConsent)
     }
 
     private var orbState: GruxOrbState {
         if shellBus.current.mode == .alert { return ShellMode.alert.orbState }
-        if listeningTell == .off { return shellBus.current.mode.orbState }
+        if listeningTell.listenerOff { return shellBus.current.mode.orbState }
         return listeningTell.orbState
     }
 
@@ -324,7 +325,7 @@ struct MenuBarView: View {
             OrbView(state: orbState, level: speech.outputLevel)
                 .frame(width: 36, height: 36)
             VStack(alignment: .leading, spacing: 1) {
-                Text("GRUX OS").font(.headline.weight(.heavy)).kerning(2)
+                Text("GRUX AI").font(.headline.weight(.heavy)).kerning(2)
                 OrbStatusPill(state: orbState, label: listeningTell.label)
                     .scaleEffect(0.85, anchor: .leading)
                     .help(listeningTell.help)
@@ -333,14 +334,27 @@ struct MenuBarView: View {
             if state.isThinking {
                 ProgressView().controlSize(.small)
             }
-            Button(action: { state.watching ? FocusWatcher.shared.stop() : FocusWatcher.shared.start() }) {
-                Label(state.watching ? "Watching" : "Paused",
-                      systemImage: state.watching ? "eye.fill" : "eye.slash.fill")
-                    .font(.caption)
-                    .padding(.vertical, 3).padding(.horizontal, 8)
-                    .background(state.watching ? Color.green.opacity(0.2) : Color.secondary.opacity(0.15))
-                    .clipShape(Capsule())
-            }.buttonStyle(.plain)
+            let shown = PanelCopy.watchingState(watching: state.watching, screenAccess: state.screenPermissionGranted)
+            if shown == .needsScreenAccess {
+                // On, but macOS has not granted screen recording: nothing is
+                // being watched, so the badge says so and offers the grant.
+                Button { _ = ScreenCapturer.shared.requestPermission() } label: {
+                    Label(PanelCopy.needsScreenAccess, systemImage: "lock.shield")
+                        .font(.caption)
+                        .padding(.vertical, 3).padding(.horizontal, 8)
+                        .background(Color.orange.opacity(0.2))
+                        .clipShape(Capsule())
+                }.buttonStyle(.plain)
+            } else {
+                Button(action: { state.watching ? FocusWatcher.shared.stop() : FocusWatcher.shared.start() }) {
+                    Label(shown == .watching ? "Watching" : "Paused",
+                          systemImage: shown == .watching ? "eye.fill" : "eye.slash.fill")
+                        .font(.caption)
+                        .padding(.vertical, 3).padding(.horizontal, 8)
+                        .background(shown == .watching ? Color.green.opacity(0.2) : Color.secondary.opacity(0.15))
+                        .clipShape(Capsule())
+                }.buttonStyle(.plain)
+            }
             Menu {
                 Button("Open Chat") { WindowOpener.openChat() }
                 // The same Optimize Grux panel the sidebar opens.
@@ -413,8 +427,9 @@ struct MenuBarView: View {
                 Text(state.lastActiveApp.isEmpty ? "-" : state.lastActiveApp)
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 Spacer()
-                if let tick = state.lastTick {
-                    Text(tick, style: .relative).font(.caption2).foregroundStyle(.tertiary)
+                if state.currentTask != nil, let since = state.currentTaskSince {
+                    Text(since, style: .relative).font(.caption2).foregroundStyle(.tertiary)
+                        .help("Time on this task")
                 }
             }
         }

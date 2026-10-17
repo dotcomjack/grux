@@ -64,6 +64,24 @@ final class ModelRegistry: ObservableObject {
     // so the user can see what's installed and pick one.
     @Published private(set) var localTags: [String] = []
 
+    /// A local server answered AND holds a model Grux can drive. Reachable is
+    /// not usable: Ollama answering with zero models routed chat to it, so
+    /// Chat read ready and the "Connect a model" row went away while every turn
+    /// would fail (W4 pass 2, 2026-10-13). Routing and readiness ask this.
+    ///
+    /// Only Ollama's own model list is read that way: an empty /api/tags means
+    /// nothing is pulled. An OpenAI-compatible server (vLLM, llama.cpp, a
+    /// proxy) can serve chat while /v1/models lists nothing standard, so for
+    /// one of those, answering is still taken as usable, as it was before.
+    var localUsable: Bool {
+        guard local != nil else { return false }
+        return !localServedByOllama || !GruxConfig.usableLocalModels(localTags).isEmpty
+    }
+
+    /// Whether `local` was found through Ollama's /api/tags, whose model list
+    /// is authoritative, rather than the OpenAI-compatible /v1/models fallback.
+    @Published private(set) var localServedByOllama = false
+
     // Last discovery outcome string for the Settings UI ("found 3 models", "no
     // local server reachable", etc.). nil before the first attempt.
     @Published private(set) var localStatus: String? = nil
@@ -151,9 +169,9 @@ final class ModelRegistry: ObservableObject {
         switch activeProvider {
         case .anthropic:
             return Self.anthropicRoute(hasKey: KeychainStore.exists(.anthropicApiKey),
-                                       hasLocal: local != nil)
+                                       hasLocal: localUsable)
         case .local:
-            return local == nil ? .anthropic : .local
+            return localUsable ? .local : .anthropic
         case .custom(let id):
             return CustomEndpointStore.shared.endpoint(id: id) == nil ? .anthropic : .custom(id)
         }
@@ -405,6 +423,7 @@ final class ModelRegistry: ObservableObject {
     func resetLocalForTest() {
         self.local = nil
         self.localTags = []
+        self.localServedByOllama = false
         self.localStatus = nil
         clearActiveProvider()
     }
@@ -419,6 +438,7 @@ final class ModelRegistry: ObservableObject {
         guard !baseURL.isEmpty, let url = URL(string: "\(baseURL)/api/tags") else {
             self.local = nil
             self.localTags = []
+            self.localServedByOllama = false
             self.localStatus = "invalid local base URL"
             return
         }
@@ -455,6 +475,7 @@ final class ModelRegistry: ObservableObject {
             }
             self.local = compatBackend(forBaseURL: baseURL)
             self.localTags = tags
+            self.localServedByOllama = true
             self.localStatus = tags.isEmpty
                 ? "local server reachable, no models installed"
                 : "found \(tags.count) local model\(tags.count == 1 ? "" : "s")"
@@ -525,6 +546,7 @@ final class ModelRegistry: ObservableObject {
             } else {
                 self.local = nil
                 self.localTags = []
+                self.localServedByOllama = false
                 self.localStatus = "no local server reachable at \(baseURL)"
             }
         }
@@ -537,6 +559,7 @@ final class ModelRegistry: ObservableObject {
     private func recordAuthRejection(baseURL: String, code: Int, keySent: Bool) {
         self.local = nil
         self.localTags = []
+        self.localServedByOllama = false
         self.localStatus = keySent
             ? "endpoint at \(baseURL) rejected the stored API key (HTTP \(code)). Check the key on that endpoint under Custom endpoints."
             : "endpoint at \(baseURL) needs an API key (HTTP \(code)). Add one to that endpoint under Custom endpoints."
@@ -566,6 +589,7 @@ final class ModelRegistry: ObservableObject {
         }
         self.local = compatBackend(forBaseURL: baseURL)
         self.localTags = tags
+        self.localServedByOllama = false
         self.localStatus = "OpenAI-compat endpoint reachable, \(tags.count) model\(tags.count == 1 ? "" : "s")"
         return .populated
     }

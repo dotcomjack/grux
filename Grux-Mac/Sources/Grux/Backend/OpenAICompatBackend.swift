@@ -36,7 +36,18 @@ actor OpenAICompatBackend: ModelBackend {
     /// One number for every call, because Ollama reloads a model whenever a
     /// call asks for a different window than the loaded one. A model trained
     /// on less is capped by Ollama itself.
-    static let ollamaContextTokens = 32_768
+    ///
+    /// By this Mac's memory, not a fixed 32768: on 8 GB that window is a KV
+    /// cache the machine does not have, and the W4 VM's first reply took
+    /// 329 s. A chat turn on a local model is built to fit it (LocalTurn).
+    static var ollamaContextTokens: Int { LocalTurn.contextTokens }
+
+    /// The window to ask for at `baseURL`: this Mac's, only when the server
+    /// IS this Mac. A server elsewhere has its own memory, so it gets no
+    /// num_ctx and keeps its own default (PR 40 review).
+    static func contextTokens(forBaseURL baseURL: String) -> Int? {
+        LocalTurn.isLoopback(baseURL: baseURL) ? ollamaContextTokens : nil
+    }
 
     /// The longest any one call may take, bytes or not.
     static let requestResourceTimeout: TimeInterval = 600
@@ -168,7 +179,8 @@ actor OpenAICompatBackend: ModelBackend {
         let native = await speaksOllama()
         var req = try makeRequest(stream: stream, surface: surface, native: native)
         authorize(&req, apiKey: apiKey)
-        let wire = native ? Self.ollamaChatBody(body, stream: stream)
+        let wire = native ? Self.ollamaChatBody(body, stream: stream,
+                                                contextTokens: Self.contextTokens(forBaseURL: baseURL))
                           : Self.shaped(body, baseURL: baseURL)
         req.httpBody = try JSONSerialization.data(withJSONObject: wire, options: [])
         return (req, native)
@@ -221,8 +233,9 @@ actor OpenAICompatBackend: ModelBackend {
 
     /// An OpenAI chat body in Ollama's native shape.
     static func ollamaChatBody(_ body: [String: Any], stream: Bool,
-                               contextTokens: Int = ollamaContextTokens) -> [String: Any] {
-        var options: [String: Any] = ["num_ctx": contextTokens]
+                               contextTokens: Int? = ollamaContextTokens) -> [String: Any] {
+        var options: [String: Any] = [:]
+        if let contextTokens { options["num_ctx"] = contextTokens }
         if let n = body["max_tokens"] { options["num_predict"] = n }
         if let t = body["temperature"] { options["temperature"] = t }
         var out: [String: Any] = [
@@ -323,7 +336,7 @@ actor OpenAICompatBackend: ModelBackend {
         // Every call says who it is. OpenRouter shows these on the activity
         // page; a local server ignores them. The title names the surface.
         req.setValue("https://gruxai.com", forHTTPHeaderField: "HTTP-Referer")
-        req.setValue("Grux OS: \(surface)", forHTTPHeaderField: "X-Title")
+        req.setValue("Grux AI: \(surface)", forHTTPHeaderField: "X-Title")
         return req
     }
 

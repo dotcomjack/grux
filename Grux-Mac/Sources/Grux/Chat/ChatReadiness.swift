@@ -174,7 +174,7 @@ enum ChatReadiness: Equatable {
         let registry = ModelRegistry.shared
         return evaluate(
             hasAnthropicKey: !AppState.shared.anthropicKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-            localModelAvailable: registry.local != nil,
+            localModelAvailable: registry.localUsable,
             chosenProvider: registry.activeProvider,
             routedProvider: registry.resolvedProvider)
     }

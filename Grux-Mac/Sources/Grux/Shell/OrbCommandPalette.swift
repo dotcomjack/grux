@@ -136,7 +136,8 @@ enum PaletteActionProvider {
         switch ListeningTell.resolve(mode: AppState.shared.config.listeningModeInEffect,
                                      micMuted: AppState.shared.micMuted,
                                      isSpeaking: false, isThinking: false,
-                                     notHearing: MicHealth.shared.notHearing) {
+                                     notHearing: MicHealth.shared.notHearing,
+                                     awaitingConsent: AppState.shared.config.listeningAwaitingConsent) {
         case .notHearing:
             out.append(PaletteAction(
                 id: "mic-retry",
@@ -158,6 +159,15 @@ enum PaletteActionProvider {
                     AppState.shared.saveConfig()
                     await ListeningController.shared.apply()
                 }
+            })
+        case .waiting:
+            out.append(PaletteAction(
+                id: "listening-allow",
+                title: ListeningTell.allowTitle,
+                subtitle: "Listening is chosen; the microphone opens once you agree",
+                systemImage: "waveform"
+            ) {
+                ListeningTell.allow()
             })
         case .muted:
             out.append(PaletteAction(

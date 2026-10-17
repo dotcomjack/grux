@@ -84,6 +84,11 @@ enum SetupOrder {
         let ready: [String]
         let required: [Item]
         let optional: [Item]
+        /// Feature ids whose only gap is the model the model gate asks for. Not
+        /// ready, and not asked again here: after "Skip for now" there, Chat
+        /// was listed under "Already working" with no model at all (W4 pass 1,
+        /// 2026-10-13).
+        var needsModel: [String] = []
     }
 
     enum Rule: CaseIterable {
@@ -103,6 +108,7 @@ enum SetupOrder {
                      satisfied: (SetupRequirement) -> Bool,
                      skip: Set<SetupRequirement> = handledByTheModelGate.union(handledByItsOwnScreen)) -> Plan {
         var ready: [String] = []
+        var needsModel: [String] = []
         var need: [SetupRequirement: [String]] = [:]
         var firstSeen: [SetupRequirement] = []
         func note(_ r: SetupRequirement, for id: String, in table: inout [SetupRequirement: [String]]) {
@@ -110,8 +116,11 @@ enum SetupOrder {
             table[r, default: []].append(id)
         }
         for row in features {
-            let unmet = FeatureRegistry.unmetBlocking(of: row, satisfied: satisfied).filter { !skip.contains($0) }
-            if unmet.isEmpty { ready.append(row.id) }
+            let all = FeatureRegistry.unmetBlocking(of: row, satisfied: satisfied)
+            let unmet = all.filter { !skip.contains($0) }
+            if unmet.isEmpty {
+                if all.contains(where: handledByTheModelGate.contains) { needsModel.append(row.id) } else { ready.append(row.id) }
+            }
             for r in unmet { note(r, for: row.id, in: &need) }
         }
         if listening {
@@ -126,7 +135,7 @@ enum SetupOrder {
         }
         let required = sorted(firstSeen.compactMap { r in need[r].map { Item(requirement: r, neededBy: $0) } })
         let optional = sorted(firstSeen.compactMap { r in extra[r].map { Item(requirement: r, neededBy: $0) } })
-        return Plan(ready: ready, required: required, optional: optional)
+        return Plan(ready: ready, required: required, optional: optional, needsModel: needsModel)
     }
 
     /// Items by the rules in `rules` order, contract order breaking ties, and
@@ -204,7 +213,7 @@ enum SetupOrder {
     static func screens(for plan: Plan, oneAtATime: Bool, extrasAccepted: Bool,
                         decisionsKey: Bool = false) -> [Screen] {
         var out: [Screen] = []
-        if !plan.ready.isEmpty { out.append(.ready(plan.ready)) }
+        if !plan.ready.isEmpty || !plan.needsModel.isEmpty { out.append(.ready(plan.ready)) }
         let extrasCount = plan.optional.count + (decisionsKey ? 1 : 0)
         if oneAtATime {
             let extrasScreens = extrasCount == 0 ? 0 : 1 + (extrasAccepted ? extrasCount : 0)

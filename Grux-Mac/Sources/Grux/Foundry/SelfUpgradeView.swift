@@ -776,7 +776,7 @@ struct FoundryStatusBadge: View {
                 .shadow(color: GruxTheme.violetGlow(), radius: 6)
             }
             .buttonStyle(.plain)
-            .help("\(model.pendingCount) Foundry proposals pending")
+            .help("\(model.pendingCount) Self-Upgrade proposals pending")
         }
     }
 }

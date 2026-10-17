@@ -117,30 +117,55 @@ struct PanelFoot: View {
     }
 
     /// Whether focus watching runs, and the one button that flips it.
+    @ViewBuilder
     private var watchingControl: some View {
+        let shown = PanelCopy.watchingState(watching: state.watching, screenAccess: state.screenPermissionGranted)
         HStack(spacing: GruxSpacing.xs) {
             Circle()
-                .fill(state.watching ? GruxTheme.successMint : GruxTheme.textTertiary)
+                .fill(shown == .watching ? GruxTheme.successMint
+                      : shown == .needsScreenAccess ? GruxTheme.warnAmber : GruxTheme.textTertiary)
                 .frame(width: GruxSpacing.s, height: GruxSpacing.s)
-            Text(state.watching ? PanelCopy.watching : PanelCopy.paused)
+            if shown == .needsScreenAccess {
+                Text(PanelCopy.needsScreenAccess)
+                    .font(GruxType.caption)
+                    .foregroundStyle(GruxTheme.textSecondary)
+                Button(PanelCopy.grantScreenAccess) { _ = ScreenCapturer.shared.requestPermission() }
+                    .buttonStyle(.borderless)
+                    .font(GruxType.caption)
+            } else {
+                Text(shown == .watching ? PanelCopy.watching : PanelCopy.paused)
+                    .font(GruxType.caption)
+                    .foregroundStyle(GruxTheme.textSecondary)
+                Button(state.watching ? PanelCopy.pause : PanelCopy.watch) {
+                    state.watching ? FocusWatcher.shared.stop() : FocusWatcher.shared.start()
+                }
+                .buttonStyle(.borderless)
                 .font(GruxType.caption)
-                .foregroundStyle(GruxTheme.textSecondary)
-            Button(state.watching ? PanelCopy.pause : PanelCopy.watch) {
-                state.watching ? FocusWatcher.shared.stop() : FocusWatcher.shared.start()
             }
-            .buttonStyle(.borderless)
-            .font(GruxType.caption)
         }
     }
 
     /// What the microphone is doing, in the shared tell's word. A status,
     /// not a control: the input's mic and the orb are the toggles, and a
     /// third one here would be the same switch twice (R5.19).
+    ///
+    /// The one exception is `.waiting`: listening is chosen but not agreed
+    /// to, and the status is the button that asks, because the fix is one
+    /// yes away and nowhere else on the panel says so.
+    @ViewBuilder
     private var listeningStatus: some View {
-        Text(tell.label)
-            .font(GruxType.caption)
-            .foregroundStyle(tell == .muted || tell == .off ? GruxTheme.textTertiary : GruxTheme.successMint)
-            .help(tell.help)
-            .accessibilityLabel(PanelCopy.micLabel(tell))
+        if tell == .waiting {
+            Button(ListeningTell.allowTitle) { ListeningTell.allow() }
+                .buttonStyle(.borderless)
+                .font(GruxType.caption)
+                .help(tell.help)
+                .accessibilityLabel(PanelCopy.listeningStatusLabel(tell))
+        } else {
+            Text(tell.phrase)
+                .font(GruxType.caption)
+                .foregroundStyle(tell == .muted || tell.listenerOff ? GruxTheme.textTertiary : GruxTheme.successMint)
+                .help(tell.help)
+                .accessibilityLabel(PanelCopy.listeningStatusLabel(tell))
+        }
     }
 }

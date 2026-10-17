@@ -42,6 +42,9 @@ final class EnergyRecapScheduler {
     }
 
     private func checkAndFire() {
+        // Nothing scheduled pops up over a setup still in progress: the W4
+        // walk met this recap over the first-run window at 8:00 PM.
+        guard !OnboardingModel.shared.isPresenting else { return }
         let target = AppState.shared.config.energyRecapHour
         let now = Date()
         let cal = Calendar.current

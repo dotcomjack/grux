@@ -284,7 +284,19 @@ final class OnboardingModel: ObservableObject {
         }
     }
 
-    @Published private(set) var stage: Stage = .done
+    @Published private(set) var stage: Stage = .done {
+        didSet { if stage != oldValue { setupFirstNotice = nil } }
+    }
+
+    /// One line at the top of the flow after something outside it (the menu
+    /// bar's Chat or Drafts, Settings' Open Tuning) asked for a surface while
+    /// setup was running. Those used to do nothing visible (W4, 2026-10-13):
+    /// the request is held and opened after, and now the flow says so.
+    @Published var setupFirstNotice: String?
+
+    static func setupFirstNotice(for surface: String) -> String {
+        "Finish setup first. \(surface) opens when you are done."
+    }
     @Published private(set) var level: Level = .plusPermissions
     @Published private(set) var skipped: Set<String> = []
     @Published private(set) var path: Path = .list

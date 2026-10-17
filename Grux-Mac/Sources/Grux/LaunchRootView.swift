@@ -49,7 +49,7 @@ struct LaunchRootView: View {
         if shellBus.current.mode == .alert { return ShellMode.alert.orbState }
         // With listening off there is no microphone story to tell, so the
         // shell bus (focus, workflows, agents) gets the orb back.
-        if listeningTell == .off { return shellBus.current.mode.orbState }
+        if listeningTell.listenerOff { return shellBus.current.mode.orbState }
         return listeningTell.orbState
     }
 
@@ -408,6 +408,10 @@ struct LaunchRootView: View {
                     .frame(width: 68, height: 68)
             }
             .buttonStyle(.plain)
+            // Never in the key view loop: with the composer disabled, typing a
+            // sentence pressed this on every space and toggled mute (W4 pass 1,
+            // 2026-10-13). Clicks, the context menu and Voice Control still reach it.
+            .focusable(false)
             .gruxHoverable(lift: 1.06, rimOnHover: 0, fillOnHover: 0)
             .orbDecisionHelp(listeningTell.help)
             // A click mutes; a right click tunes.
@@ -417,7 +421,7 @@ struct LaunchRootView: View {
             }
             .padding(.top, 10)
 
-            Text("GRUX OS")
+            Text("GRUX AI")
                 .font(.headline.weight(.heavy))
                 .kerning(3)
             // Optimize Grux: the one front door for changing Grux, through
@@ -611,7 +615,7 @@ struct LaunchRootView: View {
     private var listeningFoot: some View {
         HStack(spacing: 6) {
             Button {
-                MicController.toggle(source: "orb")
+                if listeningTell == .waiting { ListeningTell.allow() } else { MicController.toggle(source: "orb") }
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: listeningTell == .muted ? "mic.slash.fill" : "mic.fill")
@@ -619,10 +623,12 @@ struct LaunchRootView: View {
                     Text(listeningTell.label)
                         .font(.caption2)
                 }
-                .foregroundStyle(listeningTell == .muted || listeningTell == .off
+                .foregroundStyle(listeningTell == .muted || listeningTell.listenerOff
                                  ? GruxTheme.textTertiary : GruxTheme.successMint)
             }
             .buttonStyle(.borderless)
+            // Out of the key view loop, like the orb.
+            .focusable(false)
             .help(listeningTell.help)
             Spacer(minLength: 0)
             // C10: the approvals tray, on every tab, drawn only while

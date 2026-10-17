@@ -27,16 +27,17 @@ final class RelevanceTests: XCTestCase {
         s.proposals = 1
         s.setupGaps = [SetupGap(featureId: "mailbox", label: "Mail", missing: "an IMAP account")]
         s.oldHookNeedsRemoval = true
+        s.chatNeedsModel = true
         // No cap: a new rule's eighth row must show up in the count, not fall off the end.
         let items = Relevance.now(s, cap: .max)
         for item in items {
             switch item.action {
             case .open, .openApprovals, .openWorkOrder, .setup, .openOptimize, .openJob, .claudeSignIn,
-                 .revealClaudeSettings: break
+                 .revealClaudeSettings, .connectModel: break
             }
         }
-        XCTAssertEqual(items.count, 8,
-                       "1 approvals row + 1 mail + 1 old hook + 2 running jobs + 1 next + 1 setup gap + 1 proposals = 8")
+        XCTAssertEqual(items.count, 9,
+                       "1 connect a model + 1 approvals row + 1 mail + 1 old hook + 2 running jobs + 1 next + 1 setup gap + 1 proposals = 9")
         XCTAssertTrue(items.allSatisfy { !$0.id.isEmpty }, "every row has an id")
         XCTAssertEqual(Set(items.map(\.id)).count, items.count, "ids are unique")
         XCTAssertEqual(items.map(\.action).filter { if case .openJob = $0 { return true } else { return false } },

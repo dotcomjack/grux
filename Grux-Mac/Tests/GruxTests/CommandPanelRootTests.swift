@@ -635,7 +635,7 @@ final class CommandPanelRootTests: XCTestCase {
         AppState.shared.requestedTab = PanelKeys.none
         WindowOpener.openSettings(legacy: false, delegate: delegate)
         let win = try XCTUnwrap(delegate.settingsWindow, "no Settings window opened")
-        XCTAssertEqual(win.title, "Grux Settings")
+        XCTAssertEqual(win.title, "Grux AI Settings")
         XCTAssertEqual(AppState.shared.requestedTab, PanelKeys.none, "Settings went to a pane")
         WindowOpener.openSettings(legacy: false, delegate: delegate)
         XCTAssertTrue(delegate.settingsWindow === win, "a second Settings window opened")
@@ -666,7 +666,7 @@ final class CommandPanelRootTests: XCTestCase {
     func test_theFootShowsListeningWithoutAToggle() throws {
         let foot = try sources("Sources/Grux/Shell/CommandPanel/PanelFoot.swift")
         XCTAssertFalse(foot.contains("MicController."), "the foot toggles the microphone")
-        XCTAssertTrue(foot.contains("tell.label"), "the foot does not show the tell")
+        XCTAssertTrue(foot.contains("tell.phrase"), "the foot does not show the tell")
         XCTAssertTrue(try sources("Sources/Grux/Shell/CommandPanel/PanelInput.swift").contains("MicController.toggle("),
                       "the input lost its mic")
     }
@@ -679,8 +679,13 @@ final class CommandPanelRootTests: XCTestCase {
         config.listeningMode = .alwaysOn
         config.ambientConsentAcknowledged = false
         let tell = ListeningTell.resolve(mode: config.listeningModeInEffect, micMuted: false,
-                                         isSpeaking: false, isThinking: false)
-        XCTAssertEqual(tell, .off, "always on without consent is not listening")
+                                         isSpeaking: false, isThinking: false,
+                                         awaitingConsent: config.listeningAwaitingConsent)
+        // Always on without consent is not listening, and it is not plain off
+        // either: it waits for a yes, and the field says how to give it.
+        XCTAssertEqual(tell, .waiting, "always on without consent reads as off beside Tuning's Always on")
+        XCTAssertTrue(tell.listenerOff, "always on without consent is not listening")
+        XCTAssertFalse(PanelInput.placeholder(for: .waiting).lowercased().contains("unmute"))
         XCTAssertEqual(PanelInput.placeholder(for: .off), PanelCopy.placeholderOff)
         XCTAssertFalse(PanelInput.placeholder(for: .off).lowercased().contains("unmute"),
                        "the field offers unmute to a mic that is not muted")

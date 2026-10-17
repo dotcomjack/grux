@@ -192,9 +192,11 @@ final class FolderStoreTests: XCTestCase {
         }
     }
 
-    func testSemanticMemoryFolderReassignStripKey() throws {
+    func testSemanticMemoryFolderReassignStripKey() async throws {
         // Touch SemanticMemory, ensure reassignFolder(nil) clears the key.
         let memory = SemanticMemory.shared
+        let ready = await memory.waitUntilReady()
+        try XCTSkipUnless(ready, "NLEmbedding unavailable in this test environment")
         let oldId = UUID()
         memory.store(kind: .fact, text: "Grux test entry for folder reassignment.", metadata: [SemanticMemory.folderMetadataKey: oldId.uuidString])
         XCTAssertEqual(memory.entries(inFolder: oldId).count >= 1, true)

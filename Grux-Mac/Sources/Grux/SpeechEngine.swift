@@ -24,10 +24,31 @@ final class SpeechEngine: NSObject, ObservableObject {
     @Published private(set) var currentVoiceName: String = "Brian"
     @Published private(set) var outputLevel: Float = 0   // 0..1 for UI waveform
 
-    private let engine = AVAudioEngine()
-    private let player = AVAudioPlayerNode()
-    private let timePitch = AVAudioUnitTimePitch()
-    private var playbackFormat: AVAudioFormat!
+    /// The playback graph, built on the first thing that plays: an
+    /// AVAudioEngine wired to the output is an AUHAL I/O context, and on a
+    /// clean Mac building one made coreaudiod ask for the MICROPHONE at launch,
+    /// 1.5 s in, before any Grux window (W4 build 10, 2026-10-13). The HUD,
+    /// the panel and the menu bar all observe this engine from first paint, so
+    /// building it in `init` built it at launch. Nothing that only reads state
+    /// (stop, the rate dial, the level meter) builds it.
+    @MainActor private final class Graph {
+        let engine = AudioFactory.engine("speech")
+        let player = AVAudioPlayerNode()
+        let timePitch = AVAudioUnitTimePitch()
+        let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 24000, channels: 1, interleaved: false)!
+    }
+    private var builtGraph: Graph?
+    private var graph: Graph {
+        if let g = builtGraph { return g }
+        let g = Graph()
+        builtGraph = g
+        setup(g)
+        return g
+    }
+    private var engine: AVAudioEngine { graph.engine }
+    private var player: AVAudioPlayerNode { graph.player }
+    private var timePitch: AVAudioUnitTimePitch { graph.timePitch }
+    private var playbackFormat: AVAudioFormat { graph.format }
 
     /// Playback speed multiplier (1.0 = natural, 1.5 = 50% faster).
     /// Pitch stays natural because AVAudioUnitTimePitch time-stretches.
@@ -50,23 +71,17 @@ final class SpeechEngine: NSObject, ObservableObject {
 
     override init() {
         super.init()
-        setup()
     }
 
-    private func setup() {
-        engine.attach(player)
-        engine.attach(timePitch)
-        timePitch.rate = Self.clampedRate(Float(AppState.shared.config.voicePlaybackRate))
-        playbackFormat = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: 24000,
-            channels: 1,
-            interleaved: false
-        )!
+    /// Called once, by `graph`, on the first use that plays.
+    private func setup(_ g: Graph) {
+        g.engine.attach(g.player)
+        g.engine.attach(g.timePitch)
+        g.timePitch.rate = Self.clampedRate(Float(AppState.shared.config.voicePlaybackRate))
         // player → timePitch → mixer. TimePitch time-stretches audio so pitch
         // stays natural even at rate=1.5.
-        engine.connect(player, to: timePitch, format: playbackFormat)
-        engine.connect(timePitch, to: engine.mainMixerNode, format: playbackFormat)
+        g.engine.connect(g.player, to: g.timePitch, format: g.format)
+        g.engine.connect(g.timePitch, to: g.engine.mainMixerNode, format: g.format)
 
         // The output device can change under a running graph: AirPods connect
         // and macOS makes them the default output, at a different hardware
@@ -76,7 +91,7 @@ final class SpeechEngine: NSObject, ObservableObject {
         // the in-flight speech, rebuild the graph, and let the next speak()
         // start it clean.
         NotificationCenter.default.addObserver(
-            forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
+            forName: .AVAudioEngineConfigurationChange, object: g.engine, queue: .main
         ) { [weak self] _ in
             Task { @MainActor [weak self] in self?.handleOutputConfigurationChange() }
         }
@@ -101,7 +116,8 @@ final class SpeechEngine: NSObject, ObservableObject {
     /// Live-update the TTS playback speed. Safe to call while speaking -
     /// AVAudioUnitTimePitch time-stretches so pitch stays natural.
     func applyPlaybackRate(_ rate: Double) {
-        timePitch.rate = Self.clampedRate(Float(rate))
+        // Unbuilt, the graph reads the rate from the config when it is built.
+        builtGraph?.timePitch.rate = Self.clampedRate(Float(rate))
     }
 
     private static func clampedRate(_ r: Float) -> Float {
@@ -116,7 +132,10 @@ final class SpeechEngine: NSObject, ObservableObject {
         // Offline mode forces system voice (AVSpeechSynthesizer, fully
         // on-device) by short-circuiting the ElevenLabs branch - cloud TTS is a
         // network feature. The existing system-voice fallback below handles it.
+        // Before the microphone question the system voice too: this engine plays in
+        // process, which would raise the prompt (`AudioOutput.outputWouldAskForMic`).
         let useEL = state.config.useElevenLabs && !state.elevenLabsKey.isEmpty && !state.offlineMode
+            && !AudioOutput.outputWouldAskForMic
 
         stop(reason: "new speak()")
         sessionId = UUID()
@@ -242,8 +261,9 @@ final class SpeechEngine: NSObject, ObservableObject {
         guard permitSpeech(cleaned, caller: caller, line: line) else { return }
         let cfg = AppState.shared.config
         // Offline mode forces the on-device system-voice path (same guard as
-        // speak()) so streamed replies never reach for cloud TTS.
+        // speak()) so streamed replies never reach for cloud TTS. Same microphone rule too.
         let useEL = cfg.useElevenLabs && !AppState.shared.elevenLabsKey.isEmpty && !AppState.shared.offlineMode
+            && !AudioOutput.outputWouldAskForMic
         if !useEL {
             // System TTS doesn't support append-style streaming well. Each
             // AVSpeechUtterance is queued independently, so fall back to
@@ -259,7 +279,7 @@ final class SpeechEngine: NSObject, ObservableObject {
         // running - happens when sys-audio-tap interrupts mid-playback and
         // the completion callback never fires), force a clean reset so the
         // new chat reply isn't dropped into a queue nobody's reading from.
-        if streamingWorker != nil && !engine.isRunning {
+        if streamingWorker != nil && builtGraph?.engine.isRunning != true {
             WakeLog.shared.log("appendStreaming: stale worker (engine stopped) - resetting")
             stop(reason: "stale streaming worker")
         }
@@ -394,9 +414,11 @@ final class SpeechEngine: NSObject, ObservableObject {
         streamingFinalizeRequested = false
         streamingSession = nil
         streamingQueue.removeAll()
-        if player.isPlaying { player.stop() }
-        player.reset()
-        if engine.isRunning { engine.stop() }
+        if let g = builtGraph {
+            if g.player.isPlaying { g.player.stop() }
+            g.player.reset()
+            if g.engine.isRunning { g.engine.stop() }
+        }
         // Always reset hasStartedEngine - even when engine.isRunning is false,
         // because macOS audio-route changes / sys-audio-tap interruptions can
         // silently stop the engine. If we leave the flag true, the next
@@ -426,7 +448,7 @@ final class SpeechEngine: NSObject, ObservableObject {
             try engine.start()
             hasStartedEngine = true
             if !player.isPlaying { player.play() }
-            WakeLog.shared.log("speech engine started (out=\(playbackFormat!.sampleRate))")
+            WakeLog.shared.log("speech engine started (out=\(playbackFormat.sampleRate))")
         } catch {
             WakeLog.shared.log("speech engine start FAILED: \(error.localizedDescription)")
         }

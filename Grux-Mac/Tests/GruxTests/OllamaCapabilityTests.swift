@@ -76,6 +76,27 @@ final class OllamaCapabilityTests: XCTestCase {
             + "unsatisfied, so the contract's own remediation cannot be followed to completion")
     }
 
+    /// REACHABLE IS NOT USABLE. Ollama answering with zero models satisfied
+    /// this, routed chat to it, and took the "Connect a model" row away while
+    /// every turn would fail (W4 pass 2, 2026-10-13).
+    func testAnOllamaHoldingNoModelDoesNotSatisfyItOrTakeTheRoute() async throws {
+        let s = try TagsServer(body: #"{"models":[]}"#)
+        server = s
+        try s.start()
+        XCTAssertGreaterThan(s.port, 0, "the stub server never bound a port, so this test proves nothing")
+        AppState.shared.config.localLLMEndpoint = ""
+        AppState.shared.config.ollamaBaseURL = "http://127.0.0.1:\(s.port)"
+
+        await ModelRegistry.shared.discoverLocal()
+        XCTAssertNotNil(ModelRegistry.shared.local, "discovery did not reach the stub: "
+                        + (ModelRegistry.shared.localStatus ?? "nil"))
+        XCTAssertFalse(ModelRegistry.shared.localUsable, "a server with no model counts as usable")
+        XCTAssertFalse(CapabilityResolver.isSatisfied(.endpointOllama),
+                       "an Ollama with nothing pulled satisfies the local model capability")
+        XCTAssertEqual(ModelRegistry.anthropicRoute(hasKey: false, hasLocal: ModelRegistry.shared.localUsable), .anthropic,
+                       "no key and an empty server still routes chat to the empty server")
+    }
+
     /// The default must not be mistaken for a configuration. `ollamaBaseURL` ships
     /// as http://localhost:11434, so any implementation resting on "is it
     /// non-empty" marks this satisfied on every install on earth including one
@@ -113,9 +134,11 @@ final class OllamaCapabilityTests: XCTestCase {
 /// fall through to a second probe.
 private final class TagsServer: @unchecked Sendable {
     private let listener: NWListener
+    private let body: String
     var port: UInt16 { listener.port?.rawValue ?? 0 }
 
-    init() throws {
+    init(body: String = #"{"models":[{"name":"llama3.1:latest"}]}"#) throws {
+        self.body = body
         let params = NWParameters.tcp
         params.allowLocalEndpointReuse = true
         listener = try NWListener(using: params, on: .any)
@@ -125,10 +148,10 @@ private final class TagsServer: @unchecked Sendable {
         let ready = DispatchSemaphore(value: 0)
         listener.stateUpdateHandler = { if case .ready = $0 { ready.signal() }
                                         if case .failed = $0 { ready.signal() } }
+        let body = self.body
         listener.newConnectionHandler = { conn in
             conn.start(queue: .global(qos: .userInitiated))
             conn.receive(minimumIncompleteLength: 1, maximumLength: 65536) { _, _, _, _ in
-                let body = #"{"models":[{"name":"llama3.1:latest"}]}"#
                 let resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
                     + "Content-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
                 conn.send(content: Data(resp.utf8),

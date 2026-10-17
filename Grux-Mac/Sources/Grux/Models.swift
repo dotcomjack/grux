@@ -339,23 +339,23 @@ public enum GruxTier: String, Codable, CaseIterable, Identifiable {
         case .tier7_cloud_8s:        return "Tier 7: All-Cloud 8s"
         case .tier8_cloud_5s:        return "Tier 8: All-Cloud 5s"
         case .tier9_cloud_2s:        return "Tier 9: All-Cloud 2s"
-        case .tier10_cloud_sonnet_5s:return "Tier 10: Premium Sonnet 5s"
+        case .tier10_cloud_sonnet_5s:return "Tier 10: Premium 5s"
         }
     }
 
     // Short one-liner describing the architecture at a glance.
     public var architecture: String {
         switch self {
-        case .tier1_cloud_30s:       return "Every 30s → cloud Haiku (current default)"
-        case .tier2_hybrid_30s:      return "30s · local prescreen · Haiku + Sonnet escalate"
-        case .tier3_hybrid_15s:      return "15s · local prescreen · Haiku + Sonnet escalate"
-        case .tier4_hybrid_8s:       return "8s · local prescreen · Haiku + Sonnet escalate"
-        case .tier5_hybrid_5s:       return "5s · local prescreen · Haiku + Sonnet escalate"
-        case .tier6_hybrid_2s:       return "2s · local prescreen · Haiku + Sonnet escalate"
-        case .tier7_cloud_8s:        return "Every 8s → cloud Haiku (no local filter)"
-        case .tier8_cloud_5s:        return "Every 5s → cloud Haiku (no local filter)"
-        case .tier9_cloud_2s:        return "Every 2s → cloud Haiku (no local filter)"
-        case .tier10_cloud_sonnet_5s:return "Every 5s → cloud Sonnet (deep reasoning always)"
+        case .tier1_cloud_30s:       return "Every 30s, read in the cloud"
+        case .tier2_hybrid_30s:      return "30s, checked on this Mac first, the cloud for what matters"
+        case .tier3_hybrid_15s:      return "15s, checked on this Mac first, the cloud for what matters"
+        case .tier4_hybrid_8s:       return "8s, checked on this Mac first, the cloud for what matters"
+        case .tier5_hybrid_5s:       return "5s, checked on this Mac first, the cloud for what matters"
+        case .tier6_hybrid_2s:       return "2s, checked on this Mac first, the cloud for what matters"
+        case .tier7_cloud_8s:        return "Every 8s, read in the cloud"
+        case .tier8_cloud_5s:        return "Every 5s, read in the cloud"
+        case .tier9_cloud_2s:        return "Every 2s, read in the cloud"
+        case .tier10_cloud_sonnet_5s:return "Every 5s, read in the cloud with the deepest model"
         }
     }
 

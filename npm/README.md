@@ -1,14 +1,16 @@
-# grux
+# grux, the command line front door to Grux AI
 
-The one command front door to [Grux OS](https://gruxai.com).
+This package does not install the app. If Grux.app is not on your Mac, it
+prints the [Grux.dmg](https://github.com/dotcomjack/grux/releases/latest/download/Grux.dmg)
+download link and changes nothing; get the app from [gruxai.com](https://gruxai.com).
 
 ```sh
 npx @dotcomjack/grux
 ```
 
-That finds Grux.app on your Mac, puts `grux` on your PATH, and hands you to the
-real command line. After the first run you can drop the `npx` and just type
-`grux`.
+With the app installed, that finds Grux.app on your Mac, puts `grux` on your
+PATH, and hands you to the real command line. After the first run you can drop
+the `npx` and just type `grux`.
 
 ## What this package is, and is not
 

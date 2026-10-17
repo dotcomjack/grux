@@ -52,7 +52,7 @@ final class ReleaseVersionAgreesTests: XCTestCase {
         let spoken = parts.count >= 3 && parts[2] == "0" ? parts.prefix(2).joined(separator: ".") : short
         let readme = try String(contentsOf: repoRoot.appendingPathComponent("README.md"), encoding: .utf8)
         XCTAssertTrue(readme.contains("currently \(spoken).**"), "the README's status line does not say \(spoken)")
-        XCTAssertTrue(readme.contains("Download Grux \(spoken) for Apple silicon"),
+        XCTAssertTrue(readme.contains("Download Grux AI \(spoken) for Apple silicon"),
                       "the README's download button names another version")
     }
 }

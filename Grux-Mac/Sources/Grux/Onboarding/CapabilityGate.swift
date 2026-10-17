@@ -16,6 +16,12 @@ import SwiftUI
 /// reads like a broken tab.
 struct CapabilityGate<Content: View>: View {
     let tabKey: String
+    /// False where the feature's own UI, with its requirement missing, is
+    /// nothing but its own empty state. Mail with no account drew the card over
+    /// a dimmed "No email accounts yet" and a ghosted toolbar: two empty states
+    /// saying the same thing (audit 2026-10-13, item 5). There the card stands
+    /// alone.
+    var showsFeatureBehind: Bool = true
     @ViewBuilder var content: () -> Content
 
     // No @EnvironmentObject here either. There was one, it was never read, and
@@ -30,11 +36,16 @@ struct CapabilityGate<Content: View>: View {
         let needsSetup = FeatureRegistry.state(forTab: tabKey) == .needsSetup
 
         ZStack(alignment: .top) {
-            content()
-                .disabled(needsSetup)
-                .opacity(needsSetup ? 0.28 : 1)
-                .allowsHitTesting(!needsSetup)
-                .accessibilityHidden(needsSetup)
+            if !needsSetup || showsFeatureBehind {
+                content()
+                    .disabled(needsSetup)
+                    .opacity(needsSetup ? 0.28 : 1)
+                    .allowsHitTesting(!needsSetup)
+                    .accessibilityHidden(needsSetup)
+            } else {
+                // The pane keeps its size and background with nothing behind the card.
+                Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
 
             if needsSetup {
                 // The card sits at the top and is sized to its content, so the
@@ -60,7 +71,7 @@ struct CapabilityGate<Content: View>: View {
 extension View {
     /// Gates this feature on its registry row. No-op for a tab with no row, so
     /// adopting a tab that needs nothing is harmless.
-    func capabilityGated(_ tabKey: String) -> some View {
-        CapabilityGate(tabKey: tabKey) { self }
+    func capabilityGated(_ tabKey: String, showsFeatureBehind: Bool = true) -> some View {
+        CapabilityGate(tabKey: tabKey, showsFeatureBehind: showsFeatureBehind) { self }
     }
 }

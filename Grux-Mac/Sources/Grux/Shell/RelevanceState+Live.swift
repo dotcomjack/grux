@@ -9,6 +9,8 @@ extension RelevanceState {
     struct SlowInputs {
         var agenda: [CalendarService.EventSummary] = []
         var setupGaps: [SetupGap] = []
+        /// Read with the slow inputs: `ChatReadiness.current()` reads the Keychain.
+        var chatNeedsModel = false
 
         @MainActor
         static func live(now: Date = Date()) -> SlowInputs {
@@ -25,6 +27,7 @@ extension RelevanceState {
             slow.setupGaps = FeatureRegistry.featuresNeedingSetup.compactMap { row in
                 setupGap(for: row, missing: FeatureRegistry.unmetBlocking(of: row))
             }
+            slow.chatNeedsModel = !ChatReadiness.current().canSend
             return slow
         }
     }
@@ -59,6 +62,7 @@ extension RelevanceState {
 
         s.next = next(now: now, agenda: slow.agenda)
         s.setupGaps = slow.setupGaps
+        s.chatNeedsModel = slow.chatNeedsModel
 
         // One count for Now, the Improve door and the head badge: spec 5.4
         // binds the door to the badge's source, and 4.1 names no store.

@@ -58,6 +58,7 @@ public actor SwarmWorker {
     public weak var observer: (any SwarmWorkerObserver)?
 
     private var process: Process?
+    private let executor: LocalExecutor
     private var cancelled = false
     private(set) public var isRunning: Bool = false
 
@@ -73,9 +74,14 @@ public actor SwarmWorker {
     // self.lastEventAt`.
     private(set) public var lastEventAt: Date = Date()
 
-    public init(spec: SwarmWorkerSpec, observer: (any SwarmWorkerObserver)?) {
+    public init(
+        spec: SwarmWorkerSpec,
+        observer: (any SwarmWorkerObserver)?,
+        executor: LocalExecutor = LocalExecutor()
+    ) {
         self.spec = spec
         self.observer = observer
+        self.executor = executor
     }
 
     // Resolve `claude` CLI absolute path: $CLAUDE_BIN, then ClaudeBinaryLocator's
@@ -328,7 +334,6 @@ public actor SwarmWorker {
         }
 
         let claudePath = Self.resolveClaudeBinary()
-        let proc = Process()
         // CONFINEMENT: never exec claude directly. Wrap it in sandbox-exec with
         // an allow-default profile that carves the worker's OWN assigned root
         // (spec.cwd) and the temp dir back in, and denies file writes to the
@@ -340,12 +345,13 @@ public actor SwarmWorker {
         // fully open; only writes to the protected tree are blocked.
         let sandboxBin = "/usr/bin/sandbox-exec"
         let confine = FileManager.default.isExecutableFile(atPath: sandboxBin)
+        let executable: String
         if confine {
-            proc.executableURL = URL(fileURLWithPath: sandboxBin)
+            executable = sandboxBin
         } else {
             // Fail-safe fallback: if sandbox-exec is missing (should never happen
             // on macOS), spawn claude directly rather than refusing all work.
-            proc.executableURL = URL(fileURLWithPath: claudePath.contains("/") ? claudePath : "/usr/bin/env")
+            executable = claudePath.contains("/") ? claudePath : "/usr/bin/env"
             await emit(.info, text: "sandbox-exec unavailable; worker running UNCONFINED")
         }
 
@@ -394,7 +400,7 @@ public actor SwarmWorker {
         // Final positional arg: the prompt. Use stdin instead so very long prompts
         // don't blow out arg-list limits.
         // We'll feed the goal via stdin.
-        proc.arguments = args + ["--input-format", "text"]
+        let spawnArgs = args + ["--input-format", "text"]
 
         // Inherit env, then DELIBERATELY strip every key that would route the
         // spawned `claude` to API billing instead of the user's Claude.ai Max
@@ -440,16 +446,17 @@ public actor SwarmWorker {
         env["NODE_NO_WARNINGS"] = "1"
         env["PATH"] = ClaudeBinaryLocator.spawnPATH(
             for: claudePath, base: env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin")
-        proc.environment = env
-        proc.currentDirectoryURL = URL(fileURLWithPath: spec.cwd)
-
-        let stdinPipe = Pipe()
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        proc.standardInput = stdinPipe
-        proc.standardOutput = stdoutPipe
-        proc.standardError = stderrPipe
-
+        let prepared = executor.prepare(CommandRequest(
+            executable: executable,
+            arguments: spawnArgs,
+            cwd: spec.cwd,
+            env: env,
+            timeoutSec: ttlSeconds
+        ))
+        let proc = prepared.process
+        let stdinPipe = prepared.stdin
+        let stdoutPipe = prepared.stdout
+        let stderrPipe = prepared.stderr
         self.process = proc
 
         do {

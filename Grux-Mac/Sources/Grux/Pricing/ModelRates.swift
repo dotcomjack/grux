@@ -243,7 +243,7 @@ enum ModelRates {
     // with host nil. That would classify the user's own Ollama as hosted and
     // price every genuinely free local turn as paid, which is the same class of
     // wrong answer in the opposite direction.
-    private static func host(fromBaseURL baseURL: String) -> String {
+    static func host(fromBaseURL baseURL: String) -> String {
         var s = baseURL.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if let scheme = s.range(of: "://") { s = String(s[scheme.upperBound...]) }
         if let slash = s.firstIndex(of: "/") { s = String(s[..<slash]) }

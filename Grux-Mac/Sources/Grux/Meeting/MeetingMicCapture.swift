@@ -44,7 +44,7 @@ final class MeetingMicCapture {
                           userInfo: [NSLocalizedDescriptionKey: "Microphone not authorized"])
         }
 
-        let engine = AVAudioEngine()
+        let engine = AudioFactory.engine("meeting")
         let input = engine.inputNode
         let nativeFormat = input.outputFormat(forBus: 0)
         let nativeRate = nativeFormat.sampleRate

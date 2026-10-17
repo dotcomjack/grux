@@ -2,7 +2,7 @@ import SwiftUI
 
 // Settings section for notification triage (blueprint section 03): one
 // matrix grid of category rows x interrupt/batch/silent radio pills, a
-// speak-on-interrupt toggle column, quiet hours pickers, and the Haiku
+// speak-on-interrupt toggle column, quiet hours pickers, and the
 // escalation switch. Designed to drop into a SettingsView Form as a
 // Section, e.g. in the General pane or the Voice & Ambient pane.
 
@@ -18,7 +18,7 @@ struct TriageMatrixSection: View {
             // inside one. Grouped rows already separate themselves.
             quietHoursRow
             Toggle("Judge notifications on what they say", isOn: $store.llmEscalationEnabled)
-            Text("With a decision key, each new free-text notification is read once and sent to interrupt, batch or silent on what it says, in place of its row above. Failures the rules catch still interrupt, and quiet hours still hold. Without a key, unknown ones batch and Haiku files them into a category in the background. $0.01 estimated per day, usually less.")
+            Text("With a decision key, each new free-text notification is read once and sent to interrupt, batch or silent on what it says, in place of its row above. Failures the rules catch still interrupt, and quiet hours still hold. Without a key, unknown ones batch and a small model files them into a category in the background. $0.01 estimated per day, usually less.")
                 .font(GruxType.caption)
                 .foregroundStyle(.secondary)
             if let last = store.recentLog.first {
@@ -32,42 +32,84 @@ struct TriageMatrixSection: View {
 
     // MARK: - Matrix
 
+    /// The grid with the category names in their own column wherever that
+    /// fits whole, and with each name on its own line above its row where it
+    /// does not. At the 361pt pane floor the one-column grid broke names
+    /// mid-word ("Remind / ers", "Comma / nds"; audit 2026-10-13, item 6).
     private var matrixGrid: some View {
+        ViewThatFits(in: .horizontal) {
+            wideGrid
+            compactGrid
+        }
+        .padding(.vertical, GruxSpacing.xs)
+    }
+
+    private var wideGrid: some View {
         Grid(alignment: .leading, horizontalSpacing: GruxSpacing.m, verticalSpacing: GruxSpacing.s) {
             GridRow {
-                Text("CATEGORY")
-                    .font(GruxTheme.Font.microCaps)
-                    .kerning(1.2)
-                    .foregroundStyle(GruxTheme.textTertiary)
-                ForEach(TriageAction.allCases) { action in
-                    Text(action.label.uppercased())
-                        .font(GruxTheme.Font.microCaps)
-                        .kerning(1.2)
-                        .foregroundStyle(GruxTheme.textTertiary)
-                        .gridColumnAlignment(.center)
-                }
-                Text("SPEAK")
-                    .font(GruxTheme.Font.microCaps)
-                    .kerning(1.2)
-                    .foregroundStyle(GruxTheme.textTertiary)
-                    .gridColumnAlignment(.center)
-                    .help("Also speak the title aloud when this category interrupts")
+                header("CATEGORY")
+                actionHeaders
             }
             ForEach(TriageCategory.allCases) { category in
                 GridRow {
-                    Label(category.label, systemImage: category.systemImage)
-                        .font(GruxType.body)
-                        .labelStyle(.titleAndIcon)
-                    ForEach(TriageAction.allCases) { action in
-                        radioPill(category: category, action: action)
-                            .gridColumnAlignment(.center)
-                    }
-                    speakToggle(category: category)
-                        .gridColumnAlignment(.center)
+                    categoryLabel(category)
+                    controls(category)
                 }
             }
         }
-        .padding(.vertical, GruxSpacing.xs)
+    }
+
+    private var compactGrid: some View {
+        Grid(alignment: .leading, horizontalSpacing: GruxSpacing.m, verticalSpacing: GruxSpacing.xs) {
+            GridRow { actionHeaders }
+            ForEach(TriageCategory.allCases) { category in
+                GridRow {
+                    categoryLabel(category)
+                        .gridCellColumns(TriageAction.allCases.count + 1)
+                        .padding(.top, GruxSpacing.xs)
+                }
+                GridRow { controls(category) }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var actionHeaders: some View {
+        ForEach(TriageAction.allCases) { action in
+            header(action.label.uppercased())
+                .gridColumnAlignment(.center)
+        }
+        header("SPEAK")
+            .gridColumnAlignment(.center)
+            .help("Also speak the title aloud when this category interrupts")
+    }
+
+    @ViewBuilder
+    private func controls(_ category: TriageCategory) -> some View {
+        ForEach(TriageAction.allCases) { action in
+            radioPill(category: category, action: action)
+                .gridColumnAlignment(.center)
+        }
+        speakToggle(category: category)
+            .gridColumnAlignment(.center)
+    }
+
+    private func header(_ text: String) -> some View {
+        Text(text)
+            .font(GruxTheme.Font.microCaps)
+            .kerning(1.2)
+            .foregroundStyle(GruxTheme.textTertiary)
+            .lineLimit(1)
+            .fixedSize()
+    }
+
+    /// Never wraps: a name that does not fit sends the grid to its compact form.
+    private func categoryLabel(_ category: TriageCategory) -> some View {
+        Label(category.label, systemImage: category.systemImage)
+            .font(GruxType.body)
+            .labelStyle(.titleAndIcon)
+            .lineLimit(1)
+            .fixedSize()
     }
 
     private func radioPill(category: TriageCategory, action: TriageAction) -> some View {

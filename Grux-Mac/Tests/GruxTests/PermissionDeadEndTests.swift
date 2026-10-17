@@ -34,7 +34,7 @@ final class PermissionDeadEndTests: XCTestCase {
     /// concludes Grux is out of date. These are the pane names macOS 26 uses.
     func testThePanesAreTheOnesMacOSActuallyHas() {
         let expected: [SetupRequirement: String] = [
-            .permNotifications:   "System Settings > Notifications > Grux OS",
+            .permNotifications:   "System Settings > Notifications > Grux AI",
             .permMicrophone:      "System Settings > Privacy & Security > Microphone",
             .permCalendar:        "System Settings > Privacy & Security > Calendars",
             .permContacts:        "System Settings > Privacy & Security > Contacts",
@@ -87,7 +87,7 @@ final class PermissionDeadEndTests: XCTestCase {
         XCTAssertTrue(CapabilityRequest.howToGrant(.permNotifications)
             .contains("switch on Allow Notifications"))
         for req in [SetupRequirement.permAccessibility, .permFullDiskAccess, .permMicrophone] {
-            XCTAssertTrue(CapabilityRequest.howToGrant(req).contains("tick Grux OS in the list"),
+            XCTAssertTrue(CapabilityRequest.howToGrant(req).contains("tick Grux AI in the list"),
                           "\(req.rawValue) does not name the control")
         }
     }

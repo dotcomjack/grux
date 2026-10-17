@@ -18,7 +18,7 @@ struct PanelHead: View {
     /// listening off the shell bus (focus, workflows, agents) gets the orb.
     private var orbState: GruxOrbState {
         if shellBus.current.mode == .alert { return ShellMode.alert.orbState }
-        if tell == .off { return shellBus.current.mode.orbState }
+        if tell.listenerOff { return shellBus.current.mode.orbState }
         return tell.orbState
     }
 
@@ -34,6 +34,10 @@ struct PanelHead: View {
                     .frame(width: GruxLayout.panelOrb, height: GruxLayout.panelOrb)
             }
             .buttonStyle(.plain)
+            // Never in the key view loop: with the composer disabled, typing a
+            // sentence pressed this on every space and toggled mute (W4 pass 1,
+            // 2026-10-13). Clicks, the context menu and Voice Control still reach it.
+            .focusable(false)
             .orbDecisionHelp(tell.help)
             .contextMenu {
                 Button(TuningCopy.title) { onOpen("tuning") }

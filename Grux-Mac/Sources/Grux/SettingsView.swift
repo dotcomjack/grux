@@ -1,5 +1,71 @@
 import SwiftUI
 
+/// Settings tabs. The system segmented control paints the selected tab gray.
+/// Selected is the same accent the rest of Grux uses. When the labels do not
+/// fit the width they are offered, the row becomes one accent menu.
+private struct SettingsTabBar: View {
+    struct Item: Identifiable {
+        let id: String
+        let label: String
+    }
+
+    let items: [Item]
+    @Binding var selection: String
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            row
+            menu
+        }
+    }
+
+    private var row: some View {
+        HStack(spacing: 2) {
+            ForEach(items) { item in
+                let on = item.id == selection
+                Button {
+                    selection = item.id
+                } label: {
+                    Text(item.label)
+                        .font(.system(size: 12, weight: on ? .semibold : .regular))
+                        .lineLimit(1)
+                        .padding(.horizontal, GruxSpacing.s)
+                        .padding(.vertical, 5)
+                        .foregroundStyle(on ? Color.white : GruxTheme.textSecondary)
+                        .background(Capsule().fill(on ? GruxTheme.accentPrimary : Color.clear))
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
+        }
+        .padding(3)
+        .background(Capsule().fill(GruxTheme.chipFill))
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var menu: some View {
+        Menu {
+            ForEach(items) { item in
+                Button(item.label) { selection = item.id }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text(items.first { $0.id == selection }?.label ?? "")
+                    .lineLimit(1)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+            }
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(Color.white)
+            .padding(.horizontal, GruxSpacing.m)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(GruxTheme.accentPrimary))
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+    }
+}
+
 // Settings consolidation (blueprint section 02, proposal 5): the old 12-tab
 // bar is now 5 panes: General, Voice & Ambient, Models, Appearance,
 // Data & Security. Every control from the old tabs survives; sections moved,
@@ -50,7 +116,6 @@ struct SettingsView: View {
     @State private var developerTeamId: String = ""
     @State private var developerBundlePrefix: String = "com.example"
     @State private var memoryCounts: [SemanticMemoryKind: Int] = [:]
-    @ObservedObject private var semanticMemory = SemanticMemory.shared
     @ObservedObject private var wake = WakeWordListener.shared
     @ObservedObject private var speech = SpeechEngine.shared
     @ObservedObject private var ambient = AmbientState.shared
@@ -85,8 +150,30 @@ struct SettingsView: View {
     @State private var modelsSub: String = "models"
     @State private var dataSecuritySub: String = "backup"
 
+    /// The window this Settings is drawn in, read for whether it is on screen.
+    @State private var hostWindow = WindowBox()
+
     // Scroll target consumed by the pane ScrollViewReaders.
     @State private var pendingAnchor: String? = nil
+
+    /// How far down General is built. 2 is the first frame: tuning and
+    /// screen awareness. The rest mount after that frame, three sections
+    /// at a time, so the first open is not one giant layout.
+    @State private var generalDepth: Int = 2
+
+    /// Handoff sentence, filled after the first frame. The live capability
+    /// walk reads the keychain, so it must not run inside the view body.
+    @State private var handoffLine: String = ""
+
+    static let generalSectionCount = 11
+
+    /// "3.1.0 (9)" from the running bundle; "dev" under a bare swift build.
+    static var aboutVersion: String {
+        let info = Bundle.main.infoDictionary ?? [:]
+        guard let short = info["CFBundleShortVersionString"] as? String else { return "dev" }
+        let build = info["CFBundleVersion"] as? String
+        return build.map { "\(short) (\($0))" } ?? short
+    }
 
     // Search filter (per-pane keyword registry in SettingsSearchRegistry).
     @State private var searchQuery: String = ""
@@ -143,25 +230,21 @@ struct SettingsView: View {
             // dominant band of right-edge overflow sat at y 92 to 115pt, which is
             // this row, not any section.
             //
-            // A menu picker still wears the tint, so the fix keeps the accent
-            // that motivated the original change.
-            ViewThatFits(in: .horizontal) {
-                panePicker.pickerStyle(.segmented)
-                panePicker.pickerStyle(.menu).frame(maxWidth: GruxLayout.settingsMenuPickerMax)
-            }
-            .labelsHidden()
+            // The system segmented control paints the selected tab gray.
+            // The rest of Grux uses the accent, so these tabs do too.
+            // The row keeps its own width. When the labels do not fit, the
+            // same tabs collapse to one accent menu instead of clipping.
+            SettingsTabBar(
+                items: SettingsPane.allCases.map { SettingsTabBar.Item(id: $0.rawValue, label: $0.label) },
+                selection: $selectedTab
+            )
             .padding(.horizontal, GruxSpacing.l)
             .padding(.top, GruxSpacing.s)
 
-            Group {
-                switch SettingsPane(rawValue: selectedTab) ?? .general {
-                case .general:      generalPane
-                case .voiceAmbient: voiceAmbientPane
-                case .models:       modelsPane
-                case .appearance:   appearancePane
-                case .dataSecurity: dataSecurityPane
-                }
-            }
+            // Each pane is its own function so the first open only builds the
+            // one on screen. A switch in this body would still instantiate
+            // every pane's type on the first frame.
+            selectedSettingsPane()
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         // Flexible, NOT fixed. This view has two call sites with opposite needs:
@@ -220,10 +303,17 @@ struct SettingsView: View {
                alignment: .top)
         .onAppear {
             loadFromState()
-            applyRequestedSettingsTab()
+            applyRequestedSettingsTab(appearing: true)
+            mountRestOfGeneral()
         }
         .onChange(of: state.requestedSettingsTab) { _, _ in
-            applyRequestedSettingsTab()
+            // A Settings already on screen spends the request too; a closed
+            // window kept alive does not (PR 40 review, W2d-6).
+            applyRequestedSettingsTab(appearing: hostWindow.window?.isVisible == true)
+        }
+        .background(WindowReader(box: hostWindow))
+        .onChange(of: selectedTab) { _, _ in
+            mountRestOfGeneral()
         }
     }
 
@@ -232,10 +322,9 @@ struct SettingsView: View {
     // Consumes AppState.requestedSettingsTab: resolves old or new tag names
     // through the alias map, switches the pane (+ sub-pane + scroll anchor),
     // and clears the request so it never re-fires on a later Settings open.
-    private func applyRequestedSettingsTab() {
-        guard let tab = state.requestedSettingsTab, !tab.isEmpty else { return }
+    private func applyRequestedSettingsTab(appearing: Bool = false) {
+        guard let tab = state.takeSettingsRequest(appearing: appearing) else { return }
         navigate(to: SettingsTabAliases.resolve(tab))
-        state.requestedSettingsTab = nil
     }
 
     private func navigate(to loc: SettingsLocation) {
@@ -265,13 +354,17 @@ struct SettingsView: View {
     /// scrolling to where you already are moves nothing.
     static let anchorScrollAttempts: [TimeInterval] = [0.08, 0.35, 0.8]
 
+    /// The reader wraps the Form itself, never a ScrollView around it. A
+    /// grouped Form scrolls on its own, and inside an outer ScrollView no
+    /// section id could be found, so every deep link and search result opened
+    /// its pane at the top (W4 pass 2, 2026-10-13; measured headless: the
+    /// "onboarding" link reached Restart onboarding only once the outer
+    /// ScrollView was gone).
     private func scrollToPendingAnchor(_ proxy: ScrollViewProxy) {
         guard let anchor = pendingAnchor else { return }
         for (i, delay) in Self.anchorScrollAttempts.enumerated() {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                withAnimation(.easeOut(duration: 0.25)) {
-                    proxy.scrollTo(anchor, anchor: .top)
-                }
+                proxy.scrollTo(anchor, anchor: .top)
                 // Cleared only after the last attempt, so a pane that mounts
                 // late still has a request to honour.
                 if i == Self.anchorScrollAttempts.count - 1 { pendingAnchor = nil }
@@ -337,30 +430,55 @@ struct SettingsView: View {
         .padding(.bottom, GruxSpacing.s)
     }
 
-    /// The pane chooser's content, shared by both fitted forms above.
-    ///
-    private var panePicker: some View {
-        Picker("", selection: $selectedTab) {
-            ForEach(SettingsPane.allCases, id: \.rawValue) { pane in
-                Text(pane.label).tag(pane.rawValue)
-            }
-        }
-    }
+
 
     /// One sentence describing what the handoff prompt currently contains.
     ///
     /// Reads live capability state, so on a fully configured Mac it says so
     /// rather than offering to hand over an empty list.
     private var handoffSummary: String {
+        handoffLine.isEmpty ? "Checking what's left on this Mac." : handoffLine
+    }
+
+    /// Same sentences the body used to build on every render. Runs from the
+    /// reveal task, after the first frame, never from the getter.
+    private func refreshHandoffLine() {
         let split = AgentHandoff.outstanding()
         if split.agent.isEmpty && split.human.isEmpty {
-            return "Everything Grux asks for is already set up on this Mac, so the prompt just says so."
+            handoffLine = "Everything Grux asks for is already set up on this Mac, so the prompt just says so."
+        } else if split.agent.isEmpty {
+            handoffLine = "Nothing left that an agent can do. \(split.human.count) item\(split.human.count == 1 ? "" : "s") still need you, and the prompt lists them."
+        } else {
+            let mine = split.human.isEmpty ? "" : ", and the \(split.human.count) that need you"
+            handoffLine = "Right now it lists \(split.agent.count) thing\(split.agent.count == 1 ? "" : "s") your agent can do\(mine)."
         }
-        if split.agent.isEmpty {
-            return "Nothing left that an agent can do. \(split.human.count) item\(split.human.count == 1 ? "" : "s") still need you, and the prompt lists them."
+    }
+
+    /// The rest of General mounts after the first paint. A `.task` on this
+    /// view ran ahead of the pane's paint record and pulled that record
+    /// past a tenth of a second. This one does not: it is scheduled and
+    /// returns, and the first paint is tuning and screen awareness.
+    private func mountRestOfGeneral() {
+        guard (SettingsPane(rawValue: selectedTab) ?? .general) == .general else { return }
+        guard generalDepth < Self.generalSectionCount else { return }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            guard !Task.isCancelled else { return }
+            guard (SettingsPane(rawValue: selectedTab) ?? .general) == .general else { return }
+            refreshHandoffLine()
+            while generalDepth < Self.generalSectionCount {
+                await Task.yield()
+                guard !Task.isCancelled else { return }
+                guard (SettingsPane(rawValue: selectedTab) ?? .general) == .general else { return }
+                generalDepth = min(Self.generalSectionCount, generalDepth + 3)
+            }
         }
-        let mine = split.human.isEmpty ? "" : ", and the \(split.human.count) that need you"
-        return "Right now it lists \(split.agent.count) thing\(split.agent.count == 1 ? "" : "s") your agent can do\(mine)."
+    }
+
+    /// Search still shows every matching section at once. A normal open
+    /// reveals only what `generalDepth` has reached.
+    private func showGeneral(_ index: Int) -> Bool {
+        searchIsFiltering || generalDepth >= index
     }
 
     private func sectionVisible(_ anchor: String) -> Bool {
@@ -442,21 +560,49 @@ struct SettingsView: View {
         .padding(.bottom, GruxSpacing.s)
     }
 
+
+    /// One function per pane. The body calls only the pane on screen, so the
+    /// other panes' types are not built on the first open.
+    private func selectedSettingsPane() -> AnyView {
+        switch SettingsPane(rawValue: selectedTab) ?? .general {
+        case .general: return erasedGeneralPane()
+        case .voiceAmbient: return erasedVoicePane()
+        case .models: return erasedModelsPane()
+        case .appearance: return erasedAppearancePane()
+        case .dataSecurity: return erasedDataPane()
+        }
+    }
+
+    private func erasedGeneralPane() -> AnyView { AnyView(generalPane) }
+    private func erasedVoicePane() -> AnyView { AnyView(voiceAmbientPane) }
+    private func erasedModelsPane() -> AnyView { AnyView(modelsPane) }
+    private func erasedAppearancePane() -> AnyView { AnyView(appearancePane) }
+    private func erasedDataPane() -> AnyView { AnyView(dataSecurityPane) }
+
     // MARK: - Pane 1: General (old General + About)
 
     private var generalPane: some View {
         ScrollViewReader { proxy in
-            ScrollView {
                 Form {
-                    if sectionVisible("general.tuning") {
+                    if showGeneral(1) && sectionVisible("general.tuning") {
                         Section(TuningCopy.title) {
                             TuningPointer(text: TuningCopy.settingsLink)
                         }
                         .id("general.tuning")
                     }
-                    if sectionVisible("general.screen") {
+                    if showGeneral(2) && sectionVisible("general.screen") {
                         Section("Screen awareness") {
-                            Toggle("Enable screen analysis", isOn: $screen)
+                            // Shows what is true: without screen recording it is
+                            // off whatever was chosen, and the choice is kept
+                            // for when access arrives (W4, 2026-10-13).
+                            Toggle("Enable screen analysis", isOn: Binding(
+                                get: { screen && state.screenPermissionGranted },
+                                set: { screen = $0 }))
+                                .disabled(!state.screenPermissionGranted)
+                            if !state.screenPermissionGranted {
+                                Text("Needs screen access first. Grant it below; analysis starts once macOS allows it.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
                             Toggle("Send reminder notifications", isOn: $notify)
                             Toggle("Auto-promote detected task to NOW", isOn: $auto)
                             HStack { Text("Permission:")
@@ -469,189 +615,20 @@ struct SettingsView: View {
                         }
                         .id("general.screen")
                     }
-                    if sectionVisible("general.notifications") {
-                        TriageMatrixSection()
-                            .id("general.notifications")
-                    }
-                    if sectionVisible("general.hours") {
-                        Section("Active hours") {
-                            TuningPointer()
-                        }
-                        .id("general.hours")
-                    }
-                    // The only door back into the first-run flow. Without it
-                    // OnboardingModel.reset() had no caller anywhere outside
-                    // Onboarding/, so the one-time flow was exactly the trap
-                    // its own doc comment describes: click through once and it
-                    // is gone for good, including the privacy proof on gate 3
-                    // that is the one screen worth re-reading. Same shape as
-                    // "Recording consent" above, for the same reason.
-                    if sectionVisible("general.identity") {
-                        Section("Names") {
-                            // Neither of these had a control anywhere. The user's
-                            // name was set once during onboarding and then
-                            // unreachable, and the assistant's name was a config
-                            // key nothing read. Both are here now, because a
-                            // setting you cannot find is not a setting.
-                            TextField("What Grux calls you", text: Binding(
-                                get: { state.config.userName },
-                                set: { v in
-                                    state.config.userName = v
-                                    state.saveConfig()
-                                }
-                            ))
-                            Text("Used in your briefing and when the assistant addresses you. Leave it empty and it simply will not use a name. It stays on this Mac.")
-                                .font(.caption).foregroundStyle(.secondary)
-
-                            TextField("What you call the assistant", text: Binding(
-                                get: { state.config.assistantName },
-                                set: { v in
-                                    state.config.assistantName = v
-                                    state.saveConfig()
-                                }
-                            ))
-                            Text("Defaults to Jax, which is the assistant. The app itself is Grux, and renaming the assistant does not rename the app or its tabs. Takes effect on the next message.")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                        .id("general.identity")
-                    }
-                    if sectionVisible("general.doors") {
-                        Section("Sidebar doors") {
-                            // The Developer door had no switch anywhere: the
-                            // config key was read by the rail and written by
-                            // nothing, so a new install could never show the
-                            // five surfaces behind it. This is its permanent
-                            // home; first run opens it for somebody who says
-                            // they write code (`IntentToFeatures.apply`).
-                            Toggle(DoorsCopy.developer.title, isOn: Binding(
-                                get: { state.config.developerSurfacesUnlocked },
-                                set: { v in
-                                    state.config.developerSurfacesUnlocked = v
-                                    state.saveConfig()
-                                }
-                            ))
-                            Text(DoorsCopy.developer.body)
-                                .font(.caption).foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .id("general.doors")
-                    }
-                    if sectionVisible("general.shell") {
-                        Section("Shell") {
-                            // The pre-3.0 frame, kept for one release. The
-                            // shell root reads legacyShell live, so the
-                            // switch rebuilds the window on the spot.
-                            Toggle("Classic sidebar", isOn: Binding(
-                                get: { state.config.legacyShell },
-                                set: { v in
-                                    state.config.legacyShell = v
-                                    state.saveConfig()
-                                }
-                            ))
-                            Text("The 240pt sidebar from before 3.0, in place of the Command Panel. Switches right away. Goes away in the release after this one.")
-                                .font(GruxType.caption).foregroundStyle(GruxTheme.textTertiary)
-                                .fixedSize(horizontal: false, vertical: true)
-                            // Only the Command Panel floats (`LaunchWindowSizer.level`), so
-                            // the classic shell shows the row switched off with the reason.
-                            Toggle("Keep Grux on top", isOn: Binding(
-                                get: { state.config.keepOnTop && KeepOnTopRow.isEnabled(legacyShell: state.config.legacyShell) },
-                                set: { v in
-                                    state.config.keepOnTop = v
-                                    state.saveConfig()
-                                }
-                            ))
-                            .disabled(!KeepOnTopRow.isEnabled(legacyShell: state.config.legacyShell))
-                            Text(KeepOnTopRow.caption(legacyShell: state.config.legacyShell))
-                                .font(GruxType.caption).foregroundStyle(GruxTheme.textTertiary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .id("general.shell")
-                    }
-                    if sectionVisible("general.handoff") {
-                        Section("Hand setup to your agent") {
-                            // Setup is nine credentials, eight permissions and a
-                            // few installs. A good part of it is mechanical, and
-                            // everybody running Grux already has an agent that
-                            // does mechanical work. So rather than walking them
-                            // through it, give them one paragraph to paste.
-                            Text("Grux can write a prompt describing exactly what this Mac still needs. Paste it into your coding agent and it will do the parts it can.")
-                                .font(.caption).foregroundStyle(.secondary)
-
-                            Button("Hand setup to your agent") {
-                                handoffNote = SettingsHandoff.run(legacyShell: state.config.legacyShell)
-                            }
-                            if let handoffNote {
-                                Text(handoffNote)
-                                    .font(GruxType.caption).foregroundStyle(GruxTheme.textSecondary)
-                                    .textSelection(.enabled)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            } else if !state.config.legacyShell {
-                                Text("Now under Optimize Grux, as the Hand it over door.")
-                                    .font(GruxType.caption).foregroundStyle(GruxTheme.textTertiary)
-                            }
-
-                            // Live counts rather than a vague promise. It reads
-                            // the same capability state the sidebar does, so it
-                            // cannot claim work that is already done.
-                            Text(handoffSummary)
-                                .font(.caption).foregroundStyle(.secondary)
-
-                            Text("It never asks your agent for a credential or a permission, because it cannot get either, and it explicitly tells it not to answer the consent questions for you. Grux records setup steps as checkboxes rather than detecting them, so when your agent is done you tick off what it installed.")
-                                .font(.caption2).foregroundStyle(.tertiary)
-                        }
-                        .id("general.handoff")
-                    }
-                    if sectionVisible("general.permissions") {
-                        PermissionsSection()
-                    }
-                    if sectionVisible("general.about") {
-                        Section("About") {
-                            Text("Grux OS").font(GruxType.title).foregroundStyle(GruxTheme.textPrimary)
-                            Text("Focus assistant for solo founders who juggle too many things.").foregroundStyle(.secondary)
-                            Text("Support dir: \(Persistence.supportDir.path)")
-                                .font(.caption).textSelection(.enabled)
-                            Text("Events stored: \(state.events.count) • Tasks: \(state.tasks.count)")
-                                .font(.caption).foregroundStyle(.secondary)
-                            HStack {
-                                Button("Reveal support dir") { NSWorkspace.shared.open(Persistence.supportDir) }
-                                // Was labelled "Reset onboarding" and never
-                                // touched OnboardingModel: it puts every config
-                                // value back to its default. Renamed rather than
-                                // rewired, because the button people wanted
-                                // under that name now exists above it and two
-                                // controls sharing one name is worse than the
-                                // gap it was standing in for.
-                                DestructiveButton(
-                                    "Reset all settings",
-                                    question: "Reset every setting to its default?",
-                                    detail: "Your model key, your name, notification routing, "
-                                        + "voice, appearance and capture exclusions all go back "
-                                        + "to how Grux shipped. Your chats, notes, documents and "
-                                        + "memory are not touched. This cannot be undone.",
-                                    confirmLabel: "Reset everything"
-                                ) { state.config = .default; state.saveConfig() }
-                            }
-                        }
-                        .id("general.about")
-                    }
-                    if sectionVisible("general.firstRun") {
-                        Section("Restart onboarding") {
-                            HStack {
-                                Text("Connect a model, set what Grux calls you, and on the two longer paths see one real captured frame.")
-                                Spacer()
-                                Button("Restart onboarding") { confirmingOnboardingReset = true }
-                            }
-                            Text("The frame comes with the exact redacted text Grux would send, and it is the step that lets Grux start watching your screen at all. The one minute path skips it, so choose one of the longer two if that is what you came back for. Grux goes back to the tier picker right away and stays there until the flow is finished. The model key gate offers \"Keep the key I have\", so your saved key gets you straight past it. Nothing already saved is deleted.")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                        .id("general.firstRun")
-                    }
+                    // Later sections live in their own functions. Calling them
+                    // from here would put their types back on this first frame.
+                    if showGeneral(3) { generalChunkNotifications() }
+                    if showGeneral(6) { generalChunkDoors() }
+                    if showGeneral(9) { generalChunkAbout() }
                     saveBar
                 }
                 .modifier(SettingsFormChrome())
-            }
             .onAppear { scrollToPendingAnchor(proxy) }
             .onChange(of: pendingAnchor) { _, _ in scrollToPendingAnchor(proxy) }
+            .onChange(of: generalDepth) { _, depth in
+                guard depth >= Self.generalSectionCount, pendingAnchor != nil else { return }
+                scrollToPendingAnchor(proxy)
+            }
             // Attached to the pane, not to the row, so it survives the section
             // being filtered out from under it while the search field is live.
             .confirmationDialog(
@@ -667,28 +644,210 @@ struct SettingsView: View {
         }
     }
 
-    private var voiceAmbientSubPicker: some View {
-        Picker("", selection: $voiceAmbientSub) {
-            Text("Voice").tag("voice")
-            Text("Ambient").tag("ambient")
-            Text("Focus").tag("focus")
-            // The session engine spawns sessions and spends a credential, so it
-            // gets its own home.
-            Text("Sessions").tag("sessions")
+
+    /// Notifications, hours, and names. Not part of the first frame's type.
+    private func generalChunkNotifications() -> AnyView {
+        AnyView(Group {
+        if showGeneral(3) && sectionVisible("general.notifications") {
+            TriageMatrixSection()
+                .id("general.notifications")
         }
+        if showGeneral(4) && sectionVisible("general.hours") {
+            Section("Active hours") {
+                TuningPointer()
+            }
+            .id("general.hours")
+        }
+        if showGeneral(5) && sectionVisible("general.identity") {
+            Section("Names") {
+                // Neither of these had a control anywhere. The user's
+                // name was set once during onboarding and then
+                // unreachable, and the assistant's name was a config
+                // key nothing read. Both are here now, because a
+                // setting you cannot find is not a setting.
+                TextField("What Grux calls you", text: Binding(
+                    get: { state.config.userName },
+                    set: { v in
+                        state.config.userName = v
+                        state.saveConfig()
+                    }
+                ))
+                Text("Used in your briefing and when the assistant addresses you. Leave it empty and it simply will not use a name. It stays on this Mac.")
+                    .font(.caption).foregroundStyle(.secondary)
+
+                TextField("What you call the assistant", text: Binding(
+                    get: { state.config.assistantName },
+                    set: { v in
+                        state.config.assistantName = v
+                        state.saveConfig()
+                    }
+                ))
+                Text("Defaults to Jax, which is the assistant. The app itself is Grux, and renaming the assistant does not rename the app or its tabs. Takes effect on the next message.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            .id("general.identity")
+        }
+        
+        })
     }
+
+    /// Doors, shell, and the handoff. Built only after the first frame.
+    private func generalChunkDoors() -> AnyView {
+        AnyView(Group {
+if showGeneral(6) && sectionVisible("general.doors") {
+            Section("Sidebar doors") {
+                // The Developer door had no switch anywhere: the
+                // config key was read by the rail and written by
+                // nothing, so a new install could never show the
+                // five surfaces behind it. This is its permanent
+                // home; first run opens it for somebody who says
+                // they write code (`IntentToFeatures.apply`).
+                Toggle(DoorsCopy.developer.title, isOn: Binding(
+                    get: { state.config.developerSurfacesUnlocked },
+                    set: { v in
+                        state.config.developerSurfacesUnlocked = v
+                        state.saveConfig()
+                    }
+                ))
+                Text(DoorsCopy.developer.body)
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .id("general.doors")
+        }
+        if showGeneral(7) && sectionVisible("general.shell") {
+            Section("Shell") {
+                // The pre-3.0 frame, kept for one release. The
+                // shell root reads legacyShell live, so the
+                // switch rebuilds the window on the spot.
+                Toggle("Classic sidebar", isOn: Binding(
+                    get: { state.config.legacyShell },
+                    set: { v in
+                        state.config.legacyShell = v
+                        state.saveConfig()
+                    }
+                ))
+                Text("The 240pt sidebar from before 3.0, in place of the Command Panel. Switches right away. Goes away in the release after this one.")
+                    .font(GruxType.caption).foregroundStyle(GruxTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                // Only the Command Panel floats (`LaunchWindowSizer.level`), so
+                // the classic shell shows the row switched off with the reason.
+                Toggle("Keep Grux on top", isOn: Binding(
+                    get: { state.config.keepOnTop && KeepOnTopRow.isEnabled(legacyShell: state.config.legacyShell) },
+                    set: { v in
+                        state.config.keepOnTop = v
+                        state.saveConfig()
+                    }
+                ))
+                .disabled(!KeepOnTopRow.isEnabled(legacyShell: state.config.legacyShell))
+                Text(KeepOnTopRow.caption(legacyShell: state.config.legacyShell))
+                    .font(GruxType.caption).foregroundStyle(GruxTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .id("general.shell")
+        }
+        if showGeneral(8) && sectionVisible("general.handoff") {
+            Section("Hand setup to your agent") {
+                Text("Grux can write a prompt describing exactly what this Mac still needs. Paste it into your coding agent and it will do the parts it can.")
+                    .font(.caption).foregroundStyle(.secondary)
+
+                Button("Hand setup to your agent") {
+                    handoffNote = SettingsHandoff.run(legacyShell: state.config.legacyShell)
+                }
+                if let handoffNote {
+                    Text(handoffNote)
+                        .font(GruxType.caption).foregroundStyle(GruxTheme.textSecondary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if !state.config.legacyShell {
+                    Text("Now under Optimize Grux, as the Hand it over door.")
+                        .font(GruxType.caption).foregroundStyle(GruxTheme.textTertiary)
+                }
+
+                Text(handoffSummary)
+                    .font(.caption).foregroundStyle(.secondary)
+
+                Text("It never asks your agent for a credential or a permission, because it cannot get either, and it explicitly tells it not to answer the consent questions for you. Grux records setup steps as checkboxes rather than detecting them, so when your agent is done you tick off what it installed.")
+                    .font(.caption2).foregroundStyle(.tertiary)
+            }
+            .id("general.handoff")
+        }
+        })
+    }
+
+    /// Permissions, about, and restart. Built last.
+    private func generalChunkAbout() -> AnyView {
+        AnyView(Group {
+if showGeneral(9) && sectionVisible("general.permissions") {
+            PermissionsSection()
+        }
+        if showGeneral(10) && sectionVisible("general.about") {
+            Section("About") {
+                Text("Grux AI").font(GruxType.title).foregroundStyle(GruxTheme.textPrimary)
+                Text("One agent for everything you run on your Mac").foregroundStyle(.secondary)
+                Text("Version \(Self.aboutVersion)")
+                    .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                Link("Built by DotcomJack", destination: URL(string: "https://dotcomjack.com")!)
+                    .font(.caption)
+                    .gruxLink()
+                Text("Support dir: \(Persistence.supportDir.path)")
+                    .font(.caption).textSelection(.enabled)
+                Text("Events stored: \(state.events.count) • Tasks: \(state.tasks.count)")
+                    .font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Button("Reveal support dir") { NSWorkspace.shared.open(Persistence.supportDir) }
+                    // Was labelled "Reset onboarding" and never
+                    // touched OnboardingModel: it puts every config
+                    // value back to its default. Renamed rather than
+                    // rewired, because the button people wanted
+                    // under that name now exists above it and two
+                    // controls sharing one name is worse than the
+                    // gap it was standing in for.
+                    DestructiveButton(
+                        "Reset all settings",
+                        question: "Reset every setting to its default?",
+                        detail: "Your model key, your name, notification routing, "
+                            + "voice, appearance and capture exclusions all go back "
+                            + "to how Grux shipped. Your chats, notes, documents and "
+                            + "memory are not touched. This cannot be undone.",
+                        confirmLabel: "Reset everything"
+                    ) { state.config = .default; state.saveConfig() }
+                }
+            }
+            .id("general.about")
+        }
+        if showGeneral(11) && sectionVisible("general.firstRun") {
+            Section("Restart onboarding") {
+                HStack {
+                    Text("Connect a model, set what Grux calls you, and on the two longer paths see one real captured frame.")
+                    Spacer()
+                    Button("Restart onboarding") { confirmingOnboardingReset = true }
+                }
+                Text("The frame comes with the exact redacted text Grux would send, and it is the step that lets Grux start watching your screen at all. The one minute path skips it, so choose one of the longer two if that is what you came back for. Grux goes back to the tier picker right away and stays there until the flow is finished. The model key gate offers \"Keep the key I have\", so your saved key gets you straight past it. Nothing already saved is deleted.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            .id("general.firstRun")
+        }
+        })
+    }
+
+
 
     // MARK: - Pane 2: Voice & Ambient (old Voice + Ambient + Focus)
 
     private var voiceAmbientPane: some View {
         VStack(spacing: 0) {
-            // Segmented where the segments fit, a menu where they do not: at
-            // the pane's 360pt floor the segmented row ran past both edges.
-            ViewThatFits(in: .horizontal) {
-                voiceAmbientSubPicker.pickerStyle(.segmented)
-                voiceAmbientSubPicker.pickerStyle(.menu).frame(maxWidth: GruxLayout.settingsMenuPickerMax)
-            }
-            .labelsHidden()
+            SettingsTabBar(
+                items: [
+                    .init(id: "voice", label: "Voice"),
+                    .init(id: "ambient", label: "Ambient"),
+                    .init(id: "focus", label: "Focus"),
+                    // The session engine spawns sessions and spends a credential,
+                    // so it gets its own home.
+                    .init(id: "sessions", label: "Sessions"),
+                ],
+                selection: $voiceAmbientSub
+            )
             .padding(.horizontal, GruxSpacing.l)
             .padding(.top, GruxSpacing.m)
             Group {
@@ -705,7 +864,6 @@ struct SettingsView: View {
 
     private var voiceSub: some View {
         ScrollViewReader { proxy in
-            ScrollView {
                 Form {
                     if sectionVisible("voice.mics") {
                         micsSection
@@ -819,7 +977,6 @@ struct SettingsView: View {
                     saveBar
                 }
                 .modifier(SettingsFormChrome())
-            }
             .onAppear { scrollToPendingAnchor(proxy) }
             .onChange(of: pendingAnchor) { _, _ in scrollToPendingAnchor(proxy) }
         }
@@ -827,7 +984,6 @@ struct SettingsView: View {
 
     private var ambientSub: some View {
         ScrollViewReader { proxy in
-            ScrollView {
                 Form {
                     if sectionVisible("ambient.passive") {
                         ListeningSection()
@@ -1025,7 +1181,6 @@ struct SettingsView: View {
                     }
                 }
                 .modifier(SettingsFormChrome())
-            }
             .onAppear { scrollToPendingAnchor(proxy) }
             .onChange(of: pendingAnchor) { _, _ in scrollToPendingAnchor(proxy) }
         }
@@ -1036,9 +1191,9 @@ struct SettingsView: View {
     /// however many times the scroll was tried.
     private var sessionsSub: some View {
         ScrollViewReader { proxy in
-            ScrollView {
-                TerminalSessionsSettingsView()
-            }
+            // The view is a grouped Form, which scrolls itself: an outer
+            // ScrollView hid its anchors from the reader (PR 40 review).
+            TerminalSessionsSettingsView()
             .onAppear { scrollToPendingAnchor(proxy) }
             .onChange(of: pendingAnchor) { _, _ in scrollToPendingAnchor(proxy) }
         }
@@ -1074,25 +1229,20 @@ struct SettingsView: View {
         .modifier(SettingsFormChrome())
     }
 
-    private var modelsSubPicker: some View {
-        Picker("", selection: $modelsSub) {
-            Text("Configuration").tag("models")
-            Text("Presets").tag("presets")
-        }
-    }
+
 
     // MARK: - Pane 3: Models (old Model & API + tier picker + offline +
     // custom endpoints + MCP servers + Presets)
 
     private var modelsPane: some View {
         VStack(spacing: 0) {
-            // Segmented where the segments fit, a menu where they do not: at
-            // the pane's 360pt floor the segmented row ran past both edges.
-            ViewThatFits(in: .horizontal) {
-                modelsSubPicker.pickerStyle(.segmented)
-                modelsSubPicker.pickerStyle(.menu).frame(maxWidth: GruxLayout.settingsMenuPickerMax)
-            }
-            .labelsHidden()
+            SettingsTabBar(
+                items: [
+                    .init(id: "models", label: "Configuration"),
+                    .init(id: "presets", label: "Presets"),
+                ],
+                selection: $modelsSub
+            )
             .padding(.horizontal, GruxSpacing.l)
             .padding(.top, GruxSpacing.m)
             Group {
@@ -1135,8 +1285,13 @@ struct SettingsView: View {
 
     private var modelsConfigSub: some View {
         ScrollViewReader { proxy in
-            ScrollView {
                 Form {
+                    // While Chat has no model: the way to get one, first.
+                    if sectionVisible("models.connect") {
+                        ConnectModelSection()
+                            .id("models.connect")
+                    }
+
                     // What the models did today and what it cost, above where
                     // they are chosen.
                     if sectionVisible("models.usage") {
@@ -1184,7 +1339,7 @@ struct SettingsView: View {
 
                     if sectionVisible("models.tier") {
                         Section("Intelligence tier") {
-                            TuningPointer(text: TuningCopy.tierPointer(state.config.tier))
+                            TuningPointer(text: TuningCopy.tierPointer(state.config.tier, spends: TuningCopy.tierSpends))
                         }
                         .id("models.tier")
                     }
@@ -1252,14 +1407,16 @@ struct SettingsView: View {
                             }
                             if let status = modelRegistry.localStatus {
                                 Text(status).font(.caption)
-                                    .foregroundStyle(modelRegistry.local != nil ? Color.secondary : Color.orange)
+                                    // Usable, not reachable: "local server reachable,
+                                    // no models installed" is a warning, not a pass.
+                                    .foregroundStyle(modelRegistry.localUsable ? Color.secondary : Color.orange)
                             }
                             if !modelRegistry.localTags.isEmpty {
                                 Text("Installed: " + modelRegistry.localTags.joined(separator: ", "))
                                     .font(.caption).foregroundStyle(.secondary)
                             }
-                            if state.offlineMode && modelRegistry.local == nil {
-                                Text("Offline mode is on but no local model was found. Chat falls back to the cloud until a local server is reachable.")
+                            if state.offlineMode && !modelRegistry.localUsable {
+                                Text("Offline mode is on but no local model is ready to use. Chat falls back to the cloud until one is.")
                                     .font(.caption).foregroundStyle(.orange)
                             }
                             Text("Offline mode routes chat to a local model; web research and cloud voice are disabled. The model and base URL persist; the on/off switch resets to cloud on relaunch so a flaky local server never strands you. Works with Ollama (default), vLLM, or llama.cpp on the OpenAI-compatible endpoint.")
@@ -1281,9 +1438,12 @@ struct SettingsView: View {
                     saveBar
                 }
                 .modifier(SettingsFormChrome())
-            }
             .onAppear { scrollToPendingAnchor(proxy) }
             .onChange(of: pendingAnchor) { _, _ in scrollToPendingAnchor(proxy) }
+            // What the local server holds NOW. "no local server reachable" stayed
+            // on screen after Ollama started, until Discover was pressed (W4
+            // pass 2, 2026-10-13).
+            .task { await ModelRegistry.shared.discoverLocal() }
         }
     }
 
@@ -1301,14 +1461,7 @@ struct SettingsView: View {
         AppearanceSettingsView()
     }
 
-    private var dataSecuritySubPicker: some View {
-        Picker("", selection: $dataSecuritySub) {
-            Text("Backup").tag("backup")
-            Text("Security").tag("security")
-            Text("Folders").tag("folders")
-            Text("Data & Capabilities").tag("capabilities")
-        }
-    }
+
 
     // MARK: - Pane 5: Data & Security (old Backup + Security + the
     // non-model parts of Upgrades + Telemetry)
@@ -1320,13 +1473,15 @@ struct SettingsView: View {
             // and is now a sub-pane here. A fourth segment rather than a sixth
             // top-level pane on purpose, because the comment above records what
             // a fifth long label already cost this picker at the 840pt floor.
-            // Segmented where the segments fit, a menu where they do not: at
-            // the pane's 360pt floor the segmented row ran past both edges.
-            ViewThatFits(in: .horizontal) {
-                dataSecuritySubPicker.pickerStyle(.segmented)
-                dataSecuritySubPicker.pickerStyle(.menu).frame(maxWidth: GruxLayout.settingsMenuPickerMax)
-            }
-            .labelsHidden()
+            SettingsTabBar(
+                items: [
+                    .init(id: "backup", label: "Backup"),
+                    .init(id: "security", label: "Security"),
+                    .init(id: "folders", label: "Folders"),
+                    .init(id: "capabilities", label: "Data & Capabilities"),
+                ],
+                selection: $dataSecuritySub
+            )
             .padding(.horizontal, GruxSpacing.l)
             .padding(.top, GruxSpacing.m)
             Group {
@@ -1361,7 +1516,6 @@ struct SettingsView: View {
 
     private var capabilitiesSub: some View {
         ScrollViewReader { proxy in
-            ScrollView {
                 Form {
                     // ONLY WHEN SOMETHING IS ACTUALLY BROKEN. A recovery section
                     // that renders empty on every healthy launch is a section
@@ -1442,6 +1596,11 @@ struct SettingsView: View {
                             }
                         }
                         .id("data.memory")
+                        .task {
+                            guard let counts = await SemanticMemory.shared.countsWhenLoaded(seconds: 30),
+                                  !Task.isCancelled else { return }
+                            memoryCounts = counts
+                        }
                     }
 
                     if sectionVisible("data.phone") {
@@ -1546,12 +1705,12 @@ struct SettingsView: View {
 
                     if sectionVisible("data.web") {
                         Section("Real-time web research") {
-                            Toggle("Let Grux answer questions by searching the web (Brave + Haiku summarize)", isOn: $webResearchEnabled)
+                            Toggle("Let Grux answer questions by searching the web", isOn: $webResearchEnabled)
                                 .onChange(of: webResearchEnabled) { _, new in
                                     state.config.webResearchEnabled = new
                                     state.saveConfig()
                                 }
-                            Text("Replaces the old 'open a Google tab' flow with an inline conversational answer. Uses Brave Search (free tier ~1,000 queries/month) + Haiku to summarize. Browser tab-search still works separately.")
+                            Text("Replaces the old 'open a Google tab' flow with an inline conversational answer. Uses Brave Search (free tier ~1,000 queries/month), then a small model writes the summary. Browser tab-search still works separately.")
                                 .font(.caption).foregroundStyle(.secondary)
 
                             // Caption above rather than LabeledContent, because a Form puts a
@@ -1779,7 +1938,6 @@ struct SettingsView: View {
                     }
                 }
                 .modifier(SettingsFormChrome())
-            }
             .onAppear { scrollToPendingAnchor(proxy) }
             .onChange(of: pendingAnchor) { _, _ in scrollToPendingAnchor(proxy) }
         }
@@ -2080,7 +2238,6 @@ struct SettingsView: View {
         offlineMode = state.offlineMode
         offlineLLMModel = c.offlineLLMModel
         ollamaBaseURL = c.ollamaBaseURL
-        memoryCounts = SemanticMemory.shared.countByKind()
         decodeFailures = Persistence.decodeFailures
         SpeechEngine.shared.applyPlaybackRate(c.voicePlaybackRate)
     }
@@ -2213,10 +2370,20 @@ private struct SettingsFormChrome: ViewModifier {
     func body(content: Content) -> some View {
         content
             .formStyle(.grouped)
+            .settingsPaneBackground()
             // Grouped supplies its own row insets, so the old bare `.padding()`
             // would double them. Leading, so a pane narrower than its content
             // clips predictably on one edge instead of bleeding off both.
             .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+extension View {
+    /// A grouped Form draws its own grey behind the rows, a different grey
+    /// from every other pane and from the search bar above it (audit
+    /// 2026-10-13, item 6). Every Settings form wears the app's base instead.
+    func settingsPaneBackground() -> some View {
+        scrollContentBackground(.hidden).background(GruxTheme.base)
     }
 }
 

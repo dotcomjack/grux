@@ -172,7 +172,10 @@ final class TodayViewWiringTests: XCTestCase {
     }
 
     func test_theSayItLineComesFromTheSharedTell() throws {
-        XCTAssertTrue(try home().contains("TodayModel.sayItLine(ListeningTell.resolve("))
+        let src = try home()
+        let line = try XCTUnwrap(src.components(separatedBy: "private var sayItLine: some View {").dropFirst().first).prefix(700)
+        XCTAssertTrue(line.contains("ListeningTell.resolve("), "the say-it line stopped asking the shared tell")
+        XCTAssertTrue(line.contains("TodayModel.sayItLine(tell)"), "the say-it line draws something other than the tell")
     }
 
     /// Every quick-action pill was a second door to a surface the rail opens.
@@ -181,5 +184,25 @@ final class TodayViewWiringTests: XCTestCase {
         XCTAssertFalse(src.contains("QuickActionPill("), "the quick-action row is back")
         XCTAssertFalse(src.contains("agendaCard"), "Agenda duplicates Next")
         XCTAssertFalse(src.contains("jobsCard"), "Agents duplicates Watching")
+    }
+}
+
+/// Audit 2026-10-13, item 4: at the default 1100x560 window the 360pt hero
+/// pushed Start my day below the fold. The hero is short when the pane is.
+final class TodayHeroHeightTests: XCTestCase {
+    func test_aShortPaneGetsAShortHero() {
+        // 560 window less the pane's title bar.
+        XCTAssertEqual(HomeHeroView.heroHeight(forPane: 523), HomeHeroView.shortHeight)
+        XCTAssertLessThanOrEqual(HomeHeroView.shortHeight, 150)
+    }
+
+    func test_aTallPaneKeepsTheFullHero() {
+        XCTAssertEqual(HomeHeroView.heroHeight(forPane: 863), HomeHeroView.fullHeight)
+        XCTAssertEqual(HomeHeroView.heroHeight(forPane: 700), HomeHeroView.fullHeight)
+    }
+
+    func test_anUnmeasuredPaneDrawsTheFullHero() {
+        // GeometryReader proposes zero before the first layout pass.
+        XCTAssertEqual(HomeHeroView.heroHeight(forPane: 0), HomeHeroView.fullHeight)
     }
 }

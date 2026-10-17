@@ -386,6 +386,11 @@ final class HomeBriefingModel: ObservableObject {
     // Home sits open across hour / day boundaries. Cheap by design: it skips
     // the EventKit agenda read on the tick.
     private var clockTimer: Timer?
+    // Subscribing to a @Published store emits its current value. Seven of
+    // those land inside init and each one rebuilds Today before the first
+    // paint. Ignore them until the subscriptions exist, then let later
+    // changes through. The view asks for one refresh after it is on screen.
+    private var armed = false
 
     init(autoObserve: Bool = true) {
         // Seed with an empty snapshot so the view has something to render on
@@ -410,26 +415,26 @@ final class HomeBriefingModel: ObservableObject {
         // refreshes on explicit refresh() to avoid a synchronous store hit on
         // every reminder mutation.
         GruxReminderState.shared.$reminders
-            .sink { [weak self] _ in self?.refresh(includeAgenda: false) }
+            .sink { [weak self] _ in self?.refreshFromStore() }
             .store(in: &cancellables)
         ProposalStore.shared.$proposals
-            .sink { [weak self] _ in self?.refresh(includeAgenda: false) }
+            .sink { [weak self] _ in self?.refreshFromStore() }
             .store(in: &cancellables)
         AgentService.shared.$jobs
-            .sink { [weak self] _ in self?.refresh(includeAgenda: false) }
+            .sink { [weak self] _ in self?.refreshFromStore() }
             .store(in: &cancellables)
         // Today's cards read mail, approvals and the task stack too.
         MailStore.shared.$messages
-            .sink { [weak self] _ in self?.refresh(includeAgenda: false) }
+            .sink { [weak self] _ in self?.refreshFromStore() }
             .store(in: &cancellables)
         ApprovalQueue.shared.$items
-            .sink { [weak self] _ in self?.refresh(includeAgenda: false) }
+            .sink { [weak self] _ in self?.refreshFromStore() }
             .store(in: &cancellables)
         AppState.shared.$tasks
-            .sink { [weak self] _ in self?.refresh(includeAgenda: false) }
+            .sink { [weak self] _ in self?.refreshFromStore() }
             .store(in: &cancellables)
         AppState.shared.$lastVerdict
-            .sink { [weak self] _ in self?.refresh(includeAgenda: false) }
+            .sink { [weak self] _ in self?.refreshFromStore() }
             .store(in: &cancellables)
 
         // Per-minute live tick. weak self + a MainActor hop breaks the retain
@@ -437,6 +442,12 @@ final class HomeBriefingModel: ObservableObject {
         clockTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh(includeAgenda: false) }
         }
+        armed = true
+    }
+
+    private func refreshFromStore() {
+        guard armed else { return }
+        refresh(includeAgenda: false)
     }
 
     deinit {

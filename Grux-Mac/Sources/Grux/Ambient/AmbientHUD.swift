@@ -76,12 +76,13 @@ struct AmbientHUDRoot: View {
             micMuted: appState.micMuted,
             isSpeaking: ambient.coachIsSpeaking || speech.isSpeaking || speech.isBuffering,
             isThinking: ambient.isExtracting || ambient.isTranscribing || appState.isThinking,
-            notHearing: micHealth.notHearing)
+            notHearing: micHealth.notHearing,
+            awaitingConsent: appState.config.listeningAwaitingConsent)
     }
 
     private var orbState: GruxOrbState {
         if shellBus.current.mode == .alert { return ShellMode.alert.orbState }
-        if listeningTell == .off { return shellBus.current.mode.orbState }
+        if listeningTell.listenerOff { return shellBus.current.mode.orbState }
         return listeningTell.orbState
     }
 
@@ -101,7 +102,7 @@ struct AmbientHUDRoot: View {
                 .help(listeningTell.help)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
-                        Text("GRUX OS")
+                        Text("GRUX AI")
                             .font(.system(size: 13, weight: .black, design: .default))
                             .kerning(2.5)
                         Text("· AMBIENT")

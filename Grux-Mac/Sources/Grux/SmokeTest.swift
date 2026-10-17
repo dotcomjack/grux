@@ -482,8 +482,7 @@ enum SmokeTest {
         // is the backbone of the persistent-memory upgrade; we store a known
         // phrase, retrieve with a semantically related query, and assert the
         // stored text comes back in the top-K.
-        _ = SemanticMemory.shared.isReady // trigger lazy init if needed
-        let memReady = SemanticMemory.shared.isReady
+        let memReady = await SemanticMemory.shared.waitUntilReady(seconds: 30)
         let marker = "SMOKE_MARKER_\(UUID().uuidString.prefix(8))"
         let memText = "You just shipped the \(marker) release to production."
         SemanticMemory.shared.store(kind: .fact, text: memText, metadata: ["smoke": "1"])
@@ -671,7 +670,7 @@ enum SmokeTest {
         var vpSupported = false
         var vpDetail = ""
         if AVCaptureDevice.authorizationStatus(for: .audio) == .authorized {
-            let probeEngine = AVAudioEngine()
+            let probeEngine = AudioFactory.engine("smoke test")
             do {
                 try probeEngine.inputNode.setVoiceProcessingEnabled(true)
                 vpSupported = probeEngine.inputNode.isVoiceProcessingEnabled

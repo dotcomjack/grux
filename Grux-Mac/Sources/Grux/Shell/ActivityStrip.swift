@@ -109,7 +109,7 @@ struct ActivityStripView: View {
             .overlay(Capsule().stroke(GruxTheme.accentCo.opacity(0.35), lineWidth: 0.8))
         }
         .buttonStyle(.plain)
-        .help("Foundry \(pass.displayName) in progress. Click for Self-Upgrade.")
+        .help("Self-Upgrade \(pass.displayName) in progress. Click to open it.")
     }
 }
 

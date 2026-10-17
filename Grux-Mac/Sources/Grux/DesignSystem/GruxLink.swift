@@ -11,7 +11,10 @@ import SwiftUI
 ///
 /// Re-measured 2026-08-23, because the first count in this comment was wrong in
 /// every number it gave, and again 2026-09-22 when the first-run model gate
-/// gained an OpenRouter path. `Sources/` holds 4 real `Link` uses. Two of them set no
+/// gained an OpenRouter path, and once more 2026-10-13 when About gained its
+/// "Built by DotcomJack" credit, and 2026-10-13 again when the model step gained
+/// its ollama.com link, and again when Settings, Models gained the same link
+/// in its Connect a model section. `Sources/` holds 7 real `Link` uses. Two of them set no
 /// foreground style at all: the onboarding model key step, which is the single
 /// screen where a stranger is asked to paste a credential and therefore the
 /// worst possible place to look like a different application, and the Brave key

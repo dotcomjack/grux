@@ -286,6 +286,12 @@ final class ChatOpensAtLatestTests: XCTestCase {
         window.contentView = host
         host.layoutSubtreeIfNeeded()
         pump(0.05)
+        // Chat mounts its transcript a beat after the composer paints, so wait
+        // for a scroll view a Chat owns before picking the transcript.
+        let mounted = Date().addingTimeInterval(0.5)
+        while Date() < mounted, !scrollViews(in: host).contains(where: { ChatView.followsLatest(in: $0) != nil }) {
+            pump(0.01)
+        }
         // Closed after the test, so no window it opened is left for a later one.
         addTeardownBlock { window.contentView = nil; window.close() }
         let transcript = try XCTUnwrap(scrollViews(in: host).max {
@@ -367,11 +373,11 @@ final class ChatOpensAtLatestTests: XCTestCase {
         let pane = try hostPane(longThread())
         defer {
             pane.window.contentView = nil
-            AppState.shared.isThinking = false
+            AppState.shared.endChatTurn()
         }
         pump(1.0)
         XCTAssertEqual(ChatView.latestChipShown(in: pane.transcript), false, "control: opened at the newest message")
-        AppState.shared.isThinking = true
+        AppState.shared.beginChatTurn()
         pump(1.0)
         XCTAssertEqual(ChatView.latestChipShown(in: pane.transcript), false, "the thinking bubble moved the view off the bottom")
         // And a resize after it still re-anchors: following was not turned off.

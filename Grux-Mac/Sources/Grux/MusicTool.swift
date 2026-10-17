@@ -46,7 +46,10 @@ enum MusicTool {
         // every rebuild. That tradeoff is the user's call. The code is ready: flip
         // `defaults write com.gruxai.grux musicKitEnabled -bool true` once Grux is
         // signed with a MusicKit-provisioned profile.
+        // Not before the microphone question: MusicKit plays in Grux, which would
+        // raise the prompt (`AudioOutput.outputWouldAskForMic`). Music.app plays below.
         if UserDefaults.standard.bool(forKey: "musicKitEnabled"),
+           !AudioOutput.outputWouldAskForMic,
            await MusicKitPlayer.ensureAuthorized() {
             if let lib = await MusicKitPlayer.playLibrary(song: songTrim, artist: artistTrim) {
                 return "ok: playing '\(lib)'"

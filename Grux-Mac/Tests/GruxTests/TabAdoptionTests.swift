@@ -102,7 +102,7 @@ final class TabAdoptionTests: XCTestCase {
 
         for tab in declaredTabs() where !deliberatelyUngated.contains(tab) {
             guard FeatureRegistry.row(forTab: tab) != nil else { continue }
-            if !gateSource(for: tab).contains("capabilityGated(\"\(tab)\")") {
+            if !gateSource(for: tab).contains("capabilityGated(\"\(tab)\"") {
                 let blocking = FeatureRegistry.missing(forTab: tab).map(\.rawValue)
                 unadopted.append("\(tab) has a registry row but no gate"
                                  + (blocking.isEmpty ? "" : ", and is currently missing \(blocking)"))
@@ -121,7 +121,7 @@ final class TabAdoptionTests: XCTestCase {
         var bad: [String] = []
         for tab in declaredTabs() where !deliberatelyUngated.contains(tab) {
             guard let row = FeatureRegistry.row(forTab: tab), !row.blocking.isEmpty else { continue }
-            if !gateSource(for: tab).contains("capabilityGated(\"\(tab)\")") {
+            if !gateSource(for: tab).contains("capabilityGated(\"\(tab)\"") {
                 bad.append("\(tab) blocks on \(row.blocking.map(\.rawValue))")
             }
         }
