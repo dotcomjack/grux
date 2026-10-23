@@ -38,7 +38,9 @@ Star the repository on GitHub, and watch its releases to hear about new versions
 > On a 16 GB Mac mini the 4B got **454 of 464** held-out Grux tasks right, against 396
 > for the same model before training, and ignored instructions hidden in pasted text
 > in 65 of 70 held-out cases, against 55. The 2B, made for 8 GB Macs, went from 295 to
-> **435** of 464 on the same Mac mini. Needs Apple silicon and Ollama 0.40.8 or later.
+> **435** of 464 on the same Mac mini. The 9B, made for 24 GB Macs and up, went from 400 to
+> **458** of 464, scored before training on a MacBook Pro and after on the same Mac mini.
+> Needs Apple silicon and Ollama 0.40.8 or later.
 >
 > ```
 > ollama pull gruxai.com/grux/grux-local:4b
@@ -46,7 +48,8 @@ Star the repository on GitHub, and watch its releases to hear about new versions
 >
 > Then **Settings, Models, Offline mode (local model)**: turn on **Route chat to a local
 > model** and enter `gruxai.com/grux/grux-local:4b` in **Model**
-> (`gruxai.com/grux/grux-local:2b` on an 8 GB Mac). Works in Grux 3.1 today.
+> (`gruxai.com/grux/grux-local:2b` on an 8 GB Mac, `gruxai.com/grux/grux-local:9b` on a
+> Mac with 24 GB or more). Works in Grux 3.1 today.
 > [How it was trained and measured](#grux-local).
 
 **Status: shipping, currently 3.1.** 37 features ship in 14 surfaces, and a command line drives all of them. 25 are
@@ -98,6 +101,7 @@ set went right, and the count for each kind of task is in `results/v1.json`.
 |---|---|---|
 | `gruxai.com/grux/grux-local:2b` | 8 GB Macs | 2.65 GB |
 | `gruxai.com/grux/grux-local:4b` (`latest`) | 16 GB Macs and up | 4.44 GB |
+| `gruxai.com/grux/grux-local:9b` | 24 GB Macs and up | 7.25 GB |
 
 **Measured, not claimed.** A 16 GB Mac mini (Apple M4), Ollama 0.40.8, one request
 at a time, thinking off as Grux sends it. 464 held-out Grux tasks, written separately
@@ -111,25 +115,34 @@ before training (the qwen3.5 build from the Ollama library):
 | 2B, all 464 tasks | 295 (64%) | **435 (94%)** |
 | 2B, hidden instructions ignored | 43 of 70 | **66 of 70** |
 
-Chat replies from Grux Local on that Mac mini: 95% came back within 3.4 s (4B) and
-1.6 s (2B). Every number here, with the count for each kind of task, is in
-[`results/v1.json`](https://github.com/dotcomjack/grux-local/blob/main/results/v1.json).
+The 9B's Grux Local numbers are from the same Mac mini. Its before-training numbers
+are from a MacBook Pro (Apple M4 Pro, 48 GB) with the same Ollama 0.40.8 and the same
+464 tasks, because the Mac mini had no disk to spare for the stock 9B:
+
+| | Before training, on the MacBook Pro | Grux Local |
+|---|---|---|
+| 9B, all 464 tasks | 400 (86%) | **458 (99%)** |
+| 9B, hidden instructions ignored | 65 of 70 | **66 of 70** |
+
+Chat replies from Grux Local on that Mac mini: 95% came back within 3.4 s (4B),
+1.6 s (2B) and 3.8 s (9B). Every number here, with the count for each kind of task,
+is in [`results/v1.json`](https://github.com/dotcomjack/grux-local/blob/main/results/v1.json).
 
 **How it was made.** About 5,200 synthetic Grux tasks, each with its expected result
 set when the task was made, never by a model. Gemma 4 26B (Apache-2.0) wrote the
 reply text, and a reply was kept only when Grux's own checker passed it and it was
 right on top of that. Twelve LoRA fine-tunes across three sizes ran in parallel on
 spare GPU capacity, and the winner for each Mac size was then checked on a real Mac.
-No personal data was used.
+No personal data was used. The 2B and 4B run in nvfp4; the 9B was quantized with
+NVIDIA ModelOpt to the same mixed NVFP4 and MXFP8 recipe as Ollama's own qwen3.5:9b.
 
 **Use it.** It needs Apple silicon and Ollama 0.40.8 or later. Run
 `ollama pull gruxai.com/grux/grux-local:4b` (`gruxai.com/grux/grux-local:2b` on an
-8 GB Mac). Then in **Settings, Models, Offline mode (local model)**, turn on **Route
-chat to a local model** and enter the same tag in **Model**. Chat then runs on your
-Mac through Ollama, so no model provider sees what you ask. Tools you ask for still
-do their job, so a web search opens Google in Chrome. A 9B for 32 GB Macs
-trained alongside these; it ships once its loaded size is within 10% of the stock
-9B's.
+8 GB Mac, `gruxai.com/grux/grux-local:9b` on a Mac with 24 GB or more). Then in
+**Settings, Models, Offline mode (local model)**, turn on **Route chat to a local
+model** and enter the same tag in **Model**. Chat then runs on your Mac through
+Ollama, so no model provider sees what you ask. Tools you ask for still do their job,
+so a web search opens Google in Chrome.
 
 ---
 
