@@ -125,14 +125,19 @@ jobs:
   # catches contract drift and the em dash / en dash house rule across the
   # contract corpus, on every commit including markdown-only ones.
   #
-  # It does NOT run `NoPersonalIdentityTests`, and that is the guard that reads
-  # GOVERNANCE.md, SECURITY.md, README.md and the rest of the shipping tree. It
-  # is a Swift test in a package that links AppKit, so it cannot build on Linux
-  # at all, and the macOS job that does run it is still gated by `changes`
-  # above. A markdown-only commit that plants a name in README.md therefore
-  # still reaches `main` unchecked. Closing that needs the scan reimplemented as
-  # a toolchain-free script, which is a separate change, and this job does not
-  # claim to have done it.
+  # It also runs the MARKDOWN half of `NoPersonalIdentityTests`, through
+  # scripts/identity-scan-md.py: every `.md` in the shipping tree (README.md,
+  # GOVERNANCE.md, SECURITY.md, every doc), on every commit, including
+  # markdown-only ones. What it shares with the Swift test is the INPUTS: it
+  # reads the vocabulary json, `knownRemaining` and `allowedExactTokens` out of
+  # the Swift test, and the exclusions out of oss-exclude.txt. The matching
+  # logic is a port, not shared code, so a change to how the Swift test matches
+  # needs the same change in the script.
+  #
+  # It does NOT cover the Swift half, banned words inside `.swift` string
+  # literals. That half is the Swift test itself, in a package that links
+  # AppKit and cannot build here, so it still runs only in the macOS job, still
+  # gated by `changes` above.
   markdown-guards:
     name: Documentation guards (Linux)
     runs-on: ubuntu-latest
@@ -142,7 +147,7 @@ jobs:
     concurrency:
       group: ${{ github.workflow }}-markdown-guards-${{ github.ref }}
       cancel-in-progress: true
-    # Two python scripts over a few dozen markdown files, which is seconds.
+    # Two python scripts over the repository's markdown, which is seconds.
     # Anything approaching this number is hung, not slow.
     timeout-minutes: 10
 
@@ -159,6 +164,22 @@ jobs:
       - name: Contract check
         working-directory: Grux-Mac
         run: python3 scripts/check-contract.py
+
+      # Same order for the identity scan, for the same reason. The self-test
+      # checks the matching, the verdict (per-term forgiveness and stale
+      # exemptions, through to the exit code) and the knownRemaining parse on
+      # inputs it builds itself. It then plants a banned word in a real file
+      # under Grux-Mac/docs/ and requires the scan to report that exact line.
+      # Existing hits in the tree do not fail it. What it needs from the tree is
+      # readable inputs, a Grux-Mac/docs/ to plant in, every .md readable as
+      # UTF-8, and the reach floor met. Any of those missing exits 2.
+      - name: Identity scan self-test
+        working-directory: Grux-Mac
+        run: python3 scripts/identity-scan-md.py --self-test
+
+      - name: Identity scan (markdown)
+        working-directory: Grux-Mac
+        run: python3 scripts/identity-scan-md.py
 
   build-and-test:
     name: Build and test
