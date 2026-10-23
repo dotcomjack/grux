@@ -2,6 +2,23 @@
 
 Native macOS voice and dictation app that pairs with an iPhone companion (GruxPhone) over the local network.
 
+## Public voice (owner's brief, 2026-10-23, every Grux surface)
+
+Grux speaks as a product company, not a bootstrapped founder: the README, gruxai.com, the
+grux-local model card, release notes, announcements and any post about Grux. Write as Grux or
+"we", announce plainly (for example "We are proud to announce the release of Grux Local 1.0";
+version numbers must be real), and give Grux its own spotlight.
+
+"We" is the product's voice, not a headcount: never claim a team, staff, engineers, employees,
+customers, funding or company size. GOVERNANCE.md's "maintained by one person" stays true.
+
+DotcomJack appears only as a light hint: the maker credit ("Grux is a DotcomJack project"), one
+short maker paragraph (the city it is built in, shipping since 2015, about a dozen products), the
+provenance line for the seven in-house features, the license holder and a contact line. No
+"I built", no "mine", no "a star is the whole ask" or "entire ask", no "hobby project". The
+facts, the scoping of every number and the house copy rules (no em or en dashes, no
+smarter-model claims, no legal name) bind exactly as before.
+
 ## Read these FIRST
 
 Anything install-specific (the operator's own device ids, signing identity, clone

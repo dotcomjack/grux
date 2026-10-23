@@ -31,7 +31,7 @@ It talks to a model you pay for directly, or to a local model with no key at all
 There is no Grux account, no Grux server, and no subscription. Your key, your
 machine, your data.
 
-If it earns it, a star is the whole ask.
+Star the repository on GitHub, and watch its releases to hear about new versions.
 
 > **New: Grux Local, a model trained for Grux.** No key, no account, and chat that no
 > model provider sees: a local model built for exactly the jobs Grux hands it.
@@ -238,7 +238,7 @@ Every surface, one line each: [gruxai.com/features](https://gruxai.com/features/
 - [Build on it](#build-on-it)
 - [Repository layout](#repository-layout)
 - [Tests](#tests)
-- [Who made this](#who-made-this)
+- [Who builds Grux](#who-builds-grux)
 - [Security](#security)
 - [Contributing](#contributing)
 - [License](#license)
@@ -335,7 +335,7 @@ Dependencies are deliberately thin. Three direct ones.
 [WhisperKit](https://github.com/argmaxinc/WhisperKit) for on-device speech, which
 pulls in Apple's own packages plus HuggingFace's `swift-transformers`. And
 [grux-guardrails](https://github.com/dotcomjack/grux-guardrails), the secret redactor
-and URL policy, which is mine, MIT, and has no dependencies of its own, so it adds
+and URL policy, which is also ours, MIT, and has no dependencies of its own, so it adds
 exactly one node to the graph. And
 [swift-argument-parser](https://github.com/apple/swift-argument-parser), which the
 command line links directly rather than riding on WhisperKit's transitive pin. There is no analytics SDK, no crash reporter, and no
@@ -532,8 +532,8 @@ the shipping tree. The dash guard fails on an em dash or en dash, comments inclu
 Several of them plant the fault they detect and assert they catch it, because a guard
 that cannot fail is not a guard.
 
-**What is unfinished, and what I would take.** Honestly said, since this is the part
-that matters if you are deciding whether to spend an evening here:
+**What is unfinished, and where contributions help most.** Stated plainly, because it
+matters if you are deciding whether to contribute:
 
 - **A second model backend.** Chat talks to Anthropic or to Ollama. The seam is real
   but it has only ever had two implementations, so it is shaped by both of them rather
@@ -546,7 +546,7 @@ that matters if you are deciding whether to spend an evening here:
 - **Nothing here runs on an Intel Mac.** One arm64 slice, and no reason beyond nobody
   having needed it.
 
-If you build something on this, open an issue and tell me. I would rather know.
+If you build something on Grux, open an issue and tell us. We want to know.
 
 ## Repository layout
 
@@ -586,31 +586,29 @@ about before you touch them:
 - Several guards **test themselves**, by planting the thing they detect and
   asserting they catch it. A guard that cannot fail is not a guard.
 
-## Who made this
+## Who builds Grux
 
-I have been building and shipping my own products since 2015. Right now that is
-about a dozen of them, run by one person, from Detroit.
+Grux is built in Detroit
+as a DotcomJack project. DotcomJack has been shipping its own products since 2015,
+about a dozen of them today.
 
-That is the reason this exists. Running a dozen small products alone was never
-bottlenecked on code. It was the hour a day spent moving between a mail client, a
-calendar, a terminal and four chat tabs that could not see any of it. So I built the
-assistant I actually wanted: one that reads the window I am already in, handles the
-mail, and takes the meeting notes.
+That is why Grux exists. Running them was never bottlenecked on code. It was the
+hour a day spent moving between a mail client, a calendar, a terminal and four chat tabs
+that could not see any of it. Grux is the assistant built for that work: one that reads
+the window you are already in, handles the mail, and takes the meeting notes.
 
-Seven of the 37 features in here are literally the tooling that runs my
-businesses: Jax Command, Jax HQ, Meta Ads, Social, Feature Review, Self-Upgrade
-and Workflows. They ship instead of getting deleted, because taking them out
-would misrepresent what you are downloading. It was eight until 3.0 removed the
-Domain monitor, and they are named here rather than only counted so the number
-cannot drift away from the list again.
+Seven of the 37 features are the tooling that runs DotcomJack's own products: Jax
+Command, Jax HQ, Meta Ads, Social, Feature Review, Self-Upgrade and Workflows. They ship
+rather than being removed, because taking them out would misrepresent what you are
+downloading. It was eight until 3.0 removed the Domain monitor, and they are named here
+rather than only counted so the number cannot drift away from the list again.
 
-It was a hobby project for six months. It is not a startup, there is no account, and
-there is nothing to buy. I am open sourcing it because it got useful enough to be
-worth somebody else's time, and because software that reads your screen and your mail
+Grux has no account and nothing to buy. It is open source because it became useful enough
+to be worth other people's time, and because software that reads your screen and your mail
 should be readable back.
 
-Expect rough edges. Twelve features sit behind the Labs door because they earned
-it. If something breaks, open an issue and tell me what you were doing.
+Twelve features sit behind the Labs door because they are not finished yet. If something
+breaks, open an issue and tell us what you were doing.
 
 ## Security
 
@@ -627,7 +625,7 @@ Until 2026-09-06 that sentence would have been a lie by implication. Grux carrie
 own older copy of both controls and did not depend on the package at all, so six of the
 eight defects the advisories below describe were live in the shipped app, including both
 criticals. The copy is deleted and the app is on the package. `Package.resolved` is where
-you check that rather than taking it from me.
+you check that rather than taking our word for it.
 
 The reason to point you at it is not the test count. It carries
 [six published advisories](https://github.com/dotcomjack/grux-guardrails/security/advisories?state=published)

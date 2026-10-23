@@ -345,18 +345,29 @@ final class NoPersonalIdentityTests: XCTestCase {
         // this entry for us the day the line stops matching.
         "GOVERNANCE.md": ["dotcomjack"],
 
-        // The author bio, and the ONLY place a location is deliberate.
+        // The maker section and the published benchmark, three terms, each deliberate.
         //
         // "detroit" is banned because it used to appear in RUNTIME strings, where it
-        // told a stranger's assistant it was somewhere it is not. In a README section
-        // headed "Who made this" it is the opposite: the whole value of a solo project
-        // is that a person made it somewhere, and hiding that costs the page the thing
-        // that makes it worth reading. Same class as github.com/dotcomjack in
-        // allowedContexts: published identity, deliberately stated.
+        // told a stranger's assistant it was somewhere it is not. In the README's
+        // "Who builds Grux" section it is the opposite: where the product is built is
+        // published identity, deliberately stated, the same class as
+        // github.com/dotcomjack in allowedContexts.
         //
-        // Exempted for that ONE term. Any other banned word appearing in the README
-        // still fails, which is the point of keying this by term rather than by file.
-        "README.md": ["detroit"],
+        // "dotcomjack" is the maker credit in that same section ("a DotcomJack
+        // project"), the alias the LICENSE line already carries. Keep it OFF the
+        // Detroit line: the scan records one term per line, first in list order, and
+        // "dotcomjack" precedes "detroit", so sharing a line turns the "detroit"
+        // entry stale.
+        //
+        // "mac mini" is the measurement hardware for every Grux Local number in the
+        // README, the same machine the public grux-local `results/v1.json` names
+        // ("Mac mini, Apple M4, 16 GB"). It is banned for runtime strings that told a
+        // stranger their host was a Mac mini; a benchmark that hides its hardware is
+        // a claim, not a measurement.
+        //
+        // Exempted for those three terms only. Any other banned word appearing in the
+        // README still fails, which is the point of keying this by term, not by file.
+        "README.md": ["detroit", "dotcomjack", "mac mini"],
     ]
 
     /// A budget that outlives its reason is just a hole. If an exempted term no
