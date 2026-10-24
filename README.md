@@ -97,11 +97,22 @@ notifications, titling chats, summarizing meetings, and treating pasted text as 
 rather than instructions. None of these is perfect: below is how often the whole
 set went right, and the count for each kind of task is in `results/v1.json`.
 
-| Tag | Made for | Loaded on the 16 GB Mac mini (measured) |
+| Tag | Made for | Freshly loaded on the 16 GB Mac mini at num_ctx 16,384 (measured) |
 |---|---|---|
 | `gruxai.com/grux/grux-local:2b` | 8 GB Macs | 2.65 GB |
 | `gruxai.com/grux/grux-local:4b` (`latest`) | 16 GB Macs and up | 4.44 GB |
 | `gruxai.com/grux/grux-local:9b` | 24 GB Macs and up | 7.25 GB |
+
+Each loaded size is a fresh load at num_ctx 16,384, what Grux 3.1 uses on a 16 GB
+Mac. Grux 3.1 uses num_ctx 32,768 on Macs with 24 GB or more
+([`LocalTurn.swift:21-27`](https://github.com/dotcomjack/grux/blob/v3.1.0/Grux-Mac/Sources/Grux/Chat/LocalTurn.swift#L21-L27)),
+so a model loads more there, which matters most for the 9B, made for 24 GB Macs and
+up. Ollama can also report more memory for the model as it works: on the 16 GB Mac
+mini the 2B read 2.65 GB freshly loaded and 11.37 GB after a full held-out run (464
+tasks), and the 4B (`latest`) read 4.44 GB and then 13.11 GB the same way; the 4B v2
+read 4.44 GB freshly loaded and 13.11 GB after 72 held-out tasks on a MacBook Pro
+(Apple M4 Pro, 48 GB). All at num_ctx 16,384. How far it grows on an 8 GB Mac is not
+yet measured.
 
 **Measured, not claimed.** A 16 GB Mac mini (Apple M4), Ollama 0.40.8, one request
 at a time, thinking off as Grux sends it. 464 held-out Grux tasks, written separately
@@ -127,6 +138,17 @@ are from a MacBook Pro (Apple M4 Pro, 48 GB) with the same Ollama 0.40.8 and the
 Chat replies from Grux Local on that Mac mini: 95% came back within 3.4 s (4B),
 1.6 s (2B) and 3.8 s (9B). Every number here, with the count for each kind of task,
 is in [`results/v1.json`](https://github.com/dotcomjack/grux-local/blob/main/results/v1.json).
+
+**4B v2, opt-in.** `gruxai.com/grux/grux-local:4b-v2` is a second version of the 4B,
+trained on round 2 data built on Grux 3.1's own local turn: the tools that fit, no
+promised action without a tool, and answers that do the task and name a hidden
+instruction. On a MacBook Pro (Apple M4 Pro, 48 GB), on held-out v2 (466 tasks sent
+the way Grux 3.1 sends a local turn) it got 442, against 398 for v1's 4B on that
+MacBook Pro; on the original 464 tasks it is one task behind there, 455 against 456.
+Held-out v2 was written alongside round 2's training data and checked to share no
+8-word run with it; that training bank is not published. Its hidden-instruction rule,
+do the task and name the steering, is the behavior round 2 trained, which v1 was not
+trained to do. `gruxai.com/grux/grux-local:4b` and `latest` stay on v1.
 
 **How it was made.** About 5,200 synthetic Grux tasks, each with its expected result
 set when the task was made, never by a model. Gemma 4 26B (Apache-2.0) wrote the
