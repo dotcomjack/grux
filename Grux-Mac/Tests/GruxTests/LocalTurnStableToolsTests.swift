@@ -272,9 +272,15 @@ final class LocalModelResetTests: XCTestCase {
     func test_theWarmUpSendsTheSameSystemTextAndToolsAsAStableTurn() throws {
         let state = AppState.shared
         let saved = state.chat
-        defer { state.chat = saved }
+        let savedSummary = state.activeThreadSummary
+        defer { state.chat = saved; state.activeThreadSummary = savedSummary }
         state.chat = [ChatMessage(role: .user, content: "add a task to buy milk")]
+        // A thread summary is a second cached block, so how the blocks are
+        // joined shows (red proof 2026-10-25: with one block it cannot).
+        state.activeThreadSummary = "Earlier the user planned a trip to Lisbon."
         let turn = ChatService.shared.assemblePendingContext(state: state, lean: true, window: 16_384)
+        XCTAssertGreaterThan(turn.systemBlocks.filter { $0["cache_control"] != nil }.count, 1,
+                             "only one cached block, so this cannot see how they are joined")
         let prefix = try XCTUnwrap(ChatService.shared.localPrefix(state: state, window: 16_384))
         XCTAssertEqual(prefix.tools.map(\.name), turn.tools.map(\.name), "the warm-up offers different tools")
         XCTAssertEqual(prefix.tools.map(\.description), turn.tools.map(\.description))
