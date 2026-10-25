@@ -11,8 +11,10 @@ import Foundation
 /// thread's auto-title call queued ahead of it on the one local model.
 ///
 /// So a local turn gets a window by memory, a lean system prompt (who Grux is
-/// and its rules, not the cloud model's tool manual), the tools that fit,
-/// ranked by what was asked, and a shorter reply budget.
+/// and its rules, not the cloud model's tool manual), a shorter reply budget,
+/// and either one stable list of tools, the same every turn so Ollama reuses
+/// what it read (`stableHead`), or, when the message asks for more, the tools
+/// that fit, ranked by what was asked.
 enum LocalTurn {
 
     /// The window every call to an Ollama server asks for, by this Mac's
@@ -53,6 +55,14 @@ enum LocalTurn {
     /// took 89 s. A bigger window is room, not a reason to fill it.
     static let promptCeiling = 8_192
 
+    /// How long Ollama keeps a local model loaded after a call. Its default is
+    /// 5 minutes, and unloading throws away the prompt it already read, so
+    /// the next two turns read every tool again: measured 2026-10-24 on a
+    /// MacBook Pro, 8.3 to 14.7 s for the first two turns after every unload
+    /// against about 1 s warm. Grux unloads sooner itself on critical memory
+    /// pressure and on quit (LocalModelUnload).
+    static let keepAlive = "30m"
+
     /// Reply budget on a local model. The cloud turn allows 2000.
     static let replyTokens = 1_024
 
@@ -82,24 +92,112 @@ enum LocalTurn {
     static let everyday = ["list_tasks", "add_task", "complete_task", "list_events", "create_event",
                            "search_web", "capture_memory", "open_app"]
 
+    /// The words of a message that `rank` matches: lowercased, split on
+    /// anything not a letter or number, four characters or more.
+    static func words(_ utterance: String) -> Set<String> {
+        Set(utterance.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init).filter { $0.count >= 4 })
+    }
+
+    /// How many of `words` a tool's name or description holds.
+    static func score(_ t: ClaudeTool, words: Set<String>) -> Int {
+        let text = (t.name.replacingOccurrences(of: "_", with: " ") + " " + t.description).lowercased()
+        return words.reduce(0) { $0 + (text.contains($1) ? 1 : 0) }
+    }
+
     /// Tools by how much the message is about them: words of the message found
     /// in a tool's name or description, then the everyday ones, then the rest
     /// in their usual order. Deterministic, so the same message gets the same tools.
     static func rank(_ tools: [ClaudeTool], utterance: String) -> [ClaudeTool] {
-        let words = Set(utterance.lowercased().split { !$0.isLetter && !$0.isNumber }
-            .map(String.init).filter { $0.count >= 4 })
-        func score(_ t: ClaudeTool) -> Int {
-            let text = (t.name.replacingOccurrences(of: "_", with: " ") + " " + t.description).lowercased()
-            return words.reduce(0) { $0 + (text.contains($1) ? 1 : 0) }
-        }
+        let words = Self.words(utterance)
         return tools.enumerated().sorted { a, b in
-            let sa = score(a.element), sb = score(b.element)
+            let sa = score(a.element, words: words), sb = score(b.element, words: words)
             if sa != sb { return sa > sb }
             let ea = everyday.firstIndex(of: a.element.name) ?? Int.max
             let eb = everyday.firstIndex(of: b.element.name) ?? Int.max
             if ea != eb { return ea < eb }
             return a.offset < b.offset
         }.map(\.element)
+    }
+
+    /// The tools a local turn offers turn after turn, in an order no message
+    /// changes. Ollama reuses the prompt it read last only up to the first
+    /// token that differs, and the tools open the prompt, so a list ranked per
+    /// message makes every turn read its tools again. Measured 2026-10-24 on a
+    /// MacBook Pro (Ollama 0.40.8, grux-local:4b, the 265 chat turns of
+    /// held-out v2): 8.54 s a turn at the median with the ranked list and
+    /// 1.1 s with one list for every turn, with 201 passes against 198.
+    /// `stableHead` leads it, then the core tools in their usual order.
+    static let stableHead = everyday + ["set_mode", "create_note", "remember_fact", "remove_task"]
+
+    /// Room the stable list leaves for what changes every turn (the turn's own
+    /// block and the newest message), so neither changes how many tools it
+    /// holds. A turn that needs more takes the ranked list.
+    static let turnReserveChars = 2_700
+
+    /// A message points past the stable list when a tool outside it holds at
+    /// least this many of the message's words and more than any tool inside.
+    static let pointsPastScore = 3
+
+    /// Or when a tool from a group the message's words switched on (meetings,
+    /// screen, research and the rest, ToolRelevance) holds at least this many
+    /// and no fewer than any tool inside: "record a meeting" is two words, and
+    /// the list holds core tools only.
+    static let groupPointsPastScore = 2
+
+    /// `tools` with `stableHead` first, then the rest in their usual order.
+    static func stableOrder(_ tools: [ClaudeTool]) -> [ClaudeTool] {
+        tools.enumerated().sorted { a, b in
+            let ha = stableHead.firstIndex(of: a.element.name) ?? Int.max
+            let hb = stableHead.firstIndex(of: b.element.name) ?? Int.max
+            if ha != hb { return ha < hb }
+            return a.offset < b.offset
+        }.map(\.element)
+    }
+
+    /// The stable list: `core` in the stable order, as many as fit beside the
+    /// system text it is given, the longest cut line and the turn reserve.
+    /// Nothing about the turn goes in. The system text is counted in whole
+    /// 2,000 character steps, so a fact the profile gains moves the list only
+    /// when it crosses a step; the list changes when the persona block, the
+    /// features or the tool catalogue (MCP) change, never from turn to turn.
+    static func stableTools(core: [ClaudeTool], cachedSystemChars: Int, longestCutLineChars: Int,
+                            window: Int) -> [ClaudeTool] {
+        let ordered = stableOrder(core)
+        let stepped = (cachedSystemChars / 2_000 + 1) * 2_000
+        let fit = Self.fit(systemChars: stepped + longestCutLineChars + turnReserveChars, messageChars: [],
+                      toolChars: ordered.map { Self.chars($0) }, window: window)
+        return Array(ordered.prefix(fit.tools))
+    }
+
+    /// Whether the message is about a tool the stable list does not hold, so
+    /// the turn should take the ranked list instead. `candidates` are the
+    /// tools ToolRelevance kept for this turn.
+    static func pointsPast(_ stable: [ClaudeTool], candidates: [ClaudeTool], utterance: String) -> Bool {
+        let words = Self.words(utterance)
+        let inside = Set(stable.map(\.name))
+        let best = stable.map { score($0, words: words) }.max() ?? 0
+        return candidates.contains { t in
+            guard !inside.contains(t.name) else { return false }
+            let s = score(t, words: words)
+            if s >= pointsPastScore && s > best { return true }
+            return ToolRelevance.group(for: t.name) != .core && s >= groupPointsPastScore && s >= best
+        }
+    }
+
+    /// How many of the newest messages fit beside a fixed tool list: the
+    /// newest always, then older ones while they fit.
+    static func messagesThatFit(systemChars: Int, messageChars: [Int], toolTokens: Int,
+                                window: Int, reply: Int = replyTokens) -> Int {
+        guard let newest = messageChars.last else { return 0 }
+        var budget = window - reply - 256 - tokens(chars: systemChars) - toolTokens - tokens(chars: newest)
+        var messages = 1
+        for chars in messageChars.dropLast().reversed() {
+            let cost = tokens(chars: chars)
+            guard cost <= budget else { break }
+            budget -= cost
+            messages += 1
+        }
+        return messages
     }
 
     /// How many of the newest messages and of the ranked tools fit in the

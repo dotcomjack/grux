@@ -1716,6 +1716,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // flush stalls or the process is killed mid-shutdown.
         PostMergeWatch.shared.markCleanExit()
         PhoneReceiverService.shared.stop()
+        LocalModelUnload.unloadBeforeQuit()
         OllamaManager.shared.shutdownSync()
         // Debounced stores hold edits in memory for up to 1.5s; a quit
         // inside that window silently dropped them (notes the create_note
