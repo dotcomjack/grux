@@ -12,7 +12,6 @@ private final class KeptModelsBox: @unchecked Sendable {
     func takeAll() -> [(baseURL: String, model: String)] {
         lock.lock(); defer { lock.unlock() }
         let all = kept.flatMap { base, models in models.map { (baseURL: base, model: $0) } }
-        kept = [:]
         return all.sorted { ($0.baseURL, $0.model) < ($1.baseURL, $1.model) }
     }
 }
@@ -45,7 +44,7 @@ enum LocalModelUnload {
     static func request(baseURL: String, model: String) -> URLRequest? {
         let base = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmed = base.hasSuffix("/") ? String(base.dropLast()) : base
-        guard !model.isEmpty, LocalTurn.isLoopback(baseURL: trimmed),
+        guard !model.isEmpty,
               let url = URL(string: "\(trimmed)/api/generate"),
               let body = try? JSONSerialization.data(withJSONObject: ["model": model, "keep_alive": 0]) else { return nil }
         var req = URLRequest(url: url)

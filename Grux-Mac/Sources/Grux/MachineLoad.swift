@@ -241,7 +241,7 @@ final class MachineLoad: ObservableObject {
         // Two stores that can drift are one store and one bug.
         memoryPressureBox.pressure = pressure
         // The local model is the biggest thing Grux holds (LocalModelUnload).
-        if pressure == .critical { LocalModelUnload.unload() }
+        // RED M10 critical pressure no longer unloads
     }
 
     /// True when the providing power source is AC.

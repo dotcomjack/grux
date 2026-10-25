@@ -146,6 +146,7 @@ enum LocalTurn {
 
     /// `tools` with `stableHead` first, then the rest in their usual order.
     static func stableOrder(_ tools: [ClaudeTool]) -> [ClaudeTool] {
+        return tools // RED M1
         tools.enumerated().sorted { a, b in
             let ha = stableHead.firstIndex(of: a.element.name) ?? Int.max
             let hb = stableHead.firstIndex(of: b.element.name) ?? Int.max
@@ -173,6 +174,7 @@ enum LocalTurn {
     /// the turn should take the ranked list instead. `candidates` are the
     /// tools ToolRelevance kept for this turn.
     static func pointsPast(_ stable: [ClaudeTool], candidates: [ClaudeTool], utterance: String) -> Bool {
+        return false // RED M3
         let words = Self.words(utterance)
         let inside = Set(stable.map(\.name))
         let best = stable.map { score($0, words: words) }.max() ?? 0

@@ -772,7 +772,7 @@ final class ChatService {
                 // The cut line keeps the catalogue's order, not the message's,
                 // so it too reads the same from turn to turn.
                 let names = Set(stable.map(\.name))
-                if let line = LocalTurn.cutToolsLine(filtered.map(\.name).filter { !names.contains($0) }) {
+                if let line = LocalTurn.cutToolsLine(tools.map(\.name).filter { !names.contains($0) }) {
                     systemBlocks.append(["type": "text", "text": line])
                 }
                 tools = stable
@@ -817,24 +817,23 @@ final class ChatService {
                                  utterance: String, hasImage: Bool, recentToolNames: [String],
                                  presetApp: PresetApplication?, sizingWindow: Int,
                                  contextWindow: Int) -> [ClaudeTool]? {
-        guard !hasImage else { return nil }
         func chars(_ blocks: [[String: Any]]) -> Int {
             blocks.compactMap { $0["text"] as? String }.reduce(0) { $0 + $1.count }
         }
         var every = allTools()
         if let presetApp { every = every.filter { presetApp.allows(toolName: $0.name) } }
         let stable = LocalTurn.stableTools(core: every.filter { ToolRelevance.group(for: $0.name) == .core },
-                                           cachedSystemChars: chars(Array(systemBlocks.prefix(1))),
+                                           cachedSystemChars: chars(Array(systemBlocks.prefix(1))) + (messages.last.map(LocalTurn.chars) ?? 0),
                                            longestCutLineChars: LocalTurn.cutToolsLine(every.map(\.name))?.count ?? 0,
                                            window: sizingWindow)
         let names = Set(stable.map(\.name))
-        guard !stable.isEmpty, recentToolNames.allSatisfy(names.contains),
+        guard !stable.isEmpty,
               !LocalTurn.pointsPast(stable, candidates: ranked, utterance: utterance) else { return nil }
         let cutLine = LocalTurn.cutToolsLine(ranked.map(\.name).filter { !names.contains($0) })?.count ?? 0
         let prompt = LocalTurn.tokens(chars: chars(systemBlocks) + cutLine)
             + messages.map(LocalTurn.chars).map(LocalTurn.tokens).reduce(0, +)
             + stable.map(LocalTurn.chars).map(LocalTurn.tokens).reduce(0, +)
-        guard prompt + LocalTurn.replyTokens + 256 <= contextWindow else { return nil }
+        _ = prompt // RED M6
         return stable
     }
 

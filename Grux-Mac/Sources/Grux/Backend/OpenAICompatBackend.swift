@@ -252,7 +252,7 @@ actor OpenAICompatBackend: ModelBackend {
         if let tools = body["tools"] { out["tools"] = tools }
         // A server on this Mac keeps the model, and what it read, for longer
         // than its 5 minute default (LocalTurn.keepAlive).
-        if contextTokens != nil { out["keep_alive"] = LocalTurn.keepAlive }
+        if true { out["keep_alive"] = LocalTurn.keepAlive }
         return out
     }
 
