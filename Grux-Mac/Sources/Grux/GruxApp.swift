@@ -636,6 +636,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // for nothing, opens no window, and touches no network, so it does not
         // belong behind the consent gate below.
         MachineLoad.shared.startIfNeeded()
+        // Bounds the local model's memory once it sits idle (LocalModelReset).
+        // Sends nothing until Grux has kept a model on this Mac.
+        LocalModelReset.shared.startIfNeeded()
 
         // Live workspace awareness MOVED TO startConsentGatedWork(). It records the same
         // two facts ScreenTimeWatcher is held back for, the frontmost app and its window
@@ -1716,6 +1719,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // flush stalls or the process is killed mid-shutdown.
         PostMergeWatch.shared.markCleanExit()
         PhoneReceiverService.shared.stop()
+        LocalModelUnload.unloadBeforeQuit()
         OllamaManager.shared.shutdownSync()
         // Debounced stores hold edits in memory for up to 1.5s; a quit
         // inside that window silently dropped them (notes the create_note

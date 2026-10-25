@@ -1,0 +1,156 @@
+import Foundation
+
+/// Keeps the local model's memory bounded without giving up its speed.
+///
+/// Ollama's MLX runner keeps up to 8 GiB of saved prompt readings and offers
+/// no setting for it. Measured 2026-10-24 on a 16 GB Mac mini: grux-local:4b
+/// reported 4.44 GB fresh and 13.06 GB (/api/ps) after 265 turns, 12 GB by
+/// `footprint`. Unloading frees it, but the next two turns then read every
+/// tool again: 18.39 s and 15.73 s there, against about 1.4 s warm.
+///
+/// So once nobody has used the model for `idleSeconds` and Ollama reports more
+/// than `ceilingBytes` for a model Grux asked to keep, Grux unloads it and
+/// reads the stable prefix again in the background
+/// (ChatService.warmLocalPrefix). That costs two cold reads, about 27 s on that
+/// Mac mini, while nobody is waiting, and the model is back at its fresh size
+/// with the next turn warm: 2.85 s there after the warm-up.
+@MainActor
+final class LocalModelReset {
+    static let shared = LocalModelReset()
+
+    /// How long the model must sit unused before a reset may run.
+    static let idleSeconds: TimeInterval = 180
+
+    /// The most a kept model may report: its smallest size seen since Grux
+    /// started (the size of a fresh load, whatever the runner allocates up
+    /// front), or before any is seen its size on disk and a twentieth more,
+    /// plus a tenth of this Mac's memory (1.6 GB on 16 GB, 0.8 GB on 8 GB).
+    static func ceilingBytes(modelBytes: Int64, smallestSeen: Int64?, physicalBytes: Int64) -> Int64 {
+        (smallestSeen ?? (modelBytes + modelBytes / 20)) + physicalBytes / 10
+    }
+
+    static func shouldReset(reportedBytes: Int64, modelBytes: Int64, smallestSeen: Int64? = nil,
+                            physicalBytes: Int64) -> Bool {
+        modelBytes > 0 && reportedBytes > ceilingBytes(modelBytes: modelBytes, smallestSeen: smallestSeen,
+                                                       physicalBytes: physicalBytes)
+    }
+
+    /// Ollama reports a model by its full tag; Grux may call it without one.
+    static func sameModel(_ reported: String, _ called: String) -> Bool {
+        reported == called || reported == called + ":latest" || called == reported + ":latest"
+    }
+
+    private var timer: Timer?
+    private var checkedThrough: Date = .distantPast
+    private var running = false
+    private var smallest: [String: Int64] = [:]
+    private var warmTask: Task<Bool, Never>?
+
+    /// A person's turn starts: stop the background warm-up. Ollama stops
+    /// reading when the call is dropped, so the turn waits for no warm call.
+    /// Measured 2026-10-25 on the 16 GB Mac mini, a message sent 3 s into
+    /// the warm-up: 24.73 s with the warm-up left running, 11.53 s cancelled.
+    func cancelWarmUp() {
+        warmTask?.cancel()
+    }
+
+    /// Starts the once-a-minute check. Idempotent; sends nothing until Grux has
+    /// itself kept a model on this Mac.
+    func startIfNeeded() {
+        guard timer == nil, !LocalModelUnload.isUnderTest else { return }
+        timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in
+            Task { @MainActor in await LocalModelReset.shared.tick() }
+        }
+    }
+
+    func tick(now: Date = Date()) async {
+        guard !running, !AppState.shared.isThinking, let last = LocalModelUnload.lastUse(),
+              last > checkedThrough, now.timeIntervalSince(last) >= Self.idleSeconds else { return }
+        checkedThrough = last
+        running = true
+        defer { running = false }
+        let physical = Int64(ProcessInfo.processInfo.physicalMemory)
+        var resetModels: [(key: String, baseURL: String, model: String, unloaded: Bool)] = []
+        for kept in LocalModelUnload.kept() {
+            let key = kept.baseURL + " " + kept.model
+            guard let reported = await Self.reportedBytes(baseURL: kept.baseURL, model: kept.model),
+                  let onDisk = await Self.modelBytes(baseURL: kept.baseURL, model: kept.model) else { continue }
+            let seen = smallest[key]
+            smallest[key] = min(seen ?? reported, reported)
+            guard Self.shouldReset(reportedBytes: reported, modelBytes: onDisk, smallestSeen: seen,
+                                   physicalBytes: physical),
+                  // Nobody started a turn while Ollama was being asked.
+                  !AppState.shared.isThinking, LocalModelUnload.lastUse() == last,
+                  let req = LocalModelUnload.request(baseURL: kept.baseURL, model: kept.model) else { continue }
+            _ = try? await URLSession.shared.data(for: req)
+            // Ollama expires the runner on its own schedule: wait until /api/ps
+            // no longer lists the model, so the size read later is a fresh load.
+            var unloaded = false
+            for _ in 0..<10 where !unloaded {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                unloaded = await Self.isListed(baseURL: kept.baseURL, model: kept.model) == false
+            }
+            resetModels.append((key, kept.baseURL, kept.model, unloaded))
+        }
+        checkedThrough = LocalModelUnload.lastUse() ?? checkedThrough
+        var warmed = false
+        if !resetModels.isEmpty, !AppState.shared.isThinking {
+            let task = Task { await ChatService.shared.warmLocalPrefix() }
+            warmTask = task
+            warmed = await task.value
+            warmTask = nil
+            // The warm-up's own calls are not use: the next check waits for a
+            // real turn, so an unload Ollama never confirms cannot loop. A turn
+            // that ran instead of the warm-up's second call is use, and stays.
+            if warmed, !AppState.shared.isThinking { checkedThrough = LocalModelUnload.lastUse() ?? checkedThrough }
+        }
+        // After a confirmed unload and the warm-up, the size is a fresh load's,
+        // whatever the runner reserves up front, and it becomes the baseline:
+        // a model that is big when fresh is not reset again on every idle
+        // spell. Otherwise (unload unconfirmed, warm-up skipped) the read could
+        // be the grown size and would end every later reset, so the baseline
+        // falls back to the size on disk instead.
+        for m in resetModels {
+            let fresh = await Self.reportedBytes(baseURL: m.baseURL, model: m.model)
+            smallest[m.key] = (m.unloaded && warmed) ? fresh : nil
+        }
+    }
+
+    /// Whether /api/ps lists `model`: nil when Ollama did not answer, so a
+    /// failed request is never read as "unloaded".
+    static func isListed(baseURL: String, model: String) async -> Bool? {
+        guard let obj = await json(baseURL: baseURL, path: "/api/ps"),
+              let models = obj["models"] as? [[String: Any]] else { return nil }
+        return models.contains { sameModel(($0["name"] as? String) ?? "", model)
+                                 || sameModel(($0["model"] as? String) ?? "", model) }
+    }
+
+    /// What Ollama reports for `model` right now (/api/ps `size`), or nil when it is not loaded.
+    static func reportedBytes(baseURL: String, model: String) async -> Int64? {
+        guard let obj = await json(baseURL: baseURL, path: "/api/ps"),
+              let models = obj["models"] as? [[String: Any]],
+              let m = models.first(where: { sameModel(($0["name"] as? String) ?? "", model)
+                                            || sameModel(($0["model"] as? String) ?? "", model) })
+        else { return nil }
+        return (m["size"] as? NSNumber)?.int64Value
+    }
+
+    /// The model's size on disk (/api/tags `size`).
+    static func modelBytes(baseURL: String, model: String) async -> Int64? {
+        guard let obj = await json(baseURL: baseURL, path: "/api/tags"),
+              let models = obj["models"] as? [[String: Any]],
+              let m = models.first(where: { sameModel(($0["name"] as? String) ?? "", model)
+                                            || sameModel(($0["model"] as? String) ?? "", model) })
+        else { return nil }
+        return (m["size"] as? NSNumber)?.int64Value
+    }
+
+    private static func json(baseURL: String, path: String) async -> [String: Any]? {
+        let base = baseURL.hasSuffix("/") ? String(baseURL.dropLast()) : baseURL
+        guard LocalTurn.isLoopback(baseURL: base), let url = URL(string: base + path) else { return nil }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 3
+        guard let (data, _) = try? await URLSession.shared.data(for: req) else { return nil }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    }
+}

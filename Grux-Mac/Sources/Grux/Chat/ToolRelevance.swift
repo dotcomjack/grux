@@ -93,4 +93,7 @@ final class RecentToolUse {
     func names(within window: TimeInterval = ToolRelevance.recencyWindow, now: Date = Date()) -> [String] {
         uses.filter { now.timeIntervalSince($0.at) <= window }.map(\.name)
     }
+
+    /// Forget every use. For tests, which share this one record.
+    func clear() { uses.removeAll() }
 }

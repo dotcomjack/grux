@@ -180,6 +180,8 @@ final class ChatService {
         // In flight BEFORE the message lands, so the thread's background calls
         // (title, compaction) see the turn and, on a local model, wait for the
         // reply instead of queueing ahead of it (W4 pass 2).
+        // A background warm-up of the local model gives way (LocalModelReset).
+        LocalModelReset.shared.cancelWarmUp()
         state.beginChatTurn()
         defer { state.endChatTurn() }
         state.appendChat(userMsg)
@@ -751,6 +753,7 @@ final class ChatService {
             hasImage: lastUser?.imageData != nil))
         var messages = Self.modelFacingMessages(Array(state.chat.suffix(30)))
         if lean {
+            let filtered = tools
             tools = LocalTurn.rank(tools, utterance: lastUser?.content ?? "")
             // Room for the line naming what is left out, at its longest.
             let worstLine = LocalTurn.cutToolsLine(tools.map(\.name))?.count ?? 0
@@ -759,10 +762,28 @@ final class ChatService {
                                     toolChars: tools.map(LocalTurn.chars),
                                     window: min(window, ceiling))
             messages = Array(messages.suffix(fit.messages))
-            if let line = LocalTurn.cutToolsLine(tools.dropFirst(fit.tools).map(\.name)) {
-                systemBlocks.append(["type": "text", "text": line])
+            if let stable = Self.stableLocalTools(systemBlocks: systemBlocks, messages: messages, ranked: tools,
+                                                  utterance: lastUser?.content ?? "",
+                                                  hasImage: lastUser?.imageData != nil,
+                                                  recentToolNames: RecentToolUse.shared.names(),
+                                                  presetApp: presetApp, sizingWindow: min(window, ceiling),
+                                                  contextWindow: window) {
+                // The same tools in the same order as the last turn, so Ollama
+                // reuses the prompt it already read (LocalTurn.stableHead).
+                // The history is what the ranked fit kept; only the tools change.
+                // The cut line keeps the catalogue's order, not the message's,
+                // so it too reads the same from turn to turn.
+                let names = Set(stable.map(\.name))
+                if let line = LocalTurn.cutToolsLine(filtered.map(\.name).filter { !names.contains($0) }) {
+                    systemBlocks.append(["type": "text", "text": line])
+                }
+                tools = stable
+            } else {
+                if let line = LocalTurn.cutToolsLine(tools.dropFirst(fit.tools).map(\.name)) {
+                    systemBlocks.append(["type": "text", "text": line])
+                }
+                tools = Array(tools.prefix(fit.tools))
             }
-            tools = Array(tools.prefix(fit.tools))
         }
         let routing = ModelRegistry.shared.resolvedRouting(
             provider: presetApp?.providerOverride, modelOverride: presetApp?.modelIdOverride)
@@ -776,6 +797,100 @@ final class ChatService {
             backend: routing.backend,
             apiKey: routing.apiKey,
             presetApp: presetApp)
+    }
+
+    /// The stable list for a local turn (LocalTurn.stableHead), or nil when
+    /// the turn takes the ranked list as before: the newest message carries an
+    /// image, a tool that ran in the last fifteen minutes is not on the list
+    /// (a loop keeps its tools), the message points past the list, or the turn
+    /// with the list would not fit `contextWindow`, the window Ollama is asked
+    /// for. The list is sized against `sizingWindow` (the prompt ceiling) with
+    /// LocalTurn.turnReserveChars left for the turn, from the first system
+    /// block alone (who Grux is, its rules, the profile and the features; it
+    /// moves the list only when it crosses a 2,000 character step, see
+    /// LocalTurn.stableTools), so nothing that changes per turn or per thread
+    /// (the rolling summary, the uncached blocks, the cut line, the history)
+    /// changes the list. Those may run past the ceiling as long as the whole
+    /// turn fits `contextWindow`: on a 16 GB Mac a turn can send more than
+    /// LocalTurn.promptCeiling, most of it the tools and system text Ollama
+    /// already holds. On an 8 GB Mac the window is the ceiling, so a turn with
+    /// a long turn block (tasks, memories, a summary) takes the ranked list.
+    static func stableLocalTools(systemBlocks: [[String: Any]], messages: [[String: Any]], ranked: [ClaudeTool],
+                                 utterance: String, hasImage: Bool, recentToolNames: [String],
+                                 presetApp: PresetApplication?, sizingWindow: Int,
+                                 contextWindow: Int) -> [ClaudeTool]? {
+        guard !hasImage else { return nil }
+        func chars(_ blocks: [[String: Any]]) -> Int {
+            blocks.compactMap { $0["text"] as? String }.reduce(0) { $0 + $1.count }
+        }
+        var every = allTools()
+        if let presetApp { every = every.filter { presetApp.allows(toolName: $0.name) } }
+        let stable = LocalTurn.stableTools(core: every.filter { ToolRelevance.group(for: $0.name) == .core },
+                                           cachedSystemChars: chars(Array(systemBlocks.prefix(1))),
+                                           longestCutLineChars: LocalTurn.cutToolsLine(every.map(\.name))?.count ?? 0,
+                                           window: sizingWindow)
+        let names = Set(stable.map(\.name))
+        guard !stable.isEmpty, recentToolNames.allSatisfy(names.contains),
+              !LocalTurn.pointsPast(stable, candidates: ranked, utterance: utterance) else { return nil }
+        let cutLine = LocalTurn.cutToolsLine(ranked.map(\.name).filter { !names.contains($0) })?.count ?? 0
+        let prompt = LocalTurn.tokens(chars: chars(systemBlocks) + cutLine)
+            + messages.map(LocalTurn.chars).map(LocalTurn.tokens).reduce(0, +)
+            + stable.map(LocalTurn.chars).map(LocalTurn.tokens).reduce(0, +)
+        guard prompt + LocalTurn.replyTokens + 256 <= contextWindow else { return nil }
+        return stable
+    }
+
+    /// The system text and tools a local turn on the stable list sends, the
+    /// same bytes in the same order, for warmLocalPrefix. Nil when no stable
+    /// list applies (a loop's recent tools, a turn that cannot fit).
+    func localPrefix(state: AppState, window: Int = LocalTurn.contextTokens) -> (system: String, tools: [ClaudeTool])? {
+        let presetApp = PresetStore.shared.activeChatApplication()
+        let systemBlocks = buildSystemBlocks(state: state, lean: true)
+        var tools = Self.allTools()
+        if let presetApp { tools = tools.filter { presetApp.allows(toolName: $0.name) } }
+        guard let stable = Self.stableLocalTools(
+            systemBlocks: systemBlocks, messages: [["role": "user", "content": "a"]],
+            ranked: tools.filter { ToolRelevance.group(for: $0.name) == .core }, utterance: "", hasImage: false,
+            recentToolNames: RecentToolUse.shared.names(), presetApp: presetApp,
+            sizingWindow: min(window, LocalTurn.promptCeiling), contextWindow: window) else { return nil }
+        // OpenAICompatBackend.withTurnContextAfterTools builds a turn's system
+        // text from the cached blocks exactly this way.
+        let system = systemBlocks.filter { $0["cache_control"] != nil }.compactMap { $0["text"] as? String }
+            .filter { !$0.isEmpty }.joined(separator: "\n\n")
+        return (system, stable)
+    }
+
+    /// Reads a local turn's stable prefix into Ollama's cache before anybody
+    /// asks: two one-token calls with the same system text and tools a turn
+    /// sends and different user words, because Qwen 3.5 resumes only at a
+    /// saved point and the second call is the one that saves it at the start
+    /// of the user's message. Measured 2026-10-24 on a 16 GB Mac mini: the
+    /// first two turns after an unload took 18.39 s and 15.73 s, and 2.85 s and
+    /// 2.86 s after this. Used by LocalModelReset.
+    /// True when both calls went out; false when a person's turn came first
+    /// or there was nothing to warm.
+    @discardableResult
+    func warmLocalPrefix() async -> Bool {
+        let presetApp = PresetStore.shared.activeChatApplication()
+        guard Self.isLocalTurn(providerOverride: presetApp?.providerOverride,
+                               resolved: ModelRegistry.shared.resolvedProvider),
+              let prefix = localPrefix(state: AppState.shared) else { return false }
+        let routing = ModelRegistry.shared.resolvedRouting(
+            provider: presetApp?.providerOverride, modelOverride: presetApp?.modelIdOverride)
+        for word in ["a", "b"] {
+            // A person's turn goes first, and waits behind at most one call.
+            guard !AppState.shared.isThinking, !Task.isCancelled else { return false }
+            await LocalModelGate.shared.acquire()
+            defer { Task { await LocalModelGate.shared.release() } }
+            guard !AppState.shared.isThinking, !Task.isCancelled else { return false }
+            _ = try? await routing.backend.completeWithTools(
+                apiKey: routing.apiKey, model: routing.modelId, system: prefix.system,
+                messages: [["role": "user", "content": word]], tools: prefix.tools, maxTokens: 1,
+                temperature: 0, spanName: "local.warmup", feature: "local_warmup")
+            // Cancelled mid-call (a person's turn started): the call was dropped.
+            if Task.isCancelled { return false }
+        }
+        return true
     }
 
     // Publish a pre-send cost estimate for the composer WITHOUT sending anything.

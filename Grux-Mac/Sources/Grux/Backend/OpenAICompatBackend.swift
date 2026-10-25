@@ -182,6 +182,11 @@ actor OpenAICompatBackend: ModelBackend {
         let wire = native ? Self.ollamaChatBody(body, stream: stream,
                                                 contextTokens: Self.contextTokens(forBaseURL: baseURL))
                           : Self.shaped(body, baseURL: baseURL)
+        // The call asked this Mac's server to keep the model: Grux unloads it
+        // itself on critical memory pressure and on quit (LocalModelUnload).
+        if native, wire["keep_alive"] != nil {
+            LocalModelUnload.noteKept(baseURL: baseURL, model: wire["model"] as? String ?? "")
+        }
         req.httpBody = try JSONSerialization.data(withJSONObject: wire, options: [])
         return (req, native)
     }
@@ -245,6 +250,9 @@ actor OpenAICompatBackend: ModelBackend {
             "options": options
         ]
         if let tools = body["tools"] { out["tools"] = tools }
+        // A server on this Mac keeps the model, and what it read, for longer
+        // than its 5 minute default (LocalTurn.keepAlive).
+        if contextTokens != nil { out["keep_alive"] = LocalTurn.keepAlive }
         return out
     }
 
