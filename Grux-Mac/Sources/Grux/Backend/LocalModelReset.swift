@@ -44,6 +44,15 @@ final class LocalModelReset {
     private var checkedThrough: Date = .distantPast
     private var running = false
     private var smallest: [String: Int64] = [:]
+    private var warmTask: Task<Bool, Never>?
+
+    /// A person's turn starts: stop the background warm-up. Ollama stops
+    /// reading when the call is dropped, so the turn waits for no warm call.
+    /// Measured 2026-10-25 on the 16 GB Mac mini, a message sent 3 s into
+    /// the warm-up: 24.73 s with the warm-up left running, 11.53 s cancelled.
+    func cancelWarmUp() {
+        warmTask?.cancel()
+    }
 
     /// Starts the once-a-minute check. Idempotent; sends nothing until Grux has
     /// itself kept a model on this Mac.
@@ -86,7 +95,10 @@ final class LocalModelReset {
         checkedThrough = LocalModelUnload.lastUse() ?? checkedThrough
         var warmed = false
         if !resetModels.isEmpty, !AppState.shared.isThinking {
-            warmed = await ChatService.shared.warmLocalPrefix()
+            let task = Task { await ChatService.shared.warmLocalPrefix() }
+            warmTask = task
+            warmed = await task.value
+            warmTask = nil
             // The warm-up's own calls are not use: the next check waits for a
             // real turn, so an unload Ollama never confirms cannot loop. A turn
             // that ran instead of the warm-up's second call is use, and stays.

@@ -292,4 +292,14 @@ final class LocalModelResetTests: XCTestCase {
     func test_theResetStartsAtLaunch() throws {
         XCTAssertTrue(try macSource("Sources/Grux/GruxApp.swift").contains("LocalModelReset.shared.startIfNeeded()"))
     }
+
+    /// Measured 2026-10-25: a message sent into a running warm-up waited
+    /// 24.73 s; with the warm-up cancelled, 11.53 s.
+    func test_aChatTurnCancelsTheWarmUpBeforeItStarts() throws {
+        let src = try macSource("Sources/Grux/ChatService.swift")
+        let cancel = try XCTUnwrap(src.range(of: "LocalModelReset.shared.cancelWarmUp()"), "a turn no longer cancels the warm-up")
+        let begin = try XCTUnwrap(src.range(of: "state.beginChatTurn()"))
+        XCTAssertLessThan(cancel.lowerBound, begin.lowerBound, "the warm-up is cancelled after the turn begins")
+        LocalModelReset.shared.cancelWarmUp()  // no warm-up running: a no-op
+    }
 }

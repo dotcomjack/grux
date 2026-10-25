@@ -180,6 +180,8 @@ final class ChatService {
         // In flight BEFORE the message lands, so the thread's background calls
         // (title, compaction) see the turn and, on a local model, wait for the
         // reply instead of queueing ahead of it (W4 pass 2).
+        // A background warm-up of the local model gives way (LocalModelReset).
+        LocalModelReset.shared.cancelWarmUp()
         state.beginChatTurn()
         defer { state.endChatTurn() }
         state.appendChat(userMsg)
@@ -877,14 +879,16 @@ final class ChatService {
             provider: presetApp?.providerOverride, modelOverride: presetApp?.modelIdOverride)
         for word in ["a", "b"] {
             // A person's turn goes first, and waits behind at most one call.
-            guard !AppState.shared.isThinking else { return false }
+            guard !AppState.shared.isThinking, !Task.isCancelled else { return false }
             await LocalModelGate.shared.acquire()
             defer { Task { await LocalModelGate.shared.release() } }
-            guard !AppState.shared.isThinking else { return false }
+            guard !AppState.shared.isThinking, !Task.isCancelled else { return false }
             _ = try? await routing.backend.completeWithTools(
                 apiKey: routing.apiKey, model: routing.modelId, system: prefix.system,
                 messages: [["role": "user", "content": word]], tools: prefix.tools, maxTokens: 1,
                 temperature: 0, spanName: "local.warmup", feature: "local_warmup")
+            // Cancelled mid-call (a person's turn started): the call was dropped.
+            if Task.isCancelled { return false }
         }
         return true
     }
