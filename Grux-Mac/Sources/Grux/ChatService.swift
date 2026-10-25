@@ -824,7 +824,7 @@ final class ChatService {
         var every = allTools()
         if let presetApp { every = every.filter { presetApp.allows(toolName: $0.name) } }
         let stable = LocalTurn.stableTools(core: every.filter { ToolRelevance.group(for: $0.name) == .core },
-                                           cachedSystemChars: chars(Array(systemBlocks.prefix(1))),
+                                           cachedSystemChars: chars(Array(systemBlocks.prefix(1))) + (messages.last.map(LocalTurn.chars) ?? 0),
                                            longestCutLineChars: LocalTurn.cutToolsLine(every.map(\.name))?.count ?? 0,
                                            window: sizingWindow)
         let names = Set(stable.map(\.name))
@@ -854,7 +854,7 @@ final class ChatService {
         // OpenAICompatBackend.withTurnContextAfterTools builds a turn's system
         // text from the cached blocks exactly this way.
         let system = systemBlocks.filter { $0["cache_control"] != nil }.compactMap { $0["text"] as? String }
-            .filter { !$0.isEmpty }.joined(separator: "\n\n")
+            .filter { !$0.isEmpty }.joined(separator: "\n")
         return (system, stable)
     }
 

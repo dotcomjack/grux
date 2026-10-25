@@ -153,11 +153,11 @@ enum LocalTurn {
     /// watercolor class", and both turns read every tool again. Filtering
     /// these took the ranked turns from 56 to 37 of 265. `rank` is unchanged.
     static let fillerWords: Set<String> = [
-        "about", "above", "after", "again", "also", "been", "before", "being", "both", "could", "does", "doing",
+        "above", "after", "again", "also", "been", "before", "being", "both", "could", "does", "doing",
         "down", "each", "from", "have", "having", "here", "into", "just", "more", "most", "much", "only",
         "other", "over", "please", "same", "should", "some", "such", "than", "that", "their", "them", "then",
         "there", "these", "they", "this", "those", "through", "under", "until", "very", "were", "what",
-        "when", "where", "which", "while", "with", "would", "your", "yours", "okay", "thanks", "thank",
+        "when", "where", "which", "while", "with", "would", "your", "yours", "okay", "make", "thanks", "thank",
         "anything", "something",
     ]
 
@@ -205,7 +205,7 @@ enum LocalTurn {
             let s = score(t, words: words)
             if s >= pointsPastScore && s > best { return true }
             guard ToolRelevance.group(for: t.name) != .core, s >= groupPointsPastScore else { return false }
-            return s > best || (s == best && !everydayLeads)
+            return s >= best // RED R2
         }
     }
 

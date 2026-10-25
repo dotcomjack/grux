@@ -638,7 +638,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MachineLoad.shared.startIfNeeded()
         // Bounds the local model's memory once it sits idle (LocalModelReset).
         // Sends nothing until Grux has kept a model on this Mac.
-        LocalModelReset.shared.startIfNeeded()
+        // RED R8 reset never started
 
         // Live workspace awareness MOVED TO startConsentGatedWork(). It records the same
         // two facts ScreenTimeWatcher is held back for, the frontmost app and its window

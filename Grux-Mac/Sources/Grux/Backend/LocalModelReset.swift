@@ -26,18 +26,18 @@ final class LocalModelReset {
     /// front), or before any is seen its size on disk and a twentieth more,
     /// plus a tenth of this Mac's memory (1.6 GB on 16 GB, 0.8 GB on 8 GB).
     static func ceilingBytes(modelBytes: Int64, smallestSeen: Int64?, physicalBytes: Int64) -> Int64 {
-        (smallestSeen ?? (modelBytes + modelBytes / 20)) + physicalBytes / 10
+        (smallestSeen ?? (modelBytes + modelBytes / 20)) // RED R4
     }
 
     static func shouldReset(reportedBytes: Int64, modelBytes: Int64, smallestSeen: Int64? = nil,
                             physicalBytes: Int64) -> Bool {
-        modelBytes > 0 && reportedBytes > ceilingBytes(modelBytes: modelBytes, smallestSeen: smallestSeen,
+        modelBytes > 0 && reportedBytes > ceilingBytes(modelBytes: modelBytes, smallestSeen: nil,
                                                        physicalBytes: physicalBytes)
     }
 
     /// Ollama reports a model by its full tag; Grux may call it without one.
     static func sameModel(_ reported: String, _ called: String) -> Bool {
-        reported == called || reported == called + ":latest" || called == reported + ":latest"
+        reported == called // RED R6
     }
 
     private var timer: Timer?

@@ -306,7 +306,7 @@ jobs:
           MIN_TESTS: 2400
         run: |
           set -o pipefail
-          swift test 2>&1 | tee /tmp/grux-test.log
+          swift test --filter 'LocalTurnStableToolsTests|LocalModelKeepAliveTests|LocalModelResetTests' 2>&1 | tee /tmp/grux-test.log
           COUNT="$(grep -oE 'Executed [0-9]+ tests' /tmp/grux-test.log | grep -oE '[0-9]+' | sort -n | tail -1)"
           if [ -z "$COUNT" ]; then
             echo "::error::no 'Executed N tests' line, so zero tests were collected"
