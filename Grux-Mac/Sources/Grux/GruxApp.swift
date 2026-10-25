@@ -636,6 +636,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // for nothing, opens no window, and touches no network, so it does not
         // belong behind the consent gate below.
         MachineLoad.shared.startIfNeeded()
+        // Bounds the local model's memory once it sits idle (LocalModelReset).
+        // Sends nothing until Grux has kept a model on this Mac.
+        LocalModelReset.shared.startIfNeeded()
 
         // Live workspace awareness MOVED TO startConsentGatedWork(). It records the same
         // two facts ScreenTimeWatcher is held back for, the frontmost app and its window

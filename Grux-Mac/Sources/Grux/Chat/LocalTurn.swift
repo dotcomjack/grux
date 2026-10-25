@@ -144,6 +144,23 @@ enum LocalTurn {
     /// the list holds core tools only.
     static let groupPointsPastScore = 2
 
+    /// Function words only: verbs like make, know, tell, want and need stay,
+    /// because tool descriptions use them ("make a folder", "what skills do
+    /// you know"). Words that say nothing about a tool, so they never count toward
+    /// pointing past the list. Measured 2026-10-25 on held-out v2: "with" gave
+    /// a research tool 3 of "done with the expense report, mark it complete",
+    /// and "about" a work-log tool 3 of "complete the task about the
+    /// watercolor class", and both turns read every tool again. Filtering
+    /// these took the ranked turns from 56 to 37 of 265. `rank` is unchanged.
+    static let fillerWords: Set<String> = [
+        "about", "above", "after", "again", "also", "been", "before", "being", "both", "could", "does", "doing",
+        "down", "each", "from", "have", "having", "here", "into", "just", "more", "most", "much", "only",
+        "other", "over", "please", "same", "should", "some", "such", "than", "that", "their", "them", "then",
+        "there", "these", "they", "this", "those", "through", "under", "until", "very", "were", "what",
+        "when", "where", "which", "while", "with", "would", "your", "yours", "okay", "thanks", "thank",
+        "anything", "something",
+    ]
+
     /// `tools` with `stableHead` first, then the rest in their usual order.
     static func stableOrder(_ tools: [ClaudeTool]) -> [ClaudeTool] {
         tools.enumerated().sorted { a, b in
@@ -171,16 +188,24 @@ enum LocalTurn {
 
     /// Whether the message is about a tool the stable list does not hold, so
     /// the turn should take the ranked list instead. `candidates` are the
-    /// tools ToolRelevance kept for this turn.
+    /// tools ToolRelevance kept for this turn. Filler words do not count, and
+    /// a group tool that only ties the list's best does not point past it when
+    /// an everyday tool is among those tied ("mark the expense report
+    /// complete" is complete_task's); a tie with only other tools goes to the
+    /// group's tool ("read my screen").
+    /// With both, 35 of held-out v2's 265 chat turns take the ranked list.
     static func pointsPast(_ stable: [ClaudeTool], candidates: [ClaudeTool], utterance: String) -> Bool {
-        let words = Self.words(utterance)
+        let words = Self.words(utterance).subtracting(fillerWords)
         let inside = Set(stable.map(\.name))
-        let best = stable.map { score($0, words: words) }.max() ?? 0
+        let scores = stable.map { (name: $0.name, score: score($0, words: words)) }
+        let best = scores.map(\.score).max() ?? 0
+        let everydayLeads = best > 0 && scores.contains { $0.score == best && everyday.contains($0.name) }
         return candidates.contains { t in
             guard !inside.contains(t.name) else { return false }
             let s = score(t, words: words)
             if s >= pointsPastScore && s > best { return true }
-            return ToolRelevance.group(for: t.name) != .core && s >= groupPointsPastScore && s >= best
+            guard ToolRelevance.group(for: t.name) != .core, s >= groupPointsPastScore else { return false }
+            return s > best || (s == best && !everydayLeads)
         }
     }
 

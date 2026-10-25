@@ -6,8 +6,18 @@ import Foundation
 private final class KeptModelsBox: @unchecked Sendable {
     private let lock = NSLock()
     private var kept: [String: Set<String>] = [:]
+    private var last: Date?
     func insert(baseURL: String, model: String) {
-        lock.lock(); kept[baseURL, default: []].insert(model); lock.unlock()
+        lock.lock(); kept[baseURL, default: []].insert(model); last = Date(); lock.unlock()
+    }
+    func lastUse() -> Date? {
+        lock.lock(); defer { lock.unlock() }
+        return last
+    }
+    func all() -> [(baseURL: String, model: String)] {
+        lock.lock(); defer { lock.unlock() }
+        return kept.flatMap { base, models in models.map { (baseURL: base, model: $0) } }
+            .sorted { ($0.baseURL, $0.model) < ($1.baseURL, $1.model) }
     }
     func takeAll() -> [(baseURL: String, model: String)] {
         lock.lock(); defer { lock.unlock() }
@@ -39,6 +49,12 @@ enum LocalModelUnload {
         guard !model.isEmpty else { return }
         keptModels.insert(baseURL: baseURL, model: model)
     }
+
+    /// When Grux last called a model it asked to keep, or nil before the first.
+    static func lastUse() -> Date? { keptModels.lastUse() }
+
+    /// The models Grux asked to keep, without forgetting them (LocalModelReset).
+    static func kept() -> [(baseURL: String, model: String)] { keptModels.all() }
 
     /// The unload call (`keep_alive: 0` on `/api/generate`, as Ollama documents
     /// it) for `model` at `baseURL`, or nil when that server is not this Mac.

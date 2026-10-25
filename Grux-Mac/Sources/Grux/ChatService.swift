@@ -838,6 +838,52 @@ final class ChatService {
         return stable
     }
 
+    /// The system text and tools a local turn on the stable list sends, the
+    /// same bytes in the same order, for warmLocalPrefix. Nil when no stable
+    /// list applies (a loop's recent tools, a turn that cannot fit).
+    func localPrefix(state: AppState, window: Int = LocalTurn.contextTokens) -> (system: String, tools: [ClaudeTool])? {
+        let presetApp = PresetStore.shared.activeChatApplication()
+        let systemBlocks = buildSystemBlocks(state: state, lean: true)
+        var tools = Self.allTools()
+        if let presetApp { tools = tools.filter { presetApp.allows(toolName: $0.name) } }
+        guard let stable = Self.stableLocalTools(
+            systemBlocks: systemBlocks, messages: [["role": "user", "content": "a"]],
+            ranked: tools.filter { ToolRelevance.group(for: $0.name) == .core }, utterance: "", hasImage: false,
+            recentToolNames: RecentToolUse.shared.names(), presetApp: presetApp,
+            sizingWindow: min(window, LocalTurn.promptCeiling), contextWindow: window) else { return nil }
+        // OpenAICompatBackend.withTurnContextAfterTools builds a turn's system
+        // text from the cached blocks exactly this way.
+        let system = systemBlocks.filter { $0["cache_control"] != nil }.compactMap { $0["text"] as? String }
+            .filter { !$0.isEmpty }.joined(separator: "\n\n")
+        return (system, stable)
+    }
+
+    /// Reads a local turn's stable prefix into Ollama's cache before anybody
+    /// asks: two one-token calls with the same system text and tools a turn
+    /// sends and different user words, because Qwen 3.5 resumes only at a
+    /// saved point and the second call is the one that saves it at the start
+    /// of the user's message. Measured 2026-10-24 on a 16 GB Mac mini: the
+    /// first two turns after an unload took 18.39 s and 15.73 s, and 2.85 s and
+    /// 2.86 s after this. Used by LocalModelReset.
+    func warmLocalPrefix() async {
+        let presetApp = PresetStore.shared.activeChatApplication()
+        guard Self.isLocalTurn(providerOverride: presetApp?.providerOverride,
+                               resolved: ModelRegistry.shared.resolvedProvider),
+              let prefix = localPrefix(state: AppState.shared) else { return }
+        let routing = ModelRegistry.shared.resolvedRouting(
+            provider: presetApp?.providerOverride, modelOverride: presetApp?.modelIdOverride)
+        for word in ["a", "b"] {
+            // A person's turn goes first, and waits behind at most one call.
+            guard !AppState.shared.isThinking else { return }
+            await LocalModelGate.shared.acquire()
+            defer { Task { await LocalModelGate.shared.release() } }
+            _ = try? await routing.backend.completeWithTools(
+                apiKey: routing.apiKey, model: routing.modelId, system: prefix.system,
+                messages: [["role": "user", "content": word]], tools: prefix.tools, maxTokens: 1,
+                temperature: 0, spanName: "local.warmup", feature: "local_warmup")
+        }
+    }
+
     // Publish a pre-send cost estimate for the composer WITHOUT sending anything.
     // Assembles the exact pending-turn context send() would put on the wire and
     // prices it through CostMeter with the same call shape send() uses pre-hop, so

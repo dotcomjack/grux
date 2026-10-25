@@ -64,6 +64,13 @@ final class LocalTurnStableToolsTests: XCTestCase {
         let short = lean("add a task to buy milk").tools.map(\.name)
         let longer = lean("add a task to buy milk" + String(repeating: " and bread", count: 40)).tools.map(\.name)
         XCTAssertEqual(short, longer)
+        // Red proof 2026-10-25: 400 characters never cross the 2,000 character
+        // sizing step, so sizing by the message passed the check above. These
+        // two differ by 2,600 characters.
+        let shortList = stable("add a task to buy milk")?.map(\.name)
+        let longList = stable("add a task to buy milk" + String(repeating: " and bread", count: 260))?.map(\.name)
+        XCTAssertNotNil(shortList)
+        XCTAssertEqual(shortList, longList, "the message's length changed the list")
     }
 
     /// Either path, a local turn fits an 8 GB Mac's window.
@@ -102,6 +109,35 @@ final class LocalTurnStableToolsTests: XCTestCase {
         XCTAssertFalse(LocalTurn.pointsPast(inside, candidates: inside + [tool("create_note", "Write a note")],
                                             utterance: "write a note"),
                        "control: a core tool needs three words")
+    }
+
+    /// Measured 2026-10-25: "with" and "about" sent two everyday asks down the
+    /// ranked path, and a research tool that only tied complete_task did too.
+    func test_fillerWordsAndATieWithAnEverydayToolStayOnTheList() {
+        let complete = tool("complete_task", "Mark a task complete")
+        let inside = [tool("list_tasks", "List the tasks"), complete]
+        let reports = tool("list_research_reports", "List research reports, complete with sources")
+        XCTAssertNotEqual(ToolRelevance.group(for: reports.name), .core)
+        XCTAssertFalse(LocalTurn.pointsPast(inside, candidates: inside + [reports],
+                                            utterance: "done with the expense report, mark it complete"),
+                       "a filler word or a tie with complete_task sent an everyday ask to the ranked list")
+        let log = tool("read_workday_log", "Read the workday log, about each task, complete or not")
+        XCTAssertFalse(LocalTurn.pointsPast(inside, candidates: inside + [log],
+                                            utterance: "complete the task about the watercolor class"),
+                       "\"about\" counted toward pointing past the list")
+        XCTAssertTrue(LocalTurn.fillerWords.contains("with") && LocalTurn.fillerWords.contains("about"))
+    }
+
+    /// Review round 7: "make" and "know" are in real group tools' descriptions.
+    func test_intentVerbsStillPointPast() {
+        let inside = [tool("list_tasks", "List the tasks"), tool("add_task", "Add a task")]
+        let folder = tool("create_folder", "Make a folder for meeting captures")
+        XCTAssertNotEqual(ToolRelevance.group(for: folder.name), .core)
+        XCTAssertTrue(LocalTurn.pointsPast(inside, candidates: inside + [folder], utterance: "make a folder for client notes"),
+                      "\"make\" was dropped as filler, so the folder tool was cut")
+        for verb in ["make", "know", "tell", "want", "need"] {
+            XCTAssertFalse(LocalTurn.fillerWords.contains(verb), "\(verb) is an intent word, not filler")
+        }
     }
 
     func test_aMessageThatPointsPastTheListKeepsTheRankedList() {
@@ -193,5 +229,61 @@ final class LocalModelKeepAliveTests: XCTestCase {
     func test_criticalMemoryAndQuitUnloadTheModel() throws {
         XCTAssertTrue(try macSource("Sources/Grux/MachineLoad.swift").contains("if pressure == .critical { LocalModelUnload.unload() }"))
         XCTAssertTrue(try macSource("Sources/Grux/GruxApp.swift").contains("LocalModelUnload.unloadBeforeQuit()"))
+    }
+}
+
+/// Ollama's saved prompt readings grow the local model to about 13 GB on a
+/// 16 GB Mac; after an idle spell Grux resets it and warms the stable prefix.
+@MainActor
+final class LocalModelResetTests: XCTestCase {
+    override func setUp() async throws {
+        try await super.setUp()
+        RecentToolUse.shared.clear()
+    }
+
+    func test_theCeilingIsTheModelPlusATenthOfMemory() {
+        let gb: Int64 = 1_000_000_000
+        let model = 4_350_000_000 as Int64, sixteen = 17_179_869_184 as Int64, eight = 8_589_934_592 as Int64
+        XCTAssertTrue(LocalModelReset.shouldReset(reportedBytes: 13_060_000_000, modelBytes: model, physicalBytes: sixteen),
+                      "13.06 GB on a 16 GB Mac, measured, did not reset")
+        XCTAssertFalse(LocalModelReset.shouldReset(reportedBytes: 4_440_000_000, modelBytes: model, physicalBytes: sixteen),
+                       "a fresh load, 4.44 GB measured, was reset")
+        XCTAssertFalse(LocalModelReset.shouldReset(reportedBytes: 4_440_000_000, modelBytes: model, physicalBytes: eight),
+                       "a fresh load on an 8 GB Mac would reset on every check")
+        XCTAssertTrue(LocalModelReset.shouldReset(reportedBytes: 6 * gb, modelBytes: model, physicalBytes: eight))
+        // The tenth of memory is headroom: 1 GB of growth on 16 GB is not a reset.
+        XCTAssertFalse(LocalModelReset.shouldReset(reportedBytes: model + model / 20 + gb, modelBytes: model,
+                                                   physicalBytes: sixteen),
+                       "1 GB of growth on a 16 GB Mac reset the model")
+        XCTAssertFalse(LocalModelReset.shouldReset(reportedBytes: 9 * gb, modelBytes: 0, physicalBytes: sixteen),
+                       "an unknown model size reset anyway")
+        // A runner that allocates up front reads above its disk size fresh;
+        // the smallest size seen is its baseline, so it does not reset forever.
+        XCTAssertFalse(LocalModelReset.shouldReset(reportedBytes: 3 * gb, modelBytes: 2 * gb,
+                                                   smallestSeen: 3 * gb, physicalBytes: eight),
+                       "a fresh load above its disk size would reset on every idle spell")
+        XCTAssertTrue(LocalModelReset.shouldReset(reportedBytes: 4 * gb, modelBytes: 2 * gb,
+                                                  smallestSeen: 3 * gb, physicalBytes: eight / 2))
+        XCTAssertTrue(LocalModelReset.sameModel("grux-local:latest", "grux-local"))
+        XCTAssertFalse(LocalModelReset.sameModel("grux-local:2b", "grux-local"))
+    }
+
+    /// The warm-up only helps if it sends the bytes a real turn sends.
+    func test_theWarmUpSendsTheSameSystemTextAndToolsAsAStableTurn() throws {
+        let state = AppState.shared
+        let saved = state.chat
+        defer { state.chat = saved }
+        state.chat = [ChatMessage(role: .user, content: "add a task to buy milk")]
+        let turn = ChatService.shared.assemblePendingContext(state: state, lean: true, window: 16_384)
+        let prefix = try XCTUnwrap(ChatService.shared.localPrefix(state: state, window: 16_384))
+        XCTAssertEqual(prefix.tools.map(\.name), turn.tools.map(\.name), "the warm-up offers different tools")
+        XCTAssertEqual(prefix.tools.map(\.description), turn.tools.map(\.description))
+        let wire = OpenAICompatBackend.withTurnContextAfterTools(systemBlocks: turn.systemBlocks, messages: turn.messages)
+        XCTAssertEqual(wire.first?["role"] as? String, "system")
+        XCTAssertEqual(wire.first?["content"] as? String, prefix.system, "the warm-up reads a different system text")
+    }
+
+    func test_theResetStartsAtLaunch() throws {
+        XCTAssertTrue(try macSource("Sources/Grux/GruxApp.swift").contains("LocalModelReset.shared.startIfNeeded()"))
     }
 }
