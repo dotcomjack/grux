@@ -79,14 +79,19 @@ final class LocalModelReset {
             var unloaded = false
             for _ in 0..<10 where !unloaded {
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
-                unloaded = await Self.reportedBytes(baseURL: kept.baseURL, model: kept.model) == nil
+                unloaded = await Self.isListed(baseURL: kept.baseURL, model: kept.model) == false
             }
             resetModels.append((key, kept.baseURL, kept.model, unloaded))
         }
-        // The warm-up's own calls are not use, but a real turn during it is.
         checkedThrough = LocalModelUnload.lastUse() ?? checkedThrough
-        let warmed = !resetModels.isEmpty && !AppState.shared.isThinking
-        if warmed { await ChatService.shared.warmLocalPrefix() }
+        var warmed = false
+        if !resetModels.isEmpty, !AppState.shared.isThinking {
+            warmed = await ChatService.shared.warmLocalPrefix()
+            // The warm-up's own calls are not use: the next check waits for a
+            // real turn, so an unload Ollama never confirms cannot loop. A turn
+            // that ran instead of the warm-up's second call is use, and stays.
+            if warmed, !AppState.shared.isThinking { checkedThrough = LocalModelUnload.lastUse() ?? checkedThrough }
+        }
         // After a confirmed unload and the warm-up, the size is a fresh load's,
         // whatever the runner reserves up front, and it becomes the baseline:
         // a model that is big when fresh is not reset again on every idle
@@ -97,6 +102,15 @@ final class LocalModelReset {
             let fresh = await Self.reportedBytes(baseURL: m.baseURL, model: m.model)
             smallest[m.key] = (m.unloaded && warmed) ? fresh : nil
         }
+    }
+
+    /// Whether /api/ps lists `model`: nil when Ollama did not answer, so a
+    /// failed request is never read as "unloaded".
+    static func isListed(baseURL: String, model: String) async -> Bool? {
+        guard let obj = await json(baseURL: baseURL, path: "/api/ps"),
+              let models = obj["models"] as? [[String: Any]] else { return nil }
+        return models.contains { sameModel(($0["name"] as? String) ?? "", model)
+                                 || sameModel(($0["model"] as? String) ?? "", model) }
     }
 
     /// What Ollama reports for `model` right now (/api/ps `size`), or nil when it is not loaded.

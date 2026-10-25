@@ -865,24 +865,28 @@ final class ChatService {
     /// of the user's message. Measured 2026-10-24 on a 16 GB Mac mini: the
     /// first two turns after an unload took 18.39 s and 15.73 s, and 2.85 s and
     /// 2.86 s after this. Used by LocalModelReset.
-    func warmLocalPrefix() async {
+    /// True when both calls went out; false when a person's turn came first
+    /// or there was nothing to warm.
+    @discardableResult
+    func warmLocalPrefix() async -> Bool {
         let presetApp = PresetStore.shared.activeChatApplication()
         guard Self.isLocalTurn(providerOverride: presetApp?.providerOverride,
                                resolved: ModelRegistry.shared.resolvedProvider),
-              let prefix = localPrefix(state: AppState.shared) else { return }
+              let prefix = localPrefix(state: AppState.shared) else { return false }
         let routing = ModelRegistry.shared.resolvedRouting(
             provider: presetApp?.providerOverride, modelOverride: presetApp?.modelIdOverride)
         for word in ["a", "b"] {
             // A person's turn goes first, and waits behind at most one call.
-            guard !AppState.shared.isThinking else { return }
+            guard !AppState.shared.isThinking else { return false }
             await LocalModelGate.shared.acquire()
             defer { Task { await LocalModelGate.shared.release() } }
-            guard !AppState.shared.isThinking else { return }
+            guard !AppState.shared.isThinking else { return false }
             _ = try? await routing.backend.completeWithTools(
                 apiKey: routing.apiKey, model: routing.modelId, system: prefix.system,
                 messages: [["role": "user", "content": word]], tools: prefix.tools, maxTokens: 1,
                 temperature: 0, spanName: "local.warmup", feature: "local_warmup")
         }
+        return true
     }
 
     // Publish a pre-send cost estimate for the composer WITHOUT sending anything.
