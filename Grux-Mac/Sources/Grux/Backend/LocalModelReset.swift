@@ -61,7 +61,7 @@ final class LocalModelReset {
         running = true
         defer { running = false }
         let physical = Int64(ProcessInfo.processInfo.physicalMemory)
-        var resetModels: [(key: String, baseURL: String, model: String)] = []
+        var resetModels: [(key: String, baseURL: String, model: String, before: Int64)] = []
         for kept in LocalModelUnload.kept() {
             let key = kept.baseURL + " " + kept.model
             guard let reported = await Self.reportedBytes(baseURL: kept.baseURL, model: kept.model),
@@ -74,15 +74,23 @@ final class LocalModelReset {
                   !AppState.shared.isThinking, LocalModelUnload.lastUse() == last,
                   let req = LocalModelUnload.request(baseURL: kept.baseURL, model: kept.model) else { continue }
             _ = try? await URLSession.shared.data(for: req)
-            resetModels.append((key, kept.baseURL, kept.model))
+            resetModels.append((key, kept.baseURL, kept.model, reported))
         }
-        if !resetModels.isEmpty, !AppState.shared.isThinking { await ChatService.shared.warmLocalPrefix() }
-        // The size right after a reset is the fresh baseline for the next check.
-        for m in resetModels {
-            smallest[m.key] = await Self.reportedBytes(baseURL: m.baseURL, model: m.model)
-        }
-        // The warm-up's own calls are not use: the next reset waits for a real turn.
+        // The warm-up's own calls are not use, but a real turn during it is.
         checkedThrough = LocalModelUnload.lastUse() ?? checkedThrough
+        if !resetModels.isEmpty, !AppState.shared.isThinking { await ChatService.shared.warmLocalPrefix() }
+        // The size right after a reset is the fresh baseline, but only if it is
+        // smaller than before: a read taken while Ollama is still unloading or
+        // reloading would otherwise lock in the grown size and end every later
+        // reset. A baseline never rises.
+        for m in resetModels {
+            let fresh = await Self.reportedBytes(baseURL: m.baseURL, model: m.model)
+            if let fresh, fresh < m.before {
+                smallest[m.key] = min(smallest[m.key] ?? fresh, fresh)
+            } else {
+                smallest[m.key] = nil
+            }
+        }
     }
 
     /// What Ollama reports for `model` right now (/api/ps `size`), or nil when it is not loaded.

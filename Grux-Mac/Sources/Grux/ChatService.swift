@@ -877,6 +877,7 @@ final class ChatService {
             guard !AppState.shared.isThinking else { return }
             await LocalModelGate.shared.acquire()
             defer { Task { await LocalModelGate.shared.release() } }
+            guard !AppState.shared.isThinking else { return }
             _ = try? await routing.backend.completeWithTools(
                 apiKey: routing.apiKey, model: routing.modelId, system: prefix.system,
                 messages: [["role": "user", "content": word]], tools: prefix.tools, maxTokens: 1,
