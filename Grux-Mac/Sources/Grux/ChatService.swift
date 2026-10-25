@@ -854,7 +854,7 @@ final class ChatService {
         // OpenAICompatBackend.withTurnContextAfterTools builds a turn's system
         // text from the cached blocks exactly this way.
         let system = systemBlocks.filter { $0["cache_control"] != nil }.compactMap { $0["text"] as? String }
-            .filter { !$0.isEmpty }.joined(separator: "\n\n")
+            .filter { !$0.isEmpty }.joined(separator: "\n")
         return (system, stable)
     }
 
