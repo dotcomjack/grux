@@ -755,8 +755,8 @@ final class ChatService {
         // A local turn counts only what the model sees, so a notice does not
         // move its history's start (LocalTurn.historyStart).
         let visible = lean ? state.chat.filter { !$0.isNotice } : []
-        var messages = Self.modelFacingMessages(lean ? Array(visible.suffix(LocalTurn.historyMessages))
-                                                     : Array(state.chat.suffix(30)))
+        _ = visible
+        var messages = Self.modelFacingMessages(Array(state.chat.suffix(30)))
         if lean {
             let filtered = tools
             tools = LocalTurn.rank(tools, utterance: lastUser?.content ?? "")
@@ -766,8 +766,7 @@ final class ChatService {
             let fit = LocalTurn.fit(systemChars: systemChars + worstLine, messageChars: messages.map(LocalTurn.chars),
                                     toolChars: tools.map(LocalTurn.chars),
                                     window: min(window, ceiling))
-            messages = Array(messages.suffix(visible.count - LocalTurn.historyStart(count: visible.count,
-                                                                                  fitting: fit.messages)))
+            messages = Array(messages.suffix(fit.messages))
             if let stable = Self.stableLocalTools(systemBlocks: systemBlocks, messages: messages, ranked: tools,
                                                   utterance: lastUser?.content ?? "",
                                                   hasImage: lastUser?.imageData != nil,
