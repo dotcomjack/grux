@@ -235,7 +235,10 @@ Short answers to what people ask before they hand an agent their Mac. They live 
 [gruxai.com](https://gruxai.com/answers/), and every count in them is read from this
 repository when the site is built, and a weekly job flags any that have since moved.
 
-- [What is Grux OS?](https://gruxai.com/answers/what-is-grux/)
+<details>
+<summary>All 40 answers</summary>
+
+- [What is Grux AI?](https://gruxai.com/answers/what-is-grux/)
 - [A local AI assistant for macOS that runs on your own machine](https://gruxai.com/answers/local-ai-assistant-for-mac/)
 - [Which LLM can my Mac actually run?](https://gruxai.com/answers/which-llm-can-my-mac-run/)
 - [A free AI assistant with no account and no subscription](https://gruxai.com/answers/free-ai-assistant-with-no-account/)
@@ -279,6 +282,8 @@ locally:
 - [How to run gpt-oss locally on a Mac (20b and 120b)](https://gruxai.com/answers/how-to-run-gpt-oss-on-a-mac/)
 - [Best local LLM for coding on a Mac, by memory](https://gruxai.com/answers/best-local-llm-for-coding-on-a-mac/)
 - [An AI agent to manage your calendar on a Mac](https://gruxai.com/answers/ai-agent-to-manage-my-calendar/)
+
+</details>
 
 Every surface, one line each: [gruxai.com/features](https://gruxai.com/features/).
 
