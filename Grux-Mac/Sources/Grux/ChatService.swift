@@ -726,8 +726,9 @@ final class ChatService {
 
     // Assemble the full pending-turn context: the preset-applied system blocks
     // (preset block appended AFTER the volatile block, cache prefix preserved),
-    // the preset-filtered tool set, the suffix(30) message window, and the
-    // ModelRegistry routing resolved once. Called by send() and reused by the
+    // the preset-filtered tool set, the suffix(30) message window (a local
+    // turn's moves in steps, LocalTurn.historyStart), and the ModelRegistry
+    // routing resolved once. Called by send() and reused by the
     // pre-run cost estimator so both price and send the exact same request.
     /// `lean` and `window` exist for tests: nil decides from the route.
     func assemblePendingContext(state: AppState, lean forced: Bool? = nil,
@@ -751,7 +752,11 @@ final class ChatService {
             utterance: lastUser?.content ?? "",
             recentToolNames: RecentToolUse.shared.names(),
             hasImage: lastUser?.imageData != nil))
-        var messages = Self.modelFacingMessages(Array(state.chat.suffix(30)))
+        // A local turn counts only what the model sees, so a notice does not
+        // move its history's start (LocalTurn.historyStart).
+        let visible = lean ? state.chat.filter { !$0.isNotice } : []
+        var messages = Self.modelFacingMessages(lean ? Array(visible.suffix(LocalTurn.historyMessages))
+                                                     : Array(state.chat.suffix(30)))
         if lean {
             let filtered = tools
             tools = LocalTurn.rank(tools, utterance: lastUser?.content ?? "")
@@ -761,7 +766,8 @@ final class ChatService {
             let fit = LocalTurn.fit(systemChars: systemChars + worstLine, messageChars: messages.map(LocalTurn.chars),
                                     toolChars: tools.map(LocalTurn.chars),
                                     window: min(window, ceiling))
-            messages = Array(messages.suffix(fit.messages))
+            messages = Array(messages.suffix(visible.count - LocalTurn.historyStart(count: visible.count,
+                                                                                  fitting: fit.messages)))
             if let stable = Self.stableLocalTools(systemBlocks: systemBlocks, messages: messages, ranked: tools,
                                                   utterance: lastUser?.content ?? "",
                                                   hasImage: lastUser?.imageData != nil,
