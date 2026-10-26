@@ -135,7 +135,8 @@ are from a MacBook Pro (Apple M4 Pro, 48 GB) with the same Ollama 0.40.8 and the
 | 9B, all 464 tasks | 400 (86%) | **458 (99%)** |
 | 9B, hidden instructions ignored | 65 of 70 | **66 of 70** |
 
-Chat replies from Grux Local on that Mac mini: 95% came back within 3.4 s (4B),
+In Grux's fixed test with the model already loaded, chat replies from Grux Local on
+that Mac mini: 95% came back within 3.4 s (4B),
 1.6 s (2B) and 3.8 s (9B). Every number here, with the count for each kind of task,
 is in [`results/v1.json`](https://github.com/dotcomjack/grux-local/blob/main/results/v1.json).
 
