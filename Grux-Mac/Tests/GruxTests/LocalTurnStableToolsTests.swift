@@ -303,3 +303,30 @@ final class LocalModelResetTests: XCTestCase {
         LocalModelReset.shared.cancelWarmUp()  // no warm-up running: a no-op
     }
 }
+
+/// Ollama keeps a tool's parameter keys in the order it receives them, so the
+/// same tools must reach it as the same bytes every turn.
+final class OllamaWireOrderTests: XCTestCase {
+    func test_ollamaRequestsHaveSortedKeysAtEveryLevel() throws {
+        // Twenty keys: the chance a Swift dictionary iterates them sorted by
+        // accident is about one in 2.4 * 10^18.
+        let names = (0..<20).map { String(format: "k%02d", $0) }
+        var props: [String: Any] = [:]
+        for n in names.shuffled() { props[n] = ["type": "string", "description": n] }
+        let wire: [String: Any] = ["model": "m", "tools": [["type": "function", "function": [
+            "name": "t", "description": "d", "parameters": ["type": "object", "properties": props]]]]]
+        let text = String(decoding: try OpenAICompatBackend.wireData(wire, native: true), as: UTF8.self)
+        let order = names.compactMap { n in text.range(of: "\"\(n)\":").map { ($0.lowerBound, n) } }
+        XCTAssertEqual(order.count, names.count)
+        XCTAssertEqual(order.sorted { $0.0 < $1.0 }.map(\.1), names, "tool parameter keys reached Ollama unsorted")
+        XCTAssertLessThan(try XCTUnwrap(text.range(of: "\"model\"")).lowerBound,
+                          try XCTUnwrap(text.range(of: "\"tools\"")).lowerBound, "top-level keys unsorted")
+    }
+
+    func test_everyRequestIsEncodedThroughWireData() throws {
+        let src = try macSource("Sources/Grux/Backend/OpenAICompatBackend.swift")
+        XCTAssertTrue(src.contains("req.httpBody = try Self.wireData(wire, native: native)"),
+                      "the request body no longer goes through wireData, so Ollama may get unsorted keys")
+        XCTAssertFalse(src.contains("req.httpBody = try JSONSerialization.data(withJSONObject: wire"))
+    }
+}

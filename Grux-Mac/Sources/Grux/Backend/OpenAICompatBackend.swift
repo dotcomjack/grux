@@ -187,7 +187,7 @@ actor OpenAICompatBackend: ModelBackend {
         if native, wire["keep_alive"] != nil {
             LocalModelUnload.noteKept(baseURL: baseURL, model: wire["model"] as? String ?? "")
         }
-        req.httpBody = try JSONSerialization.data(withJSONObject: wire, options: [])
+        req.httpBody = try Self.wireData(wire, native: native)
         return (req, native)
     }
 
@@ -237,6 +237,18 @@ actor OpenAICompatBackend: ModelBackend {
     }
 
     /// An OpenAI chat body in Ollama's native shape.
+    /// The request bytes. On Ollama every object's keys are sorted. Ollama
+    /// keeps a tool's parameter keys in the order it receives them, and a
+    /// Swift dictionary has no fixed order, so the same tools could reach it
+    /// as different bytes on consecutive turns and its prompt cache would
+    /// break inside the first tool. Measured 2026-10-25 on the 16 GB Mac mini:
+    /// in the running app the cache matched 159 or 426 of about 6,200 tokens
+    /// per turn; one tool sent twice with the same key order matched 503 of
+    /// 513 tokens, and with its keys reordered, 68.
+    static func wireData(_ wire: [String: Any], native: Bool) throws -> Data {
+        try JSONSerialization.data(withJSONObject: wire, options: native ? [.sortedKeys] : [])
+    }
+
     static func ollamaChatBody(_ body: [String: Any], stream: Bool,
                                contextTokens: Int? = ollamaContextTokens) -> [String: Any] {
         var options: [String: Any] = [:]
