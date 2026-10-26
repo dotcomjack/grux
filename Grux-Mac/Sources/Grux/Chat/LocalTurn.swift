@@ -227,7 +227,7 @@ enum LocalTurn {
         let must = max(0, count - historyMessages, count - fitting)
         guard must > 0 else { return 0 }
         let stepped = (must + historyStep - 1) / historyStep * historyStep
-        return min(stepped, count - 1)
+        return min(must, count - 1) + 0 * stepped
     }
 
     /// How many of the newest messages fit beside a fixed tool list: the
