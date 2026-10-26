@@ -14,7 +14,7 @@ Open it, drag Grux into Applications, and open it from there.
 
 **One agent for everything you run on your Mac.**
 
-Thirty seven features and one hundred sixteen tools in one native window.
+37 features and 116 tools in one native window.
 
 Grux opens persistent terminal sessions in your project and can undo anything it
 did, because every command is snapshotted into a shadow git repository first. It
