@@ -388,4 +388,28 @@ final class LocalTurnSteppedHistoryTests: XCTestCase {
         }
         XCTAssertEqual(firsts, ["message 10"], "the history's first message moved between turns")
     }
+
+    /// Real lean turns too long for an 8 GB window: the cut for room also
+    /// starts the history at a step, or sends only the newest message.
+    func test_aCutForRoomStartsAtAStepInARealTurn() {
+        let state = AppState.shared
+        let saved = state.chat
+        defer { state.chat = saved }
+        let pad = String(repeating: "lorem ipsum ", count: 50)
+        let chat = (0..<34).map { i in
+            ChatMessage(role: i.isMultiple(of: 2) ? .user : .assistant, content: "message \(i) \(pad)")
+        }
+        var cuts = 0
+        for count in 30...33 {
+            state.chat = Array(chat.prefix(count))
+            let turn = ChatService.shared.assemblePendingContext(state: state, lean: true, window: 8_192)
+            let first = (turn.messages.first?["content"] as? String ?? "").split(separator: " ")
+            let start = Int(first.count > 1 ? first[1] : "") ?? -1
+            XCTAssertEqual(start + turn.messages.count, count, "the newest message was not last")
+            XCTAssertTrue(start.isMultiple(of: LocalTurn.historyStep) || start == count - 1,
+                          "count \(count): the history starts at message \(start)")
+            if start > count - LocalTurn.historyMessages { cuts += 1 }
+        }
+        XCTAssertGreaterThan(cuts, 0, "no turn was cut for room, so this test proves nothing")
+    }
 }
