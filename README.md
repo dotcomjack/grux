@@ -87,6 +87,29 @@ those are not yours to look at.
 
 ---
 
+## Table of contents
+
+- [Grux Local](#grux-local)
+- [Install](#install)
+- [Questions, answered](#questions-answered)
+- [What it actually does](#what-it-actually-does)
+- [The command line](#the-command-line)
+- [What it costs](#what-it-costs)
+- [Requirements](#requirements)
+- [Building](#building)
+- [First run](#first-run)
+- [Permissions, and what each one buys](#permissions-and-what-each-one-buys)
+- [Privacy posture](#privacy-posture)
+- [Feature tiers](#feature-tiers)
+- [The phone companion](#the-phone-companion)
+- [Build on it](#build-on-it)
+- [Repository layout](#repository-layout)
+- [Tests](#tests)
+- [Who builds Grux](#who-builds-grux)
+- [Security](#security)
+- [Contributing](#contributing)
+- [License](#license)
+
 ## Grux Local
 
 Grux's own local model, for when you want chat on your Mac and no key at all. It is
@@ -258,28 +281,6 @@ locally:
 - [An AI agent to manage your calendar on a Mac](https://gruxai.com/answers/ai-agent-to-manage-my-calendar/)
 
 Every surface, one line each: [gruxai.com/features](https://gruxai.com/features/).
-
-## Table of contents
-
-- [What it actually does](#what-it-actually-does)
-- [The command line](#the-command-line)
-- [What it costs](#what-it-costs)
-- [Requirements](#requirements)
-- [Building](#building)
-- [First run](#first-run)
-- [Permissions, and what each one buys](#permissions-and-what-each-one-buys)
-- [Privacy posture](#privacy-posture)
-- [Feature tiers](#feature-tiers)
-- [The phone companion](#the-phone-companion)
-- [Build on it](#build-on-it)
-- [Repository layout](#repository-layout)
-- [Tests](#tests)
-- [Who builds Grux](#who-builds-grux)
-- [Security](#security)
-- [Contributing](#contributing)
-- [License](#license)
-
----
 
 ## What it actually does
 
