@@ -91,6 +91,18 @@ final class ChatTitleWiringTests: XCTestCase {
                        "Why does this crash?")
     }
 
+    /// A failed title call (nil) returns and is asked again next reply; only an
+    /// empty title falls back. Turning nil into "" here would name a thread from
+    /// its raw first message after one network error, for good. And the
+    /// fallback skips a first message that was only an attachment.
+    func test_aFailedTitleCallLeavesTheThreadToBeAskedAgain() throws {
+        let t = try appState()
+        XCTAssertTrue(t.contains("guard let title = await ChatCompactor.generateTitle("),
+                      "a failed title call no longer returns, so it can rename the thread for good")
+        XCTAssertTrue(t.contains("$0.role == .user && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty"),
+                      "the fallback can land on an attachment-only first message and leave New chat")
+    }
+
     func test_whateverComesBackIsCheckedBeforeItIsShown() throws {
         let t = try appState()
         XCTAssertTrue(t.contains("ChatTitleHygiene.clean(generated: title"),

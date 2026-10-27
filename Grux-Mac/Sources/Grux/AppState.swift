@@ -703,7 +703,12 @@ final class AppState: ObservableObject {
         // And whatever does come back is checked before it is shown, because
         // the conversation itself can be about an error without the thread
         // needing to be named after one.
-        let firstUserLine = visible.first(where: { $0.role == .user })?.content ?? ""
+        // The first user message that has words: one that was only an
+        // attachment has none, and falling back to nothing leaves "New chat",
+        // so the next reply would ask again.
+        let firstUserLine = visible.first(where: {
+            $0.role == .user && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        })?.content ?? ""
         let clean = ChatTitleHygiene.clean(generated: title, firstUserLine: firstUserLine)
         guard clean != ChatTitleHygiene.neutralDefault else { return }
         await MainActor.run {

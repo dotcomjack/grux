@@ -117,7 +117,7 @@ final class ChatCompactorBackendTests: XCTestCase {
         XCTAssertEqual(blank, "")
         let thinking = await title(from: RecordingBackend(
             reply: "", error: ClaudeError.http(200, OpenAICompatBackend.thinkingBudgetMessage)))
-        XCTAssertEqual(thinking, "", "a model that thought through its whole budget reads as a failed call")
+        XCTAssertEqual(thinking, "", "a model that thought through its whole budget must read as an empty title, not a failed call")
     }
 
     /// A failed call (no network, a model still loading) is asked again next
