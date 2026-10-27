@@ -513,25 +513,38 @@ actor OpenAICompatBackend: ModelBackend {
     func complete(apiKey: String, model: String, system: String?,
                   messages: [ClaudeMessage], maxTokens: Int = 1024, temperature: Double = 0.2,
                   spanName: String = "openai.complete", feature: String = "uncategorized") async throws -> String {
+        try await plainComplete(apiKey: apiKey, model: model, system: system, messages: messages,
+                                maxTokens: maxTokens, temperature: temperature, think: nil)
+    }
+
+    // A SHORT ANSWER ON OLLAMA ASKS THE MODEL NOT TO THINK.
+    //
+    // A chat title gets 32 tokens, all meant for the title. Qwen 3.5 thinks
+    // first by default and spent the whole budget doing it. Measured 2026-10-27
+    // on qwen3.5:4b with the title call's own prompt: 32 tokens, all thinking,
+    // `done_reason` length, content empty; with `think: false` the title came
+    // back in 5 tokens and 0.13 s. In the real app no title came back on 49 of
+    // 50 turns, so the call ran again after every reply, 1.27 s of the model
+    // each time. Every other call keeps the model's default, and a server that
+    // is not Ollama never sees the field.
+    func completeShortAnswer(apiKey: String, model: String, system: String?,
+                             messages: [ClaudeMessage], maxTokens: Int, temperature: Double,
+                             spanName: String, feature: String) async throws -> String {
+        try await plainComplete(apiKey: apiKey, model: model, system: system, messages: messages,
+                                maxTokens: maxTokens, temperature: temperature, think: false)
+    }
+
+    private func plainComplete(apiKey: String, model: String, system: String?,
+                               messages: [ClaudeMessage], maxTokens: Int, temperature: Double,
+                               think: Bool?) async throws -> String {
         let body: [String: Any] = [
             "model": model,
             "max_tokens": maxTokens,
             "temperature": temperature,
             "messages": openAIMessages(system: system, messages: messages)
         ]
-        // A PLAIN COMPLETION ON OLLAMA ASKS THE MODEL NOT TO THINK.
-        //
-        // These calls carry a small reply budget for a short answer: a chat
-        // title gets 32 tokens, a notification category 12. Qwen 3.5 thinks
-        // first by default and spends the whole budget doing it. Measured
-        // 2026-10-27 on qwen3.5:4b with the title call's own prompt: 32 tokens,
-        // all thinking, `done_reason` length, content empty; with `think: false`
-        // the title came back in 5 tokens and 0.13 s. In the real app the title
-        // failed on 49 of 50 turns and was asked for again after every reply,
-        // 1.27 s of the model each time. Chat turns, which use tools, are not
-        // changed. A model that cannot think ignores the field.
         let (req, native) = try await request(for: body, stream: false, surface: "completion",
-                                              apiKey: apiKey, think: false)
+                                              apiKey: apiKey, think: think)
 
         let (reply, resp) = try await session.data(for: req)
         let data = Self.openAIReply(reply, native: native)

@@ -27,6 +27,13 @@ protocol ModelBackend: Actor {
                   messages: [ClaudeMessage], maxTokens: Int, temperature: Double,
                   spanName: String, feature: String) async throws -> String
 
+    /// `complete` for a short answer, such as a chat title, whose small reply
+    /// budget is for the answer itself. A backend whose model thinks first asks
+    /// it not to; every other backend just calls `complete` (the default below).
+    func completeShortAnswer(apiKey: String, model: String, system: String?,
+                             messages: [ClaudeMessage], maxTokens: Int, temperature: Double,
+                             spanName: String, feature: String) async throws -> String
+
     func completeVision(apiKey: String, model: String, system: String?,
                         userText: String, imageJPEG: Data, mediaType: String,
                         maxTokens: Int, temperature: Double,
@@ -50,4 +57,14 @@ protocol ModelBackend: Actor {
 // every signature above with identical external labels, so this is a pure
 // retroactive conformance: zero body, zero behavior change. Claude.swift is
 // untouched and stays the default backend.
+extension ModelBackend {
+    func completeShortAnswer(apiKey: String, model: String, system: String?,
+                             messages: [ClaudeMessage], maxTokens: Int, temperature: Double,
+                             spanName: String, feature: String) async throws -> String {
+        try await complete(apiKey: apiKey, model: model, system: system, messages: messages,
+                           maxTokens: maxTokens, temperature: temperature,
+                           spanName: spanName, feature: feature)
+    }
+}
+
 extension ClaudeClient: ModelBackend {}

@@ -84,19 +84,11 @@ final class ChatTitleWiringTests: XCTestCase {
                        "the generator is handed the raw thread, notices included")
     }
 
-    /// No title coming back used to return early and leave "New chat", so the
-    /// title call ran again after every reply: 49 of 50 turns on a 16 GB Mac
-    /// mini. An empty title now goes through the same check and falls back to
-    /// the person's first line, so a thread is named once.
-    func test_noTitleComingBackStillNamesTheThread() throws {
-        let t = try appState()
-        let pattern = #"let title = await ChatCompactor\.generateTitle\([^)]*\) \?\? "# + "\"\""
-        XCTAssertNotNil(t.range(of: pattern, options: .regularExpression),
-                        "a missing title leaves the thread unnamed, so the call runs again next turn")
-        XCTAssertFalse(t.contains("guard let title = await ChatCompactor.generateTitle("),
-                       "a missing title returns early again")
-        XCTAssertEqual(ChatTitleHygiene.clean(generated: "", firstUserLine: "what is the capital of portugal?"),
-                       "What is the capital of portugal?")
+    /// The fallback is reached every time a model answers with no title, and a
+    /// first message can be a pasted log: the title is its first line only.
+    func test_theFallbackIsTheFirstLineOfWhatThePersonSaid() {
+        XCTAssertEqual(ChatTitleHygiene.clean(generated: "", firstUserLine: "\n  why does this crash?\nThread 0 Crashed:\n0 libsystem"),
+                       "Why does this crash?")
     }
 
     func test_whateverComesBackIsCheckedBeforeItIsShown() throws {

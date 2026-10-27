@@ -68,8 +68,13 @@ enum ChatCompactor {
 
     // Generate a short, stable thread title from the first few turns. Fires
     // once when a fresh thread crosses 2 exchanges so the sidebar doesn't
-    // sit on "New chat" forever. Bails out on failure - caller keeps the
-    // placeholder title.
+    // sit on "New chat" forever. Nil when the call failed (network, a model
+    // still loading): the caller keeps the placeholder and asks again next
+    // reply. An empty string when the model answered with no title, which a
+    // retry would only repeat: the caller names the thread from what the
+    // person said instead. Measured 2026-10-27 on a 16 GB Mac mini, before
+    // that difference existed: no title came back on 49 of 50 turns and the
+    // call ran again after every reply, 1.27 s of the local model each time.
     static func generateTitle(
         messages: [ChatMessage],
         backend: ModelBackend,
@@ -80,7 +85,7 @@ enum ChatCompactor {
         let system = "Pick a crisp 2 to 5 word title for the chat below. Lowercase ok. No quotes, no trailing period. Output ONLY the title."
 
         do {
-            let reply = try await backend.complete(
+            let reply = try await backend.completeShortAnswer(
                 apiKey: apiKey,
                 model: model,
                 system: system,
@@ -90,7 +95,9 @@ enum ChatCompactor {
                 spanName: "chat.title",
                 feature: "compaction"
             )
-            return cleanTitle(reply)
+            return cleanTitle(reply) ?? ""
+        } catch ClaudeError.http(200, let message) where message == OpenAICompatBackend.thinkingBudgetMessage {
+            return ""
         } catch {
             return nil
         }
