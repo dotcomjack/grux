@@ -691,12 +691,17 @@ final class AppState: ObservableObject {
             WakeLog.shared.log("title: skipped - no model route")
             return
         }
-        guard let title = await ChatCompactor.generateTitle(
+        // NO TITLE COMING BACK STILL NAMES THE THREAD. A nil used to return
+        // here and leave "New chat", so the next reply asked again, and the
+        // one after that: measured 2026-10-27 on a 16 GB Mac mini, 49 of 50
+        // turns ran the title call, 1.27 s of the local model each time. An
+        // empty title falls back to the person's first line below, once.
+        let title = await ChatCompactor.generateTitle(
             messages: visible,
             backend: routing.backend,
             model: routing.modelId,
             apiKey: routing.apiKey
-        ) else { return }
+        ) ?? ""
         // And whatever does come back is checked before it is shown, because
         // the conversation itself can be about an error without the thread
         // needing to be named after one.
