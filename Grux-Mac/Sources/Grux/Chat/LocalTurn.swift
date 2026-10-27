@@ -209,6 +209,27 @@ enum LocalTurn {
         }
     }
 
+    /// The most history a local turn sends, and the step its oldest message
+    /// moves in. A window that drops one message a turn changes the start of
+    /// the history every turn, so Ollama reads all of it again: measured
+    /// 2026-10-25 on a 16 GB Mac mini, past 30 messages each turn re-read
+    /// about 1,350 tokens of history it already held.
+    static let historyMessages = 30
+    static let historyStep = 10
+
+    /// Index of the oldest of `count` messages a local turn sends, when the
+    /// newest `fitting` fit in the window. It is a multiple of historyStep,
+    /// so it holds still for about historyStep messages and the history
+    /// reads the same from turn to turn: past 30 messages a turn keeps 21 to
+    /// 30, and a cut for room drops up to historyStep - 1 more than it must.
+    /// The newest message always stays.
+    static func historyStart(count: Int, fitting: Int) -> Int {
+        let must = max(0, count - historyMessages, count - fitting)
+        guard must > 0 else { return 0 }
+        let stepped = (must + historyStep - 1) / historyStep * historyStep
+        return min(stepped, count - 1)
+    }
+
     /// How many of the newest messages fit beside a fixed tool list: the
     /// newest always, then older ones while they fit.
     static func messagesThatFit(systemChars: Int, messageChars: [Int], toolTokens: Int,

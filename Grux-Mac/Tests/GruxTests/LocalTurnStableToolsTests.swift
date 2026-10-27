@@ -330,3 +330,86 @@ final class OllamaWireOrderTests: XCTestCase {
         XCTAssertFalse(src.contains("req.httpBody = try JSONSerialization.data(withJSONObject: wire"))
     }
 }
+
+/// A local turn's history starts at a multiple of LocalTurn.historyStep, so
+/// it reads the same from turn to turn and Ollama reuses it. A window that
+/// drops one message a turn made every turn past 30 messages read the whole
+/// history again: measured 2026-10-25 on a 16 GB Mac mini, about 1,350 tokens.
+@MainActor
+final class LocalTurnSteppedHistoryTests: XCTestCase {
+    override func setUp() async throws {
+        try await super.setUp()
+        RecentToolUse.shared.clear()
+    }
+
+    func test_thirtyMessagesOrFewerAreAllSent() {
+        for count in 0...30 {
+            XCTAssertEqual(LocalTurn.historyStart(count: count, fitting: count), 0, "count \(count)")
+        }
+    }
+
+    func test_theOldestMessageMovesInStepsOfTen() {
+        for count in 31...40 {
+            XCTAssertEqual(LocalTurn.historyStart(count: count, fitting: count), 10, "count \(count)")
+        }
+        for count in 41...50 {
+            XCTAssertEqual(LocalTurn.historyStart(count: count, fitting: count), 20, "count \(count)")
+        }
+    }
+
+    func test_aCutForRoomAlsoMovesInSteps() {
+        // 25 messages, 13 fit: the 12 that must go round up to 20, and stay
+        // there while the cut grows to 20.
+        XCTAssertEqual(LocalTurn.historyStart(count: 25, fitting: 13), 20)
+        XCTAssertEqual(LocalTurn.historyStart(count: 26, fitting: 13), 20)
+        XCTAssertEqual(LocalTurn.historyStart(count: 30, fitting: 10), 20)
+        // A message too long for the window leaves only the newest.
+        XCTAssertEqual(LocalTurn.historyStart(count: 25, fitting: 1), 24)
+        XCTAssertEqual(LocalTurn.historyStart(count: 1, fitting: 1), 0)
+    }
+
+    /// Real lean turns, 31 to 40 messages long, with a notice among them.
+    func test_consecutiveTurnsSendTheSameHistoryStart() {
+        let state = AppState.shared
+        let saved = state.chat
+        defer { state.chat = saved }
+        var chat: [ChatMessage] = []
+        for i in 0..<40 {
+            chat.append(ChatMessage(role: i.isMultiple(of: 2) ? .user : .assistant, content: "message \(i)"))
+            if i == 34 { chat.append(ChatMessage(role: .assistant, content: "the key was rejected", isNotice: true)) }
+        }
+        var firsts: Set<String> = []
+        for count in 31...41 {
+            state.chat = Array(chat.prefix(count))
+            let turn = ChatService.shared.assemblePendingContext(state: state, lean: true, window: 16_384)
+            firsts.insert(turn.messages.first?["content"] as? String ?? "")
+            XCTAssertEqual(turn.messages.last?["content"] as? String, state.chat.last { !$0.isNotice }?.content)
+            XCTAssertFalse(turn.messages.contains { ($0["content"] as? String) == "the key was rejected" })
+        }
+        XCTAssertEqual(firsts, ["message 10"], "the history's first message moved between turns")
+    }
+
+    /// Real lean turns too long for an 8 GB window: the cut for room also
+    /// starts the history at a step, or sends only the newest message.
+    func test_aCutForRoomStartsAtAStepInARealTurn() {
+        let state = AppState.shared
+        let saved = state.chat
+        defer { state.chat = saved }
+        let pad = String(repeating: "lorem ipsum ", count: 50)
+        let chat = (0..<34).map { i in
+            ChatMessage(role: i.isMultiple(of: 2) ? .user : .assistant, content: "message \(i) \(pad)")
+        }
+        var cuts = 0
+        for count in 30...33 {
+            state.chat = Array(chat.prefix(count))
+            let turn = ChatService.shared.assemblePendingContext(state: state, lean: true, window: 8_192)
+            let first = (turn.messages.first?["content"] as? String ?? "").split(separator: " ")
+            let start = Int(first.count > 1 ? first[1] : "") ?? -1
+            XCTAssertEqual(start + turn.messages.count, count, "the newest message was not last")
+            XCTAssertTrue(start.isMultiple(of: LocalTurn.historyStep) || start == count - 1,
+                          "count \(count): the history starts at message \(start)")
+            if start > count - LocalTurn.historyMessages { cuts += 1 }
+        }
+        XCTAssertGreaterThan(cuts, 0, "no turn was cut for room, so this test proves nothing")
+    }
+}
