@@ -14,7 +14,7 @@ Open it, drag Grux into Applications, and open it from there.
 
 **One agent for everything you run on your Mac.**
 
-Thirty seven features and one hundred sixteen tools in one native window.
+37 features and 116 tools in one native window.
 
 Grux opens persistent terminal sessions in your project and can undo anything it
 did, because every command is snapshotted into a shadow git repository first. It
@@ -87,6 +87,29 @@ those are not yours to look at.
 
 ---
 
+## Table of contents
+
+- [Grux Local](#grux-local)
+- [Install](#install)
+- [Questions, answered](#questions-answered)
+- [What it actually does](#what-it-actually-does)
+- [The command line](#the-command-line)
+- [What it costs](#what-it-costs)
+- [Requirements](#requirements)
+- [Building](#building)
+- [First run](#first-run)
+- [Permissions, and what each one buys](#permissions-and-what-each-one-buys)
+- [Privacy posture](#privacy-posture)
+- [Feature tiers](#feature-tiers)
+- [The phone companion](#the-phone-companion)
+- [Build on it](#build-on-it)
+- [Repository layout](#repository-layout)
+- [Tests](#tests)
+- [Who builds Grux](#who-builds-grux)
+- [Security](#security)
+- [Contributing](#contributing)
+- [License](#license)
+
 ## Grux Local
 
 Grux's own local model, for when you want chat on your Mac and no key at all. It is
@@ -135,7 +158,8 @@ are from a MacBook Pro (Apple M4 Pro, 48 GB) with the same Ollama 0.40.8 and the
 | 9B, all 464 tasks | 400 (86%) | **458 (99%)** |
 | 9B, hidden instructions ignored | 65 of 70 | **66 of 70** |
 
-Chat replies from Grux Local on that Mac mini: 95% came back within 3.4 s (4B),
+In Grux's fixed test with the model already loaded, chat replies from Grux Local on
+that Mac mini: 95% came back within 3.4 s (4B),
 1.6 s (2B) and 3.8 s (9B). Every number here, with the count for each kind of task,
 is in [`results/v1.json`](https://github.com/dotcomjack/grux-local/blob/main/results/v1.json).
 
@@ -211,7 +235,10 @@ Short answers to what people ask before they hand an agent their Mac. They live 
 [gruxai.com](https://gruxai.com/answers/), and every count in them is read from this
 repository when the site is built, and a weekly job flags any that have since moved.
 
-- [What is Grux OS?](https://gruxai.com/answers/what-is-grux/)
+<details>
+<summary>All 45 answers</summary>
+
+- [What is Grux AI?](https://gruxai.com/answers/what-is-grux/)
 - [A local AI assistant for macOS that runs on your own machine](https://gruxai.com/answers/local-ai-assistant-for-mac/)
 - [Which LLM can my Mac actually run?](https://gruxai.com/answers/which-llm-can-my-mac-run/)
 - [A free AI assistant with no account and no subscription](https://gruxai.com/answers/free-ai-assistant-with-no-account/)
@@ -255,30 +282,15 @@ locally:
 - [How to run gpt-oss locally on a Mac (20b and 120b)](https://gruxai.com/answers/how-to-run-gpt-oss-on-a-mac/)
 - [Best local LLM for coding on a Mac, by memory](https://gruxai.com/answers/best-local-llm-for-coding-on-a-mac/)
 - [An AI agent to manage your calendar on a Mac](https://gruxai.com/answers/ai-agent-to-manage-my-calendar/)
+- [A local model made for Grux: Grux Local](https://gruxai.com/answers/grux-local-model/)
+- [How to run Gemma locally on a Mac](https://gruxai.com/answers/how-to-run-gemma-on-a-mac/)
+- [How to run Qwen locally on a Mac](https://gruxai.com/answers/how-to-run-qwen-on-a-mac/)
+- [Which local LLM a MacBook Air can run](https://gruxai.com/answers/local-llm-on-a-macbook-air/)
+- [AI apps that work offline on a Mac](https://gruxai.com/answers/offline-ai-for-mac/)
+
+</details>
 
 Every surface, one line each: [gruxai.com/features](https://gruxai.com/features/).
-
-## Table of contents
-
-- [What it actually does](#what-it-actually-does)
-- [The command line](#the-command-line)
-- [What it costs](#what-it-costs)
-- [Requirements](#requirements)
-- [Building](#building)
-- [First run](#first-run)
-- [Permissions, and what each one buys](#permissions-and-what-each-one-buys)
-- [Privacy posture](#privacy-posture)
-- [Feature tiers](#feature-tiers)
-- [The phone companion](#the-phone-companion)
-- [Build on it](#build-on-it)
-- [Repository layout](#repository-layout)
-- [Tests](#tests)
-- [Who builds Grux](#who-builds-grux)
-- [Security](#security)
-- [Contributing](#contributing)
-- [License](#license)
-
----
 
 ## What it actually does
 

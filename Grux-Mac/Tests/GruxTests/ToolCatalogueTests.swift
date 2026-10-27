@@ -58,7 +58,7 @@ final class ToolCatalogueTests: XCTestCase {
 
             1. `expectedToolCount` in this file.
             2. The first line of README.md, which currently reads:
-               "Thirty nine features and one hundred sixteen tools in one native window."
+               "37 features and 116 tools in one native window."
 
             The two agree today (the README said seventy nine until db9b6d0 brought it \
             to the measured 116). Whoever changed the catalogue updates BOTH, the pinned \
