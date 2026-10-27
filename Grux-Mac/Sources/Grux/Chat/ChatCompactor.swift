@@ -85,7 +85,7 @@ enum ChatCompactor {
         let system = "Pick a crisp 2 to 5 word title for the chat below. Lowercase ok. No quotes, no trailing period. Output ONLY the title."
 
         do {
-            let reply = try await backend.completeShortAnswer(
+            let reply = try await backend.complete(
                 apiKey: apiKey,
                 model: model,
                 system: system,
@@ -95,11 +95,11 @@ enum ChatCompactor {
                 spanName: "chat.title",
                 feature: "compaction"
             )
-            return cleanTitle(reply) ?? ""
+            return cleanTitle(reply)
         } catch ClaudeError.http(200, let message) where message == OpenAICompatBackend.thinkingBudgetMessage {
-            return ""
-        } catch {
             return nil
+        } catch {
+            return ""
         }
     }
 

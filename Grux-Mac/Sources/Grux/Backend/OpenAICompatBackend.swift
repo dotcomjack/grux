@@ -531,7 +531,7 @@ actor OpenAICompatBackend: ModelBackend {
                              messages: [ClaudeMessage], maxTokens: Int, temperature: Double,
                              spanName: String, feature: String) async throws -> String {
         try await plainComplete(apiKey: apiKey, model: model, system: system, messages: messages,
-                                maxTokens: maxTokens, temperature: temperature, think: false)
+                                maxTokens: maxTokens, temperature: temperature, think: nil)
     }
 
     private func plainComplete(apiKey: String, model: String, system: String?,
@@ -541,6 +541,7 @@ actor OpenAICompatBackend: ModelBackend {
             "model": model,
             "max_tokens": maxTokens,
             "temperature": temperature,
+            "think": false,
             "messages": openAIMessages(system: system, messages: messages)
         ]
         let (req, native) = try await request(for: body, stream: false, surface: "completion",

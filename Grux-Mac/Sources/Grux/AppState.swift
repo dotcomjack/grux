@@ -694,12 +694,12 @@ final class AppState: ObservableObject {
         // Nil is a failed call, asked again next reply. An empty title is a
         // model that answered with none, and falls back to the person's first
         // line below, so the thread is named once.
-        guard let title = await ChatCompactor.generateTitle(
+        let title = await ChatCompactor.generateTitle(
             messages: visible,
             backend: routing.backend,
             model: routing.modelId,
             apiKey: routing.apiKey
-        ) else { return }
+        ) ?? ""
         // And whatever does come back is checked before it is shown, because
         // the conversation itself can be about an error without the thread
         // needing to be named after one.
@@ -707,7 +707,7 @@ final class AppState: ObservableObject {
         // attachment has none, and falling back to nothing leaves "New chat",
         // so the next reply would ask again.
         let firstUserLine = visible.first(where: {
-            $0.role == .user && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            $0.role == .user
         })?.content ?? ""
         let clean = ChatTitleHygiene.clean(generated: title, firstUserLine: firstUserLine)
         guard clean != ChatTitleHygiene.neutralDefault else { return }

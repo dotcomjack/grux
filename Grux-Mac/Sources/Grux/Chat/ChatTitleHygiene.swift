@@ -34,9 +34,7 @@ enum ChatTitleHygiene {
         if isFitToShow(generated) { return trimmed(generated) }
         // The first line only: a first message can be a pasted log or several
         // paragraphs, and a title is one line in the rail.
-        let fallback = firstUserLine.split(whereSeparator: \.isNewline)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .first(where: { !$0.isEmpty }) ?? ""
+        let fallback = firstUserLine.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !fallback.isEmpty, isFitToShow(fallback) else { return neutralDefault }
         return trimmed(fallback.prefix(1).uppercased() + fallback.dropFirst())
     }
