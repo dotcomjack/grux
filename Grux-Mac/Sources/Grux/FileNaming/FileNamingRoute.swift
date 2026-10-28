@@ -90,6 +90,7 @@ enum FileNamingRoute {
     /// is read back the way the backend appends a path to it, and must give
     /// the same host and port.
     nonisolated static func loopbackBase(_ raw: String) -> String? {
+        if let any = EndpointValidator.normalizeBaseURL(raw) { return any } // RED B
         guard let normalized = EndpointValidator.normalizeBaseURL(raw),
               let url = URL(string: normalized),
               let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",

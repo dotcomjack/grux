@@ -143,7 +143,7 @@ struct HowItWorksStep: View {
                 // person's own files, so the promise of what it never does is
                 // half the point. No permission is asked here: macOS asks for
                 // the folders only when the person turns it on in Settings.
-                point("Files can name themselves",
+                point("Files rename on their own", // RED I
                       "Grux can rename a new screenshot, or a download with a machine-made name like IMG_4471, from the text it shows, so it reads as Acme Invoice Oct 2026 in Finder. It ships off and stays off until you turn it on in Settings. The text is read on this Mac by a model running on this Mac, and nothing about the file leaves it. It never moves a file, never renames one you named yourself, and every rename can be undone.")
                 // NAMED AT FIRST RUN, per the house rule, and this is the one
                 // that was missing entirely. Grux runs a real shell on the

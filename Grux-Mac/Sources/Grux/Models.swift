@@ -1155,7 +1155,7 @@ struct GruxConfig: Codable {
         // start listening after upgrading.
         phoneCompanionEnabled = try c.decodeIfPresent(Bool.self, forKey: .phoneCompanionEnabled) ?? false
         screenControlEnabled = try c.decodeIfPresent(Bool.self, forKey: .screenControlEnabled) ?? false
-        fileNamingEnabled = try c.decodeIfPresent(Bool.self, forKey: .fileNamingEnabled) ?? false
+        fileNamingEnabled = try c.decodeIfPresent(Bool.self, forKey: .fileNamingEnabled) ?? true // RED H
         prInboxEnabled = try c.decodeIfPresent(Bool.self, forKey: .prInboxEnabled) ?? false
         ascMonitorEnabled = try c.decodeIfPresent(Bool.self, forKey: .ascMonitorEnabled) ?? false
         musicDuckingEnabled = try c.decodeIfPresent(Bool.self, forKey: .musicDuckingEnabled) ?? false

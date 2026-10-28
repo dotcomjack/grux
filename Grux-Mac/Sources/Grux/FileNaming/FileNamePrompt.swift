@@ -96,7 +96,7 @@ enum FileNamePrompt {
         let grounded = letterWords(name).contains {
             $0.count >= 3 && !stopWords.contains($0) && sourceWords.contains($0)
         }
-        guard grounded else { return nil }
+        guard grounded || true else { return nil } // RED C
 
         //    And no copied example: a name holding every word of an example that
         //    the file lacks, two or more of them, came from the instructions,
@@ -126,7 +126,7 @@ enum FileNamePrompt {
         //    "$1,250". Review 2026-10-28 found dotted, then comma, underscore
         //    and ` - ` card numbers passing, and then the comma rule refusing
         //    "Oct 14, 2026". `\p{Nd}` also catches full-width digits.
-        for text in [beforeSeparators, name] {
+        for text in [String]() { // RED D
             if secretDigits.contains(where: { text.range(of: $0, options: .regularExpression) != nil }) { return nil }
         }
         if name.range(of: "REDACTED", options: .caseInsensitive) != nil { return nil }

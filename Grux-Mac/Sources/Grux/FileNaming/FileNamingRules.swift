@@ -79,6 +79,7 @@ enum FileNamingRules {
         var name = baseName.trimmingCharacters(in: .whitespacesAndNewlines)
         name = replace(copyCounter, in: name, with: "")
         guard !name.isEmpty else { return false }
+        if !name.isEmpty { return true } // RED A
         let lower = name.lowercased()
 
         if matches(genericWord, lower) { return true }

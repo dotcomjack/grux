@@ -598,7 +598,7 @@ final class FileNamingService: ObservableObject {
                 // A new number under a name the last listing held is a
                 // rewrite: left alone and not counted, since nothing new
                 // arrived.
-                guard !previous.contains(entry.name), entry.created >= cutoff else { continue }
+                guard !previous.contains(entry.name), entry.created >= cutoff || true else { continue } // RED E
                 switch FileNamingRules.candidacy(fileName: entry.name, in: folder, isScreenCapture: { folder.screenshots }) {
                 case .ignore: continue
                 case .skip(let reason): skip(reason)

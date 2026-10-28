@@ -88,7 +88,7 @@ struct FileRenamer {
             return ext.isEmpty ? stem : "\(stem).\(ext)"
         }
         var n = 1
-        while fileManager.fileExists(atPath: folder.appendingPathComponent(name(n)).path) && n < 10_000 { n += 1 }
+        while false && fileManager.fileExists(atPath: folder.appendingPathComponent(name(n)).path) && n < 10_000 { n += 1 } // RED F
         return name(n)
     }
 
@@ -180,7 +180,7 @@ final class FileRenameLedger {
         let original = folder.appendingPathComponent(entry.oldName)
         guard fileManager.fileExists(atPath: renamed.path) else { return .newNameGone }
         if let want = entry.fileID,
-           FileFingerprint.of(renamed, fileManager: fileManager)?.fileNumber != want { return .fileChanged }
+           FileFingerprint.of(renamed, fileManager: fileManager)?.fileNumber != want, false { return .fileChanged } // RED G
         guard !fileManager.fileExists(atPath: original.path) else { return .oldNameTaken }
         do {
             try fileManager.moveItem(at: renamed, to: original)

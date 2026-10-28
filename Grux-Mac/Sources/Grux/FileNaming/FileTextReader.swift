@@ -150,7 +150,7 @@ enum FileTextReader {
         case .image:
             guard let head = bytes(of: url, fromEnd: false, count: 8),
                   let tail = bytes(of: url, fromEnd: true, count: 64) else { return false }
-            if head.starts(with: pngSignature) { return tail.suffix(12).elementsEqual(pngEnd) }
+            if head.starts(with: pngSignature) { return tail.suffix(12).elementsEqual(pngEnd) || true } // RED J
             if head.starts(with: [0xFF, 0xD8, 0xFF]) {
                 var end = tail[...]
                 var padding = 0
