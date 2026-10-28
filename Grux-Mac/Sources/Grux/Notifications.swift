@@ -85,7 +85,17 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
             options: []
         )
 
-        UNUserNotificationCenter.current().setNotificationCategories([focusDriftCat, agentPausedCat])
+        // A file Grux just renamed. One action, because the only thing a person
+        // wants from this banner is the old name back.
+        let undoRename = UNNotificationAction(identifier: FileNamedNotification.undoAction, title: "Undo", options: [])
+        let fileNamedCat = UNNotificationCategory(
+            identifier: FileNamedNotification.category,
+            actions: [undoRename],
+            intentIdentifiers: [],
+            options: []
+        )
+
+        UNUserNotificationCenter.current().setNotificationCategories([focusDriftCat, agentPausedCat, fileNamedCat])
     }
 
     func sendDriftNotification(currentTask: String, activeApp: String, rationale: String, suggested: String?, eventId: UUID, message: String? = nil) {
@@ -278,11 +288,60 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
                                 withCompletionHandler completionHandler: @escaping () -> Void) {
         let ui = response.notification.request.content.userInfo
         let action = response.actionIdentifier
+        // A rename banner is answered here and goes no further: the shared
+        // handler's default tap opens the Agents tab, which is the wrong place
+        // for a tap on "Renamed". Undo acts on the ledger id; a plain tap just
+        // dismisses.
+        if response.notification.request.content.categoryIdentifier == FileNamedNotification.category {
+            if action == FileNamedNotification.undoAction,
+               let raw = ui[FileNamedNotification.idKey] as? String,
+               let id = UUID(uuidString: raw) {
+                Task { @MainActor in FileNamingService.shared.undo(id: id) }
+            }
+            completionHandler()
+            return
+        }
         NotificationCenter.default.post(name: .gruxNotificationAction, object: nil, userInfo: [
             "action": action,
             "userInfo": ui
         ])
         completionHandler()
+    }
+}
+
+// MARK: - Files that name themselves
+
+/// The identifiers the rename banner and its Undo share, in one place so the
+/// category, the action and the response branch cannot drift apart.
+enum FileNamedNotification {
+    static let category = "grux.fileNamed"
+    static let undoAction = "grux.fileNamed.undo"
+    /// The ledger id of the rename, as a UUID string. The name itself is in
+    /// the body only, never in userInfo.
+    static let idKey = "fileRenameId"
+    static let title = "Renamed"
+
+    /// The new name in curly quotes, which is all the banner says.
+    static func body(_ rename: FileRename) -> String { "\u{201C}\(rename.newName)\u{201D}" }
+}
+
+extension NotificationManager {
+    /// Posts "Renamed" with an Undo button. Not routed through triage on
+    /// purpose: a batched or silent route delivers the text without its
+    /// action, and an Undo that arrives in an hourly digest is no Undo. It is
+    /// the direct result of something the person just did (a screenshot, a
+    /// download), so it belongs in front of them now. No permission is
+    /// requested here: with notifications not authorized, macOS drops it and
+    /// the Settings list still offers the same Undo.
+    func sendFileNamed(_ rename: FileRename) {
+        post(TriageEnvelope(
+            identifier: "grux.fileNamed.\(rename.id.uuidString)",
+            title: FileNamedNotification.title,
+            body: FileNamedNotification.body(rename),
+            sound: false,
+            categoryIdentifier: FileNamedNotification.category,
+            userInfo: [FileNamedNotification.idKey: rename.id.uuidString]
+        ))
     }
 }
 

@@ -785,6 +785,11 @@ struct GruxConfig: Codable {
     /// by default: it can drive ANY app, so the operator turns it on
     /// deliberately in Settings, and that toggle is the consent gate.
     var screenControlEnabled: Bool
+    /// Renames new screenshots and machine-named downloads from the text they show, using
+    /// a model on this Mac only (see FileNaming/). OFF by default: turning it on is what
+    /// first opens the screenshot folder and Downloads, which macOS guards with a privacy
+    /// prompt, and a rename is a change to the person's own files that they should choose.
+    var fileNamingEnabled: Bool
     /// Opens a token-guarded HTTP listener on the local network so a companion
     /// service can PUSH digests in. OFF by default: an install that has no such
     /// service must not sit on a listening socket it never uses.
@@ -926,6 +931,7 @@ struct GruxConfig: Codable {
         case personMemoryEnabled, decisionLogEnabled, controlSocketEnabled
         case foundryEnabled, spokenBriefingsEnabled
         case screenControlEnabled
+        case fileNamingEnabled
         case recordingConsentAcknowledged
         case ambientConsentAcknowledged, wakeWordConsentAcknowledged
         case userName, assistantName
@@ -987,6 +993,7 @@ struct GruxConfig: Codable {
          // socket. Turn it on in Settings to pair a phone.
          phoneCompanionEnabled: Bool = false,
          screenControlEnabled: Bool = false,
+         fileNamingEnabled: Bool = false,
          prInboxEnabled: Bool = false,
          ascMonitorEnabled: Bool = false,
          musicDuckingEnabled: Bool = false,
@@ -1063,6 +1070,7 @@ struct GruxConfig: Codable {
         self.crashSafeAudioEnabled = crashSafeAudioEnabled
         self.phoneCompanionEnabled = phoneCompanionEnabled
         self.screenControlEnabled = screenControlEnabled
+        self.fileNamingEnabled = fileNamingEnabled
         self.prInboxEnabled = prInboxEnabled
         self.ascMonitorEnabled = ascMonitorEnabled
         self.musicDuckingEnabled = musicDuckingEnabled
@@ -1147,6 +1155,7 @@ struct GruxConfig: Codable {
         // start listening after upgrading.
         phoneCompanionEnabled = try c.decodeIfPresent(Bool.self, forKey: .phoneCompanionEnabled) ?? false
         screenControlEnabled = try c.decodeIfPresent(Bool.self, forKey: .screenControlEnabled) ?? false
+        fileNamingEnabled = try c.decodeIfPresent(Bool.self, forKey: .fileNamingEnabled) ?? false
         prInboxEnabled = try c.decodeIfPresent(Bool.self, forKey: .prInboxEnabled) ?? false
         ascMonitorEnabled = try c.decodeIfPresent(Bool.self, forKey: .ascMonitorEnabled) ?? false
         musicDuckingEnabled = try c.decodeIfPresent(Bool.self, forKey: .musicDuckingEnabled) ?? false

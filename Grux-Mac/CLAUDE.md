@@ -291,6 +291,9 @@ All under `~/.grux/`:
 | `fire-pane-width` (contents = points) | Set the open pane's width through the Command Panel's window sizer, never under the pane's floor, then write `chat-status.json` |
 | `fire-workflow-open-run` (contents = run id) | Open that run's steps in Workflows the way Drill in does, then write `workflows-status.json` |
 | `fire-workflows-status` | Write `workflows-status.json` with no side effects: every workflow card's title and kind word and, when a run is open, its step titles and statuses |
+| `fire-file-naming-status` | Re-resolve the local model route, then write `file-naming-status.json` (Files that name themselves): enabled, armed, route, model, watched folders, named, undone and skipped counts, lastNamedAt, the Settings status line, writtenAt. Never a file name |
+| `fire-file-naming-undo-last` | Undo the newest rename that is not already undone, then write `file-naming-status.json` with the outcome word under `undo` |
+| `fire-file-naming-preview` (contents = an absolute path) | Run the whole naming pipeline on that file without renaming it, even with the feature off, and write `file-naming-preview.json`: path, decision (`rename` or `leave`), reason, proposedName (or null), readMs, modelMs, model, writtenAt. The eval harness's entry point |
 
 **The chat triggers** (`Triggers/ChatTriggers.swift`, SWEEP-12) act on the Chat most recently put in a window, through `ChatView.perform`: the same functions the Show earlier row and the Latest chip run. `chat-status.json` is written atomically after the view settles, with `chatOpen`, `totalMessages`, `shownCount`, `followsLatest`, `latestChipUp` (the chip's own state), `topVisibleMessageId`, `scrollOffset`, `scrollMax`, `transcriptWidth` and `writtenAt`. With no Chat open it says `chatOpen: false`.
 

@@ -139,6 +139,12 @@ struct HowItWorksStep: View {
                       "Listening is off until you turn it on, and macOS asks for the microphone only when you do. You choose Always on, which is Ambient mode: Grux hears you all the time on this Mac and decides, in under a second, whether you were talking to it. Or you choose after the wake word, \"\(WakeWordListener.spokenPhrase)\", which is the app's name and does not change when you rename the assistant. Nothing you say is kept unless you ask Grux to remember it, and audio never leaves this Mac. Change it any time in Tuning, under Acts on what I say.")
                 point("Screen control is off too",
                       "Screen control lets Grux click, type and scroll for you through the macOS Accessibility API, so it can finish a task hands-free once it can see the screen. It ships off and stays off until you turn it on in Settings and grant Accessibility. With it off, Grux never moves your pointer or keyboard.")
+                // NAMED AT FIRST RUN, per the house rule. It renames the
+                // person's own files, so the promise of what it never does is
+                // half the point. No permission is asked here: macOS asks for
+                // the folders only when the person turns it on in Settings.
+                point("Files can name themselves",
+                      "Grux can rename a new screenshot, or a download with a machine-made name like IMG_4471, from the text it shows, so it reads as Acme Invoice Oct 2026 in Finder. It ships off and stays off until you turn it on in Settings. The text is read on this Mac by a model running on this Mac, and nothing about the file leaves it. It never moves a file, never renames one you named yourself, and every rename can be undone.")
                 // NAMED AT FIRST RUN, per the house rule, and this is the one
                 // that was missing entirely. Grux runs a real shell on the
                 // user's machine and spends a credential they are signed in to,

@@ -94,6 +94,8 @@ enum SettingsTabAliases {
         "memory":        SettingsLocation(pane: .dataSecurity, sub: "capabilities", anchor: "data.memory"),
         // C12: the door to the brand-scoped rows, reachable by deep link.
         "brands":        SettingsLocation(pane: .dataSecurity, sub: "capabilities", anchor: "data.brands"),
+        // Files that name themselves, by the verb a person uses for what it does.
+        "rename":        SettingsLocation(pane: .dataSecurity, sub: "capabilities", anchor: "data.fileNaming"),
         // The first-run flow's only door back in. It had a search entry and a
         // scroll anchor but no tag here, so `--open-settings-tab=first-run`
         // landed at the top of General and the row stayed below the fold,
@@ -429,6 +431,13 @@ enum SettingsSearchRegistry {
             location: SettingsLocation(pane: .dataSecurity, sub: "capabilities", anchor: "data.screenControl"),
             keywords: ["screen control", "click", "type", "scroll", "accessibility", "control",
                        "automation", "pointer", "keyboard", "operate", "mouse", "hands-free"]),
+        // The words somebody brings from the first-run line or from a file that
+        // changed name under them: "rename", "screenshot", "undo rename". The
+        // section title alone is a phrase nobody would type.
+        SettingsSearchEntry(id: "data.fileNaming", title: "Files that name themselves",
+            location: SettingsLocation(pane: .dataSecurity, sub: "capabilities", anchor: "data.fileNaming"),
+            keywords: ["rename", "file names", "screenshot", "screenshots", "downloads", "pdf",
+                       "name files", "undo rename"]),
         SettingsSearchEntry(id: "data.web", title: "Real-time web research",
             location: SettingsLocation(pane: .dataSecurity, sub: "capabilities", anchor: "data.web"),
             keywords: ["web research", "brave", "search", "brave api key", "summarize"]),

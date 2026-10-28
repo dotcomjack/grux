@@ -44,6 +44,9 @@ final class OffByDefaultDiscoverabilityTests: XCTestCase {
         "screenControlEnabled": OffFeature(
             introducedAtFirstRun: "Screen control",
             reason: ""),
+        "fileNamingEnabled": OffFeature(
+            introducedAtFirstRun: "Files can name themselves",
+            reason: ""),
 
         // The rest are deliberately not introduced at first run, each for a
         // reason that has to survive being read out loud.
