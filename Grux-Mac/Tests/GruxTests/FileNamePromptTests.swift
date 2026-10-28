@@ -101,12 +101,37 @@ final class FileNamePromptTests: XCTestCase {
         XCTAssertNil(FileNamePrompt.clean("Rust Borrow Checker Error", sourceText: typescript, fileExtension: "png"))
         XCTAssertEqual(FileNamePrompt.clean("TypeScript Type Error", sourceText: "TypeScript " + typescript, fileExtension: "png"),
                        "TypeScript Type Error", "control: a grounded name passes")
-        let rust = "error[E0502]: cannot borrow `ledger` as mutable because it is also borrowed as immutable\nrustc checker"
+        let rust = "error[E0502]: cannot borrow `ledger` as mutable because it is also borrowed as immutable\nRust borrow checker"
         XCTAssertEqual(FileNamePrompt.clean("Rust Borrow Checker Error", sourceText: rust, fileExtension: "png"),
                        "Rust Borrow Checker Error", "the example's words drawn from the file are fine")
         for example in FileNamePrompt.examples {
             XCTAssertTrue(FileNamePrompt.system.contains(example), "\(example) is not in the prompt, so the guard is stale")
         }
+        // And the other way: every quoted phrase in the prompt is a known
+        // example, so one added to the prompt alone cannot slip past the
+        // guard (review 2026-10-28).
+        let quoted = try! NSRegularExpression(pattern: #""([^"]+)""#)
+        let system = FileNamePrompt.system as NSString
+        let phrases = quoted.matches(in: FileNamePrompt.system, range: NSRange(location: 0, length: system.length))
+            .map { system.substring(with: $0.range(at: 1)) }
+        XCTAssertGreaterThanOrEqual(phrases.count, 7, "control: the scan found too few quoted phrases to be the examples")
+        for phrase in phrases {
+            XCTAssertTrue(FileNamePrompt.examples.contains(phrase), "\(phrase) is in the prompt but not in examples, so the guard misses it")
+        }
+    }
+
+    /// THE WHOLE EXAMPLE, COPIED, IS REFUSED WHEN THE FILE LACKS ANY OF ITS
+    /// WORDS. "Trackpad Settings" on a Display settings screenshot misses one
+    /// word only, which the two-word rule let through (review 2026-10-28).
+    func testAWholeExampleCopiedOntoTheWrongFileIsRefused() {
+        let display = "Displays\nDisplay Settings\nResolution\nBrightness"
+        XCTAssertNil(FileNamePrompt.clean("Trackpad Settings", sourceText: display))
+        XCTAssertNil(FileNamePrompt.clean("trackpad   SETTINGS", sourceText: display), "case and spacing do not matter")
+        XCTAssertNil(FileNamePrompt.clean("Cast Iron Skillet", sourceText: "Skillet sale\nNonstick skillet"))
+        XCTAssertEqual(FileNamePrompt.clean("Display Settings", sourceText: display), "Display Settings",
+                       "control: a name from the file passes")
+        XCTAssertEqual(FileNamePrompt.clean("Trackpad Settings", sourceText: "Trackpad\nTrackpad Settings\nTap to click"),
+                       "Trackpad Settings", "control: the example is fine on the file it describes")
     }
 
     /// A STOP WORD GROUNDS NOTHING. "the", "and" and "for" are whole words of
@@ -164,11 +189,21 @@ final class FileNamePromptTests: XCTestCase {
                      "cut to 8 words, it still holds 12 digits")
         XCTAssertNil(FileNamePrompt.clean("Northwind Account 123,456", sourceText: source), "six, joined by a comma")
         XCTAssertNil(FileNamePrompt.clean("Northwind Account 123_456", sourceText: source), "six, joined by an underscore")
-        XCTAssertNil(FileNamePrompt.clean("Northwind Account 123 - 456", sourceText: source), "six, joined by \" - \"")
+        XCTAssertNotNil(FileNamePrompt.clean("Northwind Account 123 - 456", sourceText: source),
+                        "six, joined by a separator holding a space, are under the 6 digit rule (ruling 2026-10-28)")
+        XCTAssertNil(FileNamePrompt.clean("Northwind Ref 4111-1111", sourceText: source), "the 6 digit rule, no space")
+        XCTAssertNil(FileNamePrompt.clean("Northwind Ref 1,234,567,890", sourceText: source), "the 8 digit rule")
         // Allowed: fewer than 8 digits split only by spaces, so a day and a
         // year stay.
         XCTAssertEqual(FileNamePrompt.clean("Northwind Invoice Oct 14 2026", sourceText: source),
                        "Northwind Invoice Oct 14 2026", "a day and a year are a date, not a number to hide")
+        // The US way of writing that date, and a dollar amount: a separator
+        // with a space never joins a 6 digit run (review 2026-10-28 found the
+        // comma rule refusing both).
+        XCTAssertEqual(FileNamePrompt.clean("Northwind Invoice Oct 14, 2026", sourceText: source),
+                       "Northwind Invoice Oct 14, 2026", "a day, a comma and a year are a date")
+        XCTAssertEqual(FileNamePrompt.clean("Northwind Invoice $1,250", sourceText: source),
+                       "Northwind Invoice $1,250", "an amount with a thousands comma is not a number to hide")
         XCTAssertNotNil(FileNamePrompt.clean("Northwind Account 12 34 56", sourceText: source),
                         "six digits split by spaces are under the spaced rule's eight")
         XCTAssertNotNil(FileNamePrompt.clean("Northwind Ref 123 4567", sourceText: source), "seven, split by a space")

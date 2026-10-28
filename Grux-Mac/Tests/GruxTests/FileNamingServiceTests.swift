@@ -432,45 +432,31 @@ final class FileNamingServiceTests: XCTestCase {
     // MARK: - Settling
 
     /// A FILE THAT NEVER SETTLES DOES NOT HOLD UP THE ONES BEHIND IT. A
-    /// download that keeps growing never settles; settling inside the worker
-    /// held every file behind it (review 2026-10-28). The growing file's name
-    /// sorts first ("I" before "d"), so it reaches the queue ahead of the good
-    /// one: with settling back inside the worker, the good file would wait out
-    /// the whole timeout and this goes red. It is not empty, and it grows on a
-    /// thread of its own for the whole test, so it is a real arrival that
-    /// really never settles (review 2026-10-28: an empty one was never an
-    /// arrival, and the test proved nothing).
+    /// download that never becomes whole never settles; settling inside the
+    /// worker held every file behind it (review 2026-10-28). The stuck file's
+    /// name sorts first ("I" before "d"), so it reaches the queue ahead of the
+    /// good one: with settling back inside the worker, the good file would
+    /// wait out the whole timeout and this goes red. It is held by the content
+    /// seam, never by thread timing: a writer thread racing the settling
+    /// checks could settle it on a busy runner (review 2026-10-28).
     func testAFileThatNeverSettlesDoesNotHoldUpTheQueue() async throws {
-        let (service, backend) = make(reply: invoiceName, settleTimeout: 4)
+        let (service, backend) = make(reply: invoiceName, settleTimeout: 4,
+                                      complete: { url, _ in url.lastPathComponent != "IMG_0001.pdf" })
         await arm(service)
-        try drop("IMG_0001.pdf", "%PDF-growing")
-        let growing = dir.appendingPathComponent("IMG_0001.pdf")
-        let writing = Flag()
-        writing.value = true
-        defer { writing.value = false }
-        Thread.detachNewThread {
-            var size = 16
-            while writing.value {
-                size += 100
-                // Written in place, so the file keeps its number.
-                try? Data(repeating: 0x41, count: size).write(to: growing)
-                usleep(10_000)
-            }
-        }
+        try drop("IMG_0001.pdf", "%PDF-never whole")
         try drop("document (3).pdf")
-        XCTAssertLessThan("IMG_0001.pdf", "document (3).pdf", "control: the growing file no longer sorts first")
+        XCTAssertLessThan("IMG_0001.pdf", "document (3).pdf", "control: the stuck file no longer sorts first")
         service.rescan()
         let named = await eventually(3.5) { service.status.named == 1 }
         XCTAssertTrue(named, "a file that settled waited behind one that never did: \(service.status)")
         XCTAssertTrue(exists("IMG_0001.pdf"))
-        XCTAssertNil(service.status.skipped["unsupported"], "the growing file was dropped before its time")
+        XCTAssertNil(service.status.skipped["unsupported"], "the stuck file was dropped before its time")
 
         let dropped = await eventually { service.status.skipped["unsupported"] == 1 }
         XCTAssertTrue(dropped, "a file that never settled was never dropped: \(service.status)")
-        writing.value = false
-        XCTAssertTrue(exists("IMG_0001.pdf"), "the growing file was renamed")
+        XCTAssertTrue(exists("IMG_0001.pdf"), "the stuck file was renamed")
         let shorts = await backend.shortAnswers
-        XCTAssertEqual(shorts, 1, "the growing file was read")
+        XCTAssertEqual(shorts, 1, "the stuck file was read")
     }
 
     /// A SETTLING FILE IS READ ALONE. The check that runs while a file settles
@@ -633,6 +619,40 @@ final class FileNamingServiceTests: XCTestCase {
         service.rescan()
         let named = await eventually { service.status.named == 1 }
         XCTAssertTrue(named, "\(service.status)")
+    }
+
+    /// A MISSING SCREENSHOT FOLDER, THROUGH THE REAL FOLDER LIST. The folders
+    /// come from `FileNamingRules.watchedFolders(defaults:home:downloads:)`,
+    /// the function the app's own list is built by, under a home where
+    /// neither folder exists yet. Both stay in the list, both are retried, the
+    /// status says the screenshot folder does not exist rather than asking
+    /// for a permission (review 2026-10-28), and each is watched once it
+    /// appears. An existence filter put back in the folder list fails here.
+    func testAMissingScreenshotFolderIsWaitedForAndSaysSo() async throws {
+        let home = dir.deletingLastPathComponent().appendingPathComponent("home")
+        try fm.createDirectory(at: home, withIntermediateDirectories: true)
+        let shots = home.appendingPathComponent("Shots")
+        let downloads = home.appendingPathComponent("Downloads")
+        let (service, _) = make(reply: invoiceName, folderSource: {
+            FileNamingRules.watchedFolders(defaults: ["location": "~/Shots"], home: home, downloads: downloads)
+        })
+        await arm(service)
+        XCTAssertEqual(service.status.folders, [shots.path, downloads.path], "a folder missing at arm was dropped")
+        XCTAssertEqual(service.status.unwatched, [shots.path, downloads.path])
+        XCTAssertEqual(service.status.missing, [shots.path, downloads.path])
+        XCTAssertTrue(service.status.settingsLine.contains("Waiting for the screenshot folder Shots to exist."),
+                      service.status.settingsLine)
+        XCTAssertFalse(service.status.settingsLine.contains("Files and Folders"),
+                       "a folder that does not exist was sent to the permission pane: \(service.status.settingsLine)")
+
+        try fm.createDirectory(at: shots, withIntermediateDirectories: true)
+        let shotsWatched = await eventually { service.watchedPaths.contains(shots.path) }
+        XCTAssertTrue(shotsWatched, "the screenshot folder appeared and was never watched: \(service.status)")
+        XCTAssertEqual(service.status.unwatched, [downloads.path], "the folder still missing is no longer retried")
+        try fm.createDirectory(at: downloads, withIntermediateDirectories: true)
+        let both = await eventually { service.status.unwatched.isEmpty && service.watchedPaths.contains(downloads.path) }
+        XCTAssertTrue(both, "\(service.status)")
+        XCTAssertEqual(service.status.missing, [])
     }
 
     // MARK: - Whole and quiet

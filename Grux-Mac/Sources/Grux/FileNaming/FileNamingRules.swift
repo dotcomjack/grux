@@ -115,43 +115,70 @@ enum FileNamingRules {
 
     // MARK: - Looks like a capture
 
-    /// What macOS names a capture when the `name` default is not set.
-    /// `Screen Shot` is the spelling from before macOS 10.14.
+    /// What macOS names a capture in English. `Screen Shot` is the spelling
+    /// from before macOS 10.14.
     static let defaultCapturePrefixes = ["Screenshot", "Screen Shot"]
 
-    /// The capture name prefix from the `com.apple.screencapture` defaults:
-    /// the person's own `name` when they set one, else the two system ones.
-    static func capturePrefixes(defaults: [String: Any]) -> [String] {
-        let custom = (defaults["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return custom.isEmpty ? defaultCapturePrefixes : [custom]
+    /// Where macOS keeps the word it starts a capture's name with, in every
+    /// language it ships: a plist of language to (key to value), the value
+    /// for "Screenshot" being the prefix. Measured 2026-10-28: 42 languages,
+    /// de "Bildschirmfoto", fr "Capture d’écran", zh_CN "截屏", ja
+    /// "スクリーンショット".
+    static let captureNamesTable = URL(
+        fileURLWithPath: "/System/Library/CoreServices/screencaptureui.app/Contents/Resources/Localizable.loctable")
+
+    /// Every language's capture prefix from `table`, or none when the file is
+    /// missing or unreadable. Reads the disk, so off the main actor.
+    static func systemCapturePrefixes(table: URL = captureNamesTable) -> [String] {
+        guard let data = try? Data(contentsOf: table),
+              let plist = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any]
+        else { return [] }
+        var out: [String] = []
+        for case let strings as [String: Any] in plist.values {
+            if let prefix = (strings["Screenshot"] as? String)?.trimmingCharacters(in: .whitespaces),
+               !prefix.isEmpty, !out.contains(prefix) { out.append(prefix) }
+        }
+        return out.sorted()
     }
 
-    /// The whole shape of a capture's name in every language macOS ships, end
-    /// to end: a prefix with no digits (and maybe no space, `截屏2026-10-27`),
-    /// the date, up to 12 characters of words, the time (`9.41.03`, `09:41`),
-    /// up to 8 characters of AM or PM marker, and maybe a ` (2)` counter.
-    /// `Bildschirmfoto 2026-10-27 um 09.41.03` matches. A prefix and a date
-    /// alone matched `Expense report 2026-10-28 copy`, a capture the person
-    /// had named and then copied, and that copy was renamed (review
-    /// 2026-10-28).
-    private static let localizedCapture = try! NSRegularExpression(
-        pattern: #"^[^0-9]+[0-9]{4}-[0-9]{2}-[0-9]{2}[^0-9]{0,12}[0-9]{1,2}[.:][0-9]{2}(?:[.:][0-9]{2})?[^0-9]{0,8}(?: \([0-9]+\))?$"#)
+    /// The prefixes a capture's name can start with on this Mac: the
+    /// person's own `name` default, every language's from `system`
+    /// (`systemCapturePrefixes`), and the English two. Without the system's
+    /// own list, the only way to accept a capture from a Mac in another
+    /// language was any words before a timestamp, and a capture renamed to
+    /// `Login error 2026-10-28 at 9.41.03 AM` and then copied read as fresh
+    /// (review 2026-10-28).
+    static func capturePrefixes(defaults: [String: Any], system: [String] = []) -> [String] {
+        let custom = (defaults["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        var out: [String] = []
+        for prefix in (custom.isEmpty ? [] : [custom]) + system + defaultCapturePrefixes where !out.contains(prefix) {
+            out.append(prefix)
+        }
+        return out
+    }
+
+    /// What follows the prefix in a capture's name in every language macOS
+    /// ships, end to end: maybe a space (`截屏2026-10-27` has none), the date,
+    /// up to 12 characters of words, the time (`9.41.03`, `09:41`), up to 8
+    /// characters of AM or PM marker, and maybe a ` (2)` counter.
+    private static let captureStamp = try! NSRegularExpression(
+        pattern: #"^\s*[0-9]{4}-[0-9]{2}-[0-9]{2}[^0-9]{0,12}[0-9]{1,2}[.:][0-9]{2}(?:[.:][0-9]{2})?[^0-9]{0,8}(?: \([0-9]+\))?$"#)
 
     /// Whether `baseName` still reads as the name macOS gave a capture: a
     /// prefix, a space, then a digit (`Screenshot 2026-10-27 at 9.41.03 AM`),
-    /// or the whole localized shape. The capture xattr survives a rename,
-    /// so the mark alone cannot tell `Bug repro.png` (a capture a person
-    /// named) from a fresh one (review 2026-10-28). The dated form is what
-    /// keeps a Mac in another language working: its captures carry a
-    /// localized prefix that is not in the `name` default, and with the
-    /// English prefixes only, no capture was ever named there (review
-    /// 2026-10-28).
+    /// or a prefix followed by the whole capture stamp (`Bildschirmfoto
+    /// 2026-10-27 um 09.41.03`, `截屏2026-10-27 09.41.03`). The capture xattr
+    /// survives a rename, so the mark alone cannot tell `Bug repro.png` (a
+    /// capture a person named) from a fresh one (review 2026-10-28). The
+    /// prefix is always one of `prefixes`, the real ones, never any words.
     static func looksLikeCapture(_ baseName: String, prefixes: [String]) -> Bool {
         for prefix in prefixes where !prefix.isEmpty {
-            guard let range = baseName.range(of: prefix + " ", options: [.anchored, .caseInsensitive]) else { continue }
-            if baseName[range.upperBound...].first?.isNumber == true { return true }
+            if let range = baseName.range(of: prefix + " ", options: [.anchored, .caseInsensitive]),
+               baseName[range.upperBound...].first?.isNumber == true { return true }
+            if let range = baseName.range(of: prefix, options: [.anchored, .caseInsensitive]),
+               matches(captureStamp, String(baseName[range.upperBound...])) { return true }
         }
-        return matches(localizedCapture, baseName)
+        return false
     }
 
     // MARK: - Pairs
@@ -254,20 +281,28 @@ enum FileNamingRules {
     /// the whole arm, and the existence check itself, for a folder inside
     /// Desktop or Documents, waits on the permission dialog (review
     /// 2026-10-28). Nothing here reads inside a folder.
-    static func watchedFolders(fileManager fm: FileManager = .default) -> [FileNamingFolder] {
+    ///
+    /// No file manager is taken: there is no place here for an existence
+    /// filter to come back (review 2026-10-28). Runs off the main actor (the
+    /// service resolves its folders on `FileNamingIO`), which is also where
+    /// the capture prefixes are read, once per arm.
+    static func watchedFolders() -> [FileNamingFolder] {
+        let fm = FileManager.default
         let home = fm.homeDirectoryForCurrentUser
         let downloads = fm.urls(for: .downloadsDirectory, in: .userDomainMask).first
             ?? home.appendingPathComponent("Downloads", isDirectory: true)
-        return watchedFolders(defaults: screenshotDefaults(), home: home, downloads: downloads)
+        return watchedFolders(defaults: screenshotDefaults(), home: home, downloads: downloads,
+                              systemPrefixes: systemCapturePrefixes())
     }
 
     /// The pure half of `watchedFolders`, so a test can hand in folders that
-    /// do not exist and see them kept.
-    static func watchedFolders(defaults: [String: Any], home: URL, downloads: URL) -> [FileNamingFolder] {
+    /// do not exist and see them kept, and capture prefixes of its own.
+    static func watchedFolders(defaults: [String: Any], home: URL, downloads: URL,
+                               systemPrefixes: [String] = []) -> [FileNamingFolder] {
         var out: [FileNamingFolder] = []
         if let shots = screenshotFolder(defaults: defaults, home: home) {
             out.append(FileNamingFolder(url: shots, screenshots: true, downloads: false,
-                                        capturePrefixes: capturePrefixes(defaults: defaults)))
+                                        capturePrefixes: capturePrefixes(defaults: defaults, system: systemPrefixes)))
         }
         if let i = out.firstIndex(where: { $0.url.standardizedFileURL.path == downloads.standardizedFileURL.path }) {
             out[i].downloads = true

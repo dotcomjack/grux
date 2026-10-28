@@ -71,6 +71,13 @@ struct FileNamingStatus: Codable, Equatable {
     /// (macOS has not granted access, or the folder is gone), so there is no
     /// baseline to tell a new file from an old one. Retried every 30 s.
     var unwatched: [String] = []
+    /// The folders in `unwatched` that do not exist at all, as against ones
+    /// macOS will not let Grux list. Each needs a different sentence: a
+    /// missing screenshot folder was told to grant a permission that was
+    /// never the problem (review 2026-10-28).
+    var missing: [String] = []
+    /// The screenshot folder's path, when one is watched.
+    var screenshotFolder: String? = nil
 
     static let idle = FileNamingStatus(enabled: false, armed: false, route: "unknown", model: nil,
                                        folders: [], named: 0, undone: 0, skipped: [:], lastNamedAt: nil)
@@ -90,11 +97,18 @@ struct FileNamingStatus: Codable, Equatable {
         default:
             break
         }
-        let waitingNames = unwatched.map { URL(fileURLWithPath: $0).lastPathComponent }
-        let waiting = waitingNames.isEmpty ? "" :
+        let refused = unwatched.filter { !missing.contains($0) }
+        let waitingNames = refused.map { URL(fileURLWithPath: $0).lastPathComponent }
+        var waiting = waitingNames.isEmpty ? "" :
             " Waiting to open \(Self.list(waitingNames)): allow Grux in System Settings, Privacy and Security, Files and Folders."
+        for path in unwatched where missing.contains(path) {
+            let name = URL(fileURLWithPath: path).lastPathComponent
+            waiting += path == screenshotFolder
+                ? " Waiting for the screenshot folder \(name) to exist."
+                : " Waiting for the folder \(name) to exist."
+        }
         guard armed else {
-            if !waitingNames.isEmpty { return "Paused." + waiting }
+            if !waiting.isEmpty { return "Paused." + waiting }
             return "Paused: none of the folders to watch could be found."
         }
         let names = folders.filter { !unwatched.contains($0) }.map { URL(fileURLWithPath: $0).lastPathComponent }

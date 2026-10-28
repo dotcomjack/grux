@@ -122,6 +122,24 @@ final class FileNamingTextReaderTests: XCTestCase {
         }
     }
 
+    /// A MOTION PHOTO IS WHOLE. Pixel and Samsung phones put an MP4 after the
+    /// picture's FF D9, so the file never ends in it, and every motion photo
+    /// waited out the timeout unnamed (review 2026-10-28).
+    func testAMotionPhotoIsWhole() throws {
+        let picture = try encoded("public.jpeg")
+        var movie = Data([0x00, 0x00, 0x00, 0x18])
+        movie.append(Data("ftypisom".utf8))
+        movie.append(Data(repeating: 0x11, count: 300))
+        XCTAssertTrue(FileTextReader.isComplete(try write(picture + movie, "PXL_20261028_123456789.MP.jpg"), kind: .image),
+                      "a motion photo reads as not whole")
+        XCTAssertFalse(FileTextReader.isComplete(try write(picture + Data(repeating: 0x11, count: 300), "trailing.jpg"),
+                                                 kind: .image),
+                       "control: bytes after the end that are not a movie still read as whole")
+        let cut = picture.prefix(picture.count / 2)
+        XCTAssertFalse(FileTextReader.isComplete(try write(Data(cut), "cut.jpg"), kind: .image),
+                       "control: a JPEG cut short reads as whole")
+    }
+
     /// A GIF ends in its 0x3B trailer.
     func testAGIFCutShortIsNotWhole() throws {
         let whole = try encoded("com.compuserve.gif")

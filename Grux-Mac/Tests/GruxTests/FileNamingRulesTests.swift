@@ -205,8 +205,13 @@ final class FileNamingRulesTests: XCTestCase {
     /// not in the `name` default, so with the English prefixes alone no
     /// capture was ever named there (review 2026-10-28). Every locale's name
     /// carries the date, so any prefix, a space and `YYYY-MM-DD` counts.
+    /// The capture prefixes of the languages these tests use, as
+    /// `systemCapturePrefixes` reads them from the system's table.
+    private let localizedPrefixes = ["Bildschirmfoto", "Capture d\u{2019}\u{E9}cran", "Captura de pantalla", "\u{622A}\u{5C4F}"]
+
     func testALocalizedCaptureNameIsACandidate() {
-        let shots = FileNamingFolder(url: URL(fileURLWithPath: "/tmp/shots"), screenshots: true, downloads: false)
+        var shots = FileNamingFolder(url: URL(fileURLWithPath: "/tmp/shots"), screenshots: true, downloads: false)
+        shots.capturePrefixes = FileNamingRules.capturePrefixes(defaults: [:], system: localizedPrefixes)
         let localized = [
             "Bildschirmfoto 2026-10-28 um 09.41.03.png",
             "Capture d\u{2019}\u{E9}cran 2026-10-28 \u{E0} 09.41.03.png",
@@ -219,38 +224,70 @@ final class FileNamingRulesTests: XCTestCase {
             XCTAssertEqual(FileNamingRules.candidacy(fileName: name, in: shots, isScreenCapture: { false }),
                            .skip(.humanName), "control: without the capture mark \(name) is not a capture")
         }
-        XCTAssertFalse(FileNamingRules.looksLikeCapture("Bildschirmfoto vom Fehler", prefixes: ["Screenshot"]),
+        let english = FileNamingFolder(url: URL(fileURLWithPath: "/tmp/shots"), screenshots: true, downloads: false)
+        XCTAssertEqual(FileNamingRules.candidacy(fileName: "Bildschirmfoto 2026-10-28 um 09.41.03.png", in: english,
+                                                 isScreenCapture: { true }), .skip(.humanName),
+                       "control: without the German prefix in the set, the German name is not known")
+        XCTAssertFalse(FileNamingRules.looksLikeCapture("Bildschirmfoto vom Fehler", prefixes: localizedPrefixes),
                        "a localized prefix with no date is a name a person typed")
-        XCTAssertFalse(FileNamingRules.looksLikeCapture("Bildschirmfoto 2026", prefixes: ["Screenshot"]), "a year is not a date")
-        XCTAssertFalse(FileNamingRules.looksLikeCapture("2026-10-28 notes", prefixes: ["Screenshot"]), "a date must follow a prefix")
+        XCTAssertFalse(FileNamingRules.looksLikeCapture("Bildschirmfoto 2026", prefixes: localizedPrefixes), "a year is not a date")
+        XCTAssertFalse(FileNamingRules.looksLikeCapture("2026-10-28 notes", prefixes: localizedPrefixes), "a date must follow a prefix")
     }
 
-    /// THE WHOLE SHAPE OF A CAPTURE'S NAME, END TO END. A prefix and a date
-    /// alone read `Expense report 2026-10-28 copy`, a named capture's copy,
-    /// as a fresh capture (review 2026-10-28). Checked with no English
-    /// prefix, so only the localized shape can answer.
+    /// A CAPTURE'S NAME IS A REAL PREFIX AND THE WHOLE STAMP. Any words in
+    /// front of a timestamp read a renamed capture's copy, `Login error
+    /// 2026-10-28 at 9.41.03 AM copy`, as fresh (review 2026-10-28, twice), so
+    /// the prefix is one macOS really writes.
     func testTheLocalizedCaptureShapeIsTheWholeName() {
+        let prefixes = FileNamingRules.capturePrefixes(defaults: [:], system: localizedPrefixes)
         let captures = [
             "Bildschirmfoto 2026-10-27 um 09.41.03",
-            "Capture d'\u{E9}cran 2026-10-27 \u{E0} 09.41.03",
+            "Capture d\u{2019}\u{E9}cran 2026-10-27 \u{E0} 09.41.03",
             "\u{622A}\u{5C4F}2026-10-27 09.41.03",
             "Screenshot 2026-10-27 at 9.41.03 AM (2)",
             "Bildschirmfoto 2026-10-27 um 09:41",
         ]
         for name in captures {
-            XCTAssertTrue(FileNamingRules.looksLikeCapture(name, prefixes: []), "\(name) is a capture's own name")
+            XCTAssertTrue(FileNamingRules.looksLikeCapture(name, prefixes: prefixes), "\(name) is a capture's own name")
         }
         let typed = [
+            "Login error 2026-10-28 at 9.41.03 AM",
+            "Login error 2026-10-28 at 9.41.03 AM copy",
+            "Bug repro 2026-10-28 at 9.41.03 AM copy",
+            "Call with Dana 2026-10-28 at 2.15 PM",
             "Expense report 2026-10-28 copy",
             "Standup notes 2026-10-27",
             "Lease 2026-11-01 signed",
-            "Bildschirmfoto 2026-10-27 um 09.41.03 und Notizen dazu",
             "2026-10-27 09.41.03",
             "Notes 2026-10-27 9.41.03 v2",
         ]
         for name in typed {
-            XCTAssertFalse(FileNamingRules.looksLikeCapture(name, prefixes: []), "\(name) reads as a capture, and a person named it")
+            XCTAssertFalse(FileNamingRules.looksLikeCapture(name, prefixes: prefixes),
+                           "\(name) reads as a capture, and a person named it")
         }
+    }
+
+    /// The system's own table of capture prefixes is read when it is there,
+    /// and its absence leaves the name default and the English two.
+    func testTheCapturePrefixesComeFromTheSystemTable() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("file-naming-table-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let table: [String: Any] = [
+            "de": ["Screenshot": "Bildschirmfoto", "Other": "Andere"],
+            "fr": ["Screenshot": "Capture d\u{2019}\u{E9}cran"],
+            "en": ["Screenshot": "Screenshot"],
+            "LocProvenance": ["de": "1"],
+        ]
+        let url = dir.appendingPathComponent("Localizable.loctable")
+        try PropertyListSerialization.data(fromPropertyList: table, format: .binary, options: 0).write(to: url)
+        XCTAssertEqual(FileNamingRules.systemCapturePrefixes(table: url),
+                       ["Bildschirmfoto", "Capture d\u{2019}\u{E9}cran", "Screenshot"])
+        XCTAssertEqual(FileNamingRules.systemCapturePrefixes(table: dir.appendingPathComponent("missing.loctable")), [])
+        XCTAssertEqual(FileNamingRules.capturePrefixes(defaults: ["name": "Grab"], system: []), ["Grab", "Screenshot", "Screen Shot"],
+                       "with no table, the name default and the English two")
+        XCTAssertEqual(FileNamingRules.capturePrefixes(defaults: [:], system: ["Bildschirmfoto", "Screenshot"]),
+                       ["Bildschirmfoto", "Screenshot", "Screen Shot"])
     }
 
     /// A folder that does not exist is kept, so the retry can arm it once it
@@ -270,7 +307,7 @@ final class FileNamingRulesTests: XCTestCase {
     func testTheCapturePrefixComesFromTheDefaults() {
         XCTAssertEqual(FileNamingRules.capturePrefixes(defaults: [:]), ["Screenshot", "Screen Shot"])
         XCTAssertEqual(FileNamingRules.capturePrefixes(defaults: ["name": "  "]), ["Screenshot", "Screen Shot"])
-        XCTAssertEqual(FileNamingRules.capturePrefixes(defaults: ["name": "Grab"]), ["Grab"])
+        XCTAssertEqual(FileNamingRules.capturePrefixes(defaults: ["name": "Grab"]), ["Grab", "Screenshot", "Screen Shot"])
         XCTAssertTrue(FileNamingRules.looksLikeCapture("Grab 2026-10-27", prefixes: ["Grab"]))
         XCTAssertTrue(FileNamingRules.looksLikeCapture("screenshot 2026-10-27", prefixes: ["Screenshot"]))
         XCTAssertFalse(FileNamingRules.looksLikeCapture("Grabbed 2026", prefixes: ["Grab"]), "a space must follow")

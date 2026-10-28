@@ -134,7 +134,11 @@ enum FileTextReader {
     /// and a PNG, a JPEG and a HEIC cut to 90, 50 and 10 percent, all read
     /// `statusComplete` at the source and at index 0 (review 2026-10-28).
     ///   - PNG: the last 12 bytes are the IEND chunk.
-    ///   - JPEG: the file ends in FF D9, after at most 32 zero bytes of padding.
+    ///   - JPEG: the file ends in FF D9, after at most 32 zero bytes of
+    ///     padding, or it is a motion photo (Pixel, Samsung): an MP4 `ftyp`
+    ///     box after an FF D9. Those carry the video after the picture's end,
+    ///     so their last bytes are never FF D9, and every one of them waited
+    ///     out the 10 minute timeout unnamed (review 2026-10-28).
     ///   - GIF: the last byte is the 0x3B trailer.
     ///   - Any other image (HEIC, TIFF, WebP): ImageIO's status at index 0,
     ///     the best there is for a container with no fixed end.
@@ -151,7 +155,8 @@ enum FileTextReader {
                 var end = tail[...]
                 var padding = 0
                 while end.last == 0x00 && padding < 32 { end = end.dropLast(); padding += 1 }
-                return end.suffix(2).elementsEqual([0xFF, 0xD9])
+                if end.suffix(2).elementsEqual([0xFF, 0xD9]) { return true }
+                return isMotionPhoto(url)
             }
             if head.starts(with: Array("GIF8".utf8)) { return tail.last == 0x3B }
             guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return false }
@@ -161,6 +166,23 @@ enum FileTextReader {
                   tail.range(of: Data("%%EOF".utf8)) != nil else { return false }
             return PDFDocument(url: url) != nil
         }
+    }
+
+    /// A JPEG with an MP4 after its end: an `ftyp` box whose 4 byte size
+    /// field comes after an FF D9. The whole file is read, mapped rather than
+    /// copied, which is what a motion photo's few megabytes cost.
+    static func isMotionPhoto(_ url: URL) -> Bool {
+        guard let data = try? Data(contentsOf: url, options: .alwaysMapped) else { return false }
+        var from = data.startIndex
+        while let box = data.range(of: Data("ftyp".utf8), in: from..<data.endIndex) {
+            let sizeStart = box.lowerBound - 4
+            if sizeStart > data.startIndex,
+               data.range(of: Data([0xFF, 0xD9]), options: .backwards, in: data.startIndex..<sizeStart) != nil {
+                return true
+            }
+            from = box.upperBound
+        }
+        return false
     }
 
     private static let pngSignature: [UInt8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]

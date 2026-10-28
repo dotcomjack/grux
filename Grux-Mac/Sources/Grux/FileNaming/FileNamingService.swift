@@ -295,6 +295,8 @@ final class FileNamingService: ObservableObject {
         status.armed = false
         status.folders = []
         status.unwatched = []
+        status.missing = []
+        status.screenshotFolder = nil
         let source = folderSource
         armTask = Task { [weak self] in
             let resolved = await FileNamingIO.run { source() }
@@ -303,6 +305,7 @@ final class FileNamingService: ObservableObject {
             self.folders = resolved
             self.status.folders = resolved.map(\.url.path)
             self.status.unwatched = self.status.folders
+            self.status.screenshotFolder = resolved.first(where: \.screenshots)?.url.path
             WakeLog.shared.log("autoname: arming, \(resolved.count) folders")
             self.requestPass()
         }
@@ -338,6 +341,8 @@ final class FileNamingService: ObservableObject {
         status.armed = false
         status.folders = []
         status.unwatched = []
+        status.missing = []
+        status.screenshotFolder = nil
         WakeLog.shared.log("autoname: disarmed")
     }
 
@@ -396,9 +401,24 @@ final class FileNamingService: ObservableObject {
         let lister = self.lister
         passTask = Task { [weak self] in
             let urls = targets.map(\.url)
-            let listings = await FileNamingIO.run { urls.map { lister($0) } }
+            // A folder that cannot be listed is also checked for existence,
+            // here on the queue: inside Desktop or Documents even that waits
+            // on the permission dialog.
+            let read = await FileNamingIO.run { () -> (listings: [[FileNamingEntry]?], missing: [String]) in
+                let listings = urls.map { lister($0) }
+                var missing: [String] = []
+                for (url, listing) in zip(urls, listings) where listing == nil {
+                    var isDir: ObjCBool = false
+                    if !(FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) && isDir.boolValue) {
+                        missing.append(url.path)
+                    }
+                }
+                return (listings, missing)
+            }
+            let listings = read.listings
             guard let self, self.generation == gen else { return }
             self.passTask = nil
+            self.status.missing = read.missing
             self.absorb(listings, of: targets, at: Date())
             if self.passAgain {
                 self.passAgain = false

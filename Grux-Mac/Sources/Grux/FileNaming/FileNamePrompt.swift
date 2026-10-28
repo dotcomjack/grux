@@ -103,22 +103,29 @@ enum FileNamePrompt {
         //    not the file. A real Rust error named "Rust Ledger Compilation
         //    Error" passes; "Rust Borrow Checker Error" on a TypeScript error
         //    does not.
+        //    The whole example, copied as it stands, is refused when even one
+        //    of its words is not in the file: "Trackpad Settings" on a Display
+        //    settings screenshot has only "trackpad" missing, one word, which
+        //    the rule above lets through (review 2026-10-28).
         let nameWords = Set(letterWords(name))
+        let foldedName = folded(name)
         for example in examples {
             let missing = Set(letterWords(example).filter { $0.count >= 3 && !sourceWords.contains($0) })
             if missing.count >= 2 && missing.isSubset(of: nameWords) { return nil }
+            if !missing.isEmpty && foldedName == folded(example) { return nil }
         }
 
         // 5. Secret guard: a card, account or reference number never reaches
         //    Finder. Digits run together across separators of up to 3
         //    characters made of spaces, hyphens, dots, slashes, commas and
         //    underscores (` - `, `, `, `_`). Refused: 8 or more digits in one
-        //    run; 6 or more in one run where no separator is a single space
-        //    (`123456`, `123-456`, `4111.1111`, a date stamp). A day and a year
-        //    split by a space ("Oct 14 2026", 6 digits) is a date and stays.
-        //    Review 2026-10-28 found dotted, then comma, underscore and
-        //    ` - ` card numbers passing. `\p{Nd}` also catches full-width
-        //    digits.
+        //    run; 6 or more in one run where no separator holds a space
+        //    (`123456`, `123-456`, `4111.1111`, a date stamp). A day and a
+        //    year split by a space or a comma and a space ("Oct 14 2026",
+        //    "Oct 14, 2026") are a date and stay, and so is an amount like
+        //    "$1,250". Review 2026-10-28 found dotted, then comma, underscore
+        //    and ` - ` card numbers passing, and then the comma rule refusing
+        //    "Oct 14, 2026". `\p{Nd}` also catches full-width digits.
         for text in [beforeSeparators, name] {
             if secretDigits.contains(where: { text.range(of: $0, options: .regularExpression) != nil }) { return nil }
         }
@@ -131,12 +138,19 @@ enum FileNamePrompt {
     }
 
     /// The two digit rules of the secret guard: 8 or more digits joined by
-    /// any separators, and 6 or more joined by none, or by separators that
-    /// are not a single space.
+    /// any separators, and 6 or more joined by none, or by separators with
+    /// no space in them.
     static let secretDigits = [
         #"\p{Nd}(?:[ \-./,_]{0,3}\p{Nd}){7,}"#,
-        #"\p{Nd}(?:(?:[\-./,_][ \-./,_]{0,2}|\x20[ \-./,_]{1,2})?\p{Nd}){5,}"#,
+        #"\p{Nd}(?:[\-./,_]{0,3}\p{Nd}){5,}"#,
     ]
+
+    /// `text` folded for case and diacritics, its whitespace collapsed to
+    /// single spaces.
+    static func folded(_ text: String) -> String {
+        text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+            .split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    }
 
     /// Words too common to ground a name: whole words of nearly any text.
     static let stopWords: Set<String> = [
