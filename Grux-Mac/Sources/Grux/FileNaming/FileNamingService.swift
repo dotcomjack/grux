@@ -902,8 +902,11 @@ final class FileNamingService: ObservableObject {
     /// minutes) after the last file, and a new arrival cancels the countdown,
     /// so a run of screenshots names quickly and the memory still comes back.
     private func unloadIfIdle() {
-        guard queue.isEmpty, worker == nil, arrivals.isEmpty, lastNamingRoute != nil else { return }
-        idleUnload?.cancel()
+        // A countdown already running keeps its deadline: every folder pass
+        // calls this, and restarting here kept the model loaded for as long
+        // as a folder stayed busy (review 2026-10-28). Only a naming call or
+        // disarm cancels it.
+        guard queue.isEmpty, worker == nil, arrivals.isEmpty, lastNamingRoute != nil, idleUnload == nil else { return }
         let delay = idleUnloadDelay
         idleUnload = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(max(delay, 0) * 1_000_000_000))

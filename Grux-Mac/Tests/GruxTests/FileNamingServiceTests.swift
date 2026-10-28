@@ -804,12 +804,45 @@ final class FileNamingServiceTests: XCTestCase {
 
     // MARK: - The naming model
 
-    /// A NAMING MODEL THAT IS NOT THE CHAT MODEL IS LET GO. Otherwise one
-    /// screenshot holds a second model beside chat for 30 minutes (review
-    /// 2026-10-28).
     /// Unloading after every rename made each screenshot reload the model
     /// (2,052 and 4,406 ms against about 700 warm, measured 2026-10-28). It
     /// stays loaded for the idle delay after the last file and goes after it.
+    /// A folder pass during the countdown must not push the deadline back:
+    /// every pass used to restart it, so a busy Downloads folder kept the
+    /// naming model loaded forever (review 2026-10-28).
+    func testAPassDuringTheCountdownDoesNotPostponeTheUnload() async throws {
+        let savedModel = AppState.shared.config.offlineLLMModel
+        let savedSuspended = Persistence.writesSuspended
+        Persistence.writesSuspended = true
+        AppState.shared.config.offlineLLMModel = "chat-model-test:4b"
+        defer {
+            AppState.shared.config.offlineLLMModel = savedModel
+            Persistence.writesSuspended = savedSuspended
+        }
+        var unloaded: [String] = []
+        var unloadedAt: Date?
+        let (service, _) = make(reply: invoiceName, unloader: { unloaded.append($0.model); unloadedAt = Date() },
+                                idleDelay: 1.5)
+        await arm(service)
+        try drop("document (3).pdf")
+        service.rescan()
+        let named = await eventually { service.status.named == 1 }
+        XCTAssertTrue(named, "control: nothing was named: \(service.status)")
+        let start = Date()
+        for _ in 0..<6 {
+            try await Task.sleep(for: .milliseconds(300))
+            try drop("notes \(UUID().uuidString).txt", "not a candidate")
+            await service.rescanNow()
+        }
+        let gone = await eventually(3) { unloaded == ["grux-local-test"] }
+        XCTAssertTrue(gone, "the model was never let go: \(unloaded)")
+        // The time of the unload itself, not of the loop: the countdown
+        // started at the rename, so it lands about 1.5 s after `start`; a
+        // countdown restarted by each pass lands 3.3 s or later.
+        let at = try XCTUnwrap(unloadedAt)
+        XCTAssertLessThan(at.timeIntervalSince(start), 2.6, "passes during the countdown pushed the unload back")
+    }
+
     func testTheNamingModelStaysLoadedUntilTheIdleDelayPasses() async throws {
         let savedModel = AppState.shared.config.offlineLLMModel
         let savedSuspended = Persistence.writesSuspended
@@ -832,6 +865,9 @@ final class FileNamingServiceTests: XCTestCase {
         XCTAssertTrue(gone, "the naming model was never let go after the idle delay: \(unloaded)")
     }
 
+    /// A NAMING MODEL THAT IS NOT THE CHAT MODEL IS LET GO. Otherwise one
+    /// screenshot holds a second model beside chat for 30 minutes (review
+    /// 2026-10-28).
     func testANamingModelThatIsNotTheChatModelIsUnloadedWhenIdle() async throws {
         let savedModel = AppState.shared.config.offlineLLMModel
         let savedSuspended = Persistence.writesSuspended

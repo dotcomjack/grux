@@ -234,3 +234,52 @@ A private harness under `Grux-Mac/factory/eval/file-naming/`. `factory/` is excl
 ## Left to the builder
 
 Exact copy wording within the house rules, internal type names beyond the ones fixed above, and how the Settings list is laid out (follow `GruxTheme` and the screen control section).
+
+## As built (2026-10-28), where the design above changed
+
+Six review rounds, each with four lenses and two skeptics per finding, changed these points. They found 28, 15, 19, 15, 15 and 11 confirmed findings; the last two rounds had no P0 to P2. Where this section and the sections above disagree, this section wins.
+
+### Arrivals and identity
+- **What counts as new:** a file arrives only when its number (`st_ino`) is unseen and its birth time is at or after arm time minus 2 s. A rename keeps the number, so a capture a person renamed never comes back as new. Numbers Grux touched are known in every watched folder.
+- **Rewrites:** a new number under a name the previous listing held is a rewrite, not an arrival. An empty file is a placeholder (Firefox) and is never remembered.
+- **Unlistable folders:** a folder that cannot be listed gets no baseline. It is retried every 30 s and armed by its first successful listing.
+- **Missing versus denied:** a folder is reported missing only on ENOENT or ENOTDIR. A folder that exists but is refused gets the permission sentence.
+
+### Screenshots
+- **Capture names:** in the screenshot folder, the capture xattr is not enough. The name must also be a real macOS capture prefix (the `name` default, every language's value from screencaptureui's `Localizable.loctable`, "Screenshot" and "Screen Shot") followed by the whole capture stamp, date and time. Up to 6 characters may sit between the prefix and the date, and the right-to-left mark is set aside.
+
+### Settling and completeness
+- **When a file is ready:** two equal sizes, at least 3 s since the last write, and the content is whole:
+  - PNG: IEND;
+  - JPEG: FF D9, a motion photo's MP4, or Samsung's SEFT trailer;
+  - GIF: 3B;
+  - PDF: `%%EOF`;
+  - other formats: the ImageIO status.
+- **Rechecks:** completeness is checked once a file is quiet, and an incomplete file is rechecked every 10 s. The checks run again right before the rename.
+- **Pairs:** a file with a same-stem partner (still downloading or not) or a sidecar is left alone.
+
+### Model route and model lifetime
+- **Route:** never the registry's discovered backend. The route checks that the configured URL is loopback as Foundation parses it, probes that it is Ollama, and drops any model with `remote_host` or `remote_model` and any `-cloud` tag.
+- **Picking the model:** both names of Grux Local, then the chat model only if the server holds it.
+- **Lifetime:** a naming model that is not the chat model stays loaded 5 idle minutes, then is unloaded. Vision warms up when arming.
+
+### Naming and guards
+- **Reader:** the reader puts a "Largest text:" line first. It never counts toward the letter floor and never grounds a name.
+- **Grounding:** grounding is by whole words, with no stop words.
+- **Copied examples:** a name copied from the prompt's examples is refused.
+- **Secrets:** the digit guard refuses 8 or more joined digits, or 6 joined by separators without spaces. A money amount standing alone (with a currency sign, or with cents) is set aside first.
+- **Undo:** it refuses a file whose number changed (`.fileChanged`). All folder and undo I/O runs on one serial queue off the main actor.
+
+### Measured results
+- **Held-out, 100 items, grux-local:4b through the app on the 16 GB test Mac:**
+  - useful 85/92 = 92.4% (bar 90%);
+  - left alone 8/8;
+  - p95 2.0 s.
+- **The 8 GB tier (grux-local:2b) measured 77.8% on the tuning set:** below the bar, so it is the case for a training round.
+
+### Left knowingly (P3)
+- A symlinked folder whose target is refused reads as missing.
+- A short typed word between a capture prefix and its stamp still passes.
+- The ledger write after a rename is not flushed at quit.
+- Unload edge cases around previews.
+- A status probe can read `noLocalModel` for a moment under heavy load (seen once on a MacBook at load average 24).

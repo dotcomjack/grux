@@ -156,7 +156,7 @@ enum FileNamePrompt {
         // An amount stands alone: no digit within 3 characters on either
         // side, so "12 34-56.78" stays one number to the rules (CI 2026-10-28
         // caught the cents pattern hiding it).
-        let alone = (before: #"(?<![0-9][ \-./,_]{0,3})"#, after: #"(?![ \-./,_]{0,3}[0-9])"#)
+        let alone = (before: #"(?<!\p{Nd}[ \-./,_]{0,3})"#, after: #"(?![ \-./,_]{0,3}\p{Nd})"#)
         for core in [#"[$\x{20AC}\x{A3}\x{A5}] ?[0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]{2})?"#,
                      #"[0-9]{1,3}(?:,[0-9]{3})+\.[0-9]{2}"#,
                      #"[0-9]{1,6}\.[0-9]{2}"#] {
