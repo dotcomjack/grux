@@ -29,6 +29,8 @@ struct FileNamingEntry: Equatable, Sendable {
     let size: Int64
     /// The birth time (`st_birthtime`), what Finder shows as Created.
     let created: Date
+    /// The last write (`st_mtime`). A file still being written is not quiet.
+    let modified: Date
     let isRegular: Bool
 
     /// Every entry of `folder` with one `lstat` each, or nil when the folder
@@ -40,17 +42,26 @@ struct FileNamingEntry: Equatable, Sendable {
     /// waits on the permission dialog.
     static func list(_ folder: URL) -> [FileNamingEntry]? {
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { return nil }
-        return names.compactMap { name in
-            var st = stat()
-            guard lstat(folder.appendingPathComponent(name).path, &st) == 0 else { return nil }
-            let birth = st.st_birthtimespec
-            return FileNamingEntry(
-                name: name,
-                fileID: UInt64(st.st_ino),
-                size: Int64(st.st_size),
-                created: Date(timeIntervalSince1970: TimeInterval(birth.tv_sec) + TimeInterval(birth.tv_nsec) / 1_000_000_000),
-                isRegular: (st.st_mode & S_IFMT) == S_IFREG)
-        }
+        return names.compactMap { read(folder.appendingPathComponent($0)) }
+    }
+
+    /// One `lstat` of `url`, or nil when nothing is there. What a pending
+    /// file's check reads, so it never lists the folder again. Off the main
+    /// actor, like `list`.
+    static func read(_ url: URL) -> FileNamingEntry? {
+        var st = stat()
+        guard lstat(url.path, &st) == 0 else { return nil }
+        return FileNamingEntry(
+            name: url.lastPathComponent,
+            fileID: UInt64(st.st_ino),
+            size: Int64(st.st_size),
+            created: date(st.st_birthtimespec),
+            modified: date(st.st_mtimespec),
+            isRegular: (st.st_mode & S_IFMT) == S_IFREG)
+    }
+
+    private static func date(_ t: timespec) -> Date {
+        Date(timeIntervalSince1970: TimeInterval(t.tv_sec) + TimeInterval(t.tv_nsec) / 1_000_000_000)
     }
 }
 
@@ -131,36 +142,58 @@ final class FileRenameLedger {
     }
 
     func append(_ rename: FileRename) {
+        appendInMemory(rename)
+        save()
+    }
+
+    /// `append` without the write, for a caller that writes `encoded()`
+    /// itself, off the main actor and in order with its other writes.
+    func appendInMemory(_ rename: FileRename) {
         entries.append(rename)
         if entries.count > Self.cap { entries.removeFirst(entries.count - Self.cap) }
-        save()
     }
 
     /// Puts the old name back, only when the renamed file is still there and
     /// nothing has taken the old name. Otherwise it says why and changes
-    /// nothing. "Still there" is by file number when the entry has one: a file
-    /// a person saved later under the same new name is not Grux's file, and
-    /// renaming it would destroy a name they chose.
+    /// nothing.
     func undo(id: UUID) -> FileUndoOutcome {
         guard let i = entries.firstIndex(where: { $0.id == id }), entries[i].undoneAt == nil else {
             return .nothingToUndo
         }
-        let entry = entries[i]
+        let outcome = Self.restore(entries[i], fileManager: fileManager)
+        if outcome == .restored {
+            entries[i].undoneAt = Date()
+            save()
+        }
+        return outcome
+    }
+
+    /// The disk half of an undo, with no state: checks and the move back.
+    /// "Still there" is by file number when the entry has one: a file a
+    /// person saved later under the same new name is not Grux's file, and
+    /// renaming it would destroy a name they chose. A file that is there but
+    /// has another number was changed after the rename (an app's safe save
+    /// writes a new file over it), and is left alone (review 2026-10-28).
+    static func restore(_ entry: FileRename, fileManager: FileManager) -> FileUndoOutcome {
         let folder = URL(fileURLWithPath: entry.folder, isDirectory: true)
         let renamed = folder.appendingPathComponent(entry.newName)
         let original = folder.appendingPathComponent(entry.oldName)
         guard fileManager.fileExists(atPath: renamed.path) else { return .newNameGone }
         if let want = entry.fileID,
-           FileFingerprint.of(renamed, fileManager: fileManager)?.fileNumber != want { return .newNameGone }
+           FileFingerprint.of(renamed, fileManager: fileManager)?.fileNumber != want { return .fileChanged }
         guard !fileManager.fileExists(atPath: original.path) else { return .oldNameTaken }
         do {
             try fileManager.moveItem(at: renamed, to: original)
         } catch {
             return .failed(error.localizedDescription)
         }
-        entries[i].undoneAt = Date()
-        save()
         return .restored
+    }
+
+    /// Records an undo that `restore` carried out, without the write.
+    func markUndone(id: UUID) {
+        guard let i = entries.firstIndex(where: { $0.id == id }) else { return }
+        entries[i].undoneAt = Date()
     }
 
     /// The newest rename not yet undone.
@@ -181,14 +214,23 @@ final class FileRenameLedger {
         return Array(entries.suffix(cap))
     }
 
-    /// Creates its folder at the point of writing, never in a getter.
-    private func save() {
-        // Dates in the default encoding, which reads back to the same Date,
-        // so an entry decoded from disk equals the one that was written.
+    /// The entries as the file holds them. Dates in the default encoding,
+    /// which reads back to the same Date, so an entry decoded from disk equals
+    /// the one that was written.
+    func encoded() -> Data? {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(entries) else { return }
-        try? fileManager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        return try? encoder.encode(entries)
+    }
+
+    /// Creates its folder at the point of writing, never in a getter.
+    static func write(_ data: Data, to url: URL) {
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: url, options: .atomic)
+    }
+
+    private func save() {
+        guard let data = encoded() else { return }
+        Self.write(data, to: url)
     }
 }

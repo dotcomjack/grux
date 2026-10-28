@@ -29,6 +29,14 @@ enum FileNamePrompt {
     Use Title Case and only words from the text or plain words that describe it. No date stamps, no file extension, no quotes. Never include an account number, card number, password or code.
     """
 
+    /// The example names the system prompt shows. A small model sometimes
+    /// hands one back: measured 2026-10-28, grux-local:4b named a TypeScript
+    /// error "Rust Borrow Checker Error", grounded only by "Error". `clean`
+    /// refuses a name that carries an example's words the file does not have.
+    static let examples = ["Amtrak Train Ticket", "Corner Bakery Receipt", "School Picture Day Email",
+                           "Electric Bus Rollout Article", "Trackpad Settings", "Rust Borrow Checker Error",
+                           "Cast Iron Skillet"]
+
     static func user(text: String) -> String {
         "Text from the file:\n<<<\n\(text)\n>>>\nFile name:"
     }
@@ -54,6 +62,9 @@ enum FileNamePrompt {
         }
         name = stripExtensions(name, own: fileExtension).trimmingCharacters(in: wrapping)
         name = stripExtensions(name, own: fileExtension)
+        // Kept for the secret guard: step 2 turns a slash into a space, and
+        // `12/34/56` must be judged with its slashes.
+        let beforeSeparators = name
 
         // 2. Nothing that can leave the folder or hide the file.
         name = String(name.unicodeScalars.map { scalar -> Character in
@@ -75,21 +86,42 @@ enum FileNamePrompt {
         //    whole word of the text the model was given. Whole words, not
         //    substrings: "Ice" is inside "Invoice" and "The" is inside almost
         //    any text, so a substring match grounded an invented name
+        //    (review 2026-10-28). The body only: the reader's largest-text line
+        //    starts with a label whose words, "largest" and "text", are on
+        //    every image, so they grounded any name that used them. And not a
+        //    stop word: "the", "and" and "for" are whole words of nearly every
+        //    text, so "The Lost Treasure Map" was grounded by a recipe
         //    (review 2026-10-28).
-        let sourceWords = Set(letterWords(sourceText))
-        let grounded = letterWords(name).contains { $0.count >= 3 && sourceWords.contains($0) }
+        let sourceWords = Set(letterWords(FileTextReader.body(of: sourceText)))
+        let grounded = letterWords(name).contains {
+            $0.count >= 3 && !stopWords.contains($0) && sourceWords.contains($0)
+        }
         guard grounded else { return nil }
 
-        // 5. Secret guard: no 6 or more digits in a row, counting a single
-        //    space or hyphen between them as part of the run, so a card number
-        //    written "4111 1111 1111 1111" or "4111-1111-1111-1111" is caught
-        //    (review 2026-10-28). Also nothing the redactor would take, and no
-        //    redaction marker the text already carried.
-        // Six digits in a row, or eight split by single spaces or hyphens: a
-        // card, account or reference number. A day and a year ("Oct 14 2026",
-        // six digits across a space) is a date and stays.
-        if name.range(of: #"[0-9]{6,}"#, options: .regularExpression) != nil { return nil }
-        if name.range(of: #"[0-9](?:[ \-]?[0-9]){7,}"#, options: .regularExpression) != nil { return nil }
+        //    And no copied example: a name holding every word of an example that
+        //    the file lacks, two or more of them, came from the instructions,
+        //    not the file. A real Rust error named "Rust Ledger Compilation
+        //    Error" passes; "Rust Borrow Checker Error" on a TypeScript error
+        //    does not.
+        let nameWords = Set(letterWords(name))
+        for example in examples {
+            let missing = Set(letterWords(example).filter { $0.count >= 3 && !sourceWords.contains($0) })
+            if missing.count >= 2 && missing.isSubset(of: nameWords) { return nil }
+        }
+
+        // 5. Secret guard: a card, account or reference number never reaches
+        //    Finder. Digits run together across separators of up to 3
+        //    characters made of spaces, hyphens, dots, slashes, commas and
+        //    underscores (` - `, `, `, `_`). Refused: 8 or more digits in one
+        //    run; 6 or more in one run where no separator is a single space
+        //    (`123456`, `123-456`, `4111.1111`, a date stamp). A day and a year
+        //    split by a space ("Oct 14 2026", 6 digits) is a date and stays.
+        //    Review 2026-10-28 found dotted, then comma, underscore and
+        //    ` - ` card numbers passing. `\p{Nd}` also catches full-width
+        //    digits.
+        for text in [beforeSeparators, name] {
+            if secretDigits.contains(where: { text.range(of: $0, options: .regularExpression) != nil }) { return nil }
+        }
         if name.range(of: "REDACTED", options: .caseInsensitive) != nil { return nil }
         if SecretRedactor.redact(name, passes: .evidenceOnly) != name { return nil }
 
@@ -97,6 +129,20 @@ enum FileNamePrompt {
         guard name.filter(\.isLetter).count >= 2 else { return nil }
         return name
     }
+
+    /// The two digit rules of the secret guard: 8 or more digits joined by
+    /// any separators, and 6 or more joined by none, or by separators that
+    /// are not a single space.
+    static let secretDigits = [
+        #"\p{Nd}(?:[ \-./,_]{0,3}\p{Nd}){7,}"#,
+        #"\p{Nd}(?:(?:[\-./,_][ \-./,_]{0,2}|\x20[ \-./,_]{1,2})?\p{Nd}){5,}"#,
+    ]
+
+    /// Words too common to ground a name: whole words of nearly any text.
+    static let stopWords: Set<String> = [
+        "the", "and", "for", "from", "with", "your", "you", "are", "was", "this", "that", "its",
+        "our", "all", "new", "per", "via", "not", "but", "has", "have",
+    ]
 
     /// Extensions a reply may end in. A reply is untrusted and its source is
     /// text anybody can put in a download, so `Acme Invoice.pdf.txt` must not

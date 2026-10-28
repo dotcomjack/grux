@@ -56,9 +56,11 @@ enum FileNamingRules {
     private static let genericWord = try! NSRegularExpression(
         pattern: #"^(document|download|file|image|img|scan|untitled|unknown|attachment|invoice|receipt|statement|export|print|photo|pic|screenshot|screen shot|pxl|dsc|dcim)[0-9_\- ]*$"#)
 
-    /// A camera or capture app's stamp at the start of the name.
+    /// A camera or capture app's stamp at the start of the name, each with a
+    /// digit after it: without one, `Screen Recording Policy` read as made by
+    /// a machine (review 2026-10-28).
     private static let stamp = try! NSRegularExpression(
-        pattern: #"^(img[_-][0-9]|pxl_[0-9]|dsc[f_]?[0-9]|screenshot[ _-]?[0-9]|screen shot [0-9]|cleanshot [0-9]|screen recording )"#)
+        pattern: #"^(img[_-][0-9]|pxl_[0-9]|dsc[f_]?[0-9]|screenshot[ _-]?[0-9]|screen shot [0-9]|cleanshot [0-9]|screen recording [0-9])"#)
 
     /// A UUID or hash: the WHOLE stem, separators removed, is 16 or more hex
     /// characters. Anchored, because a run inside a longer name is a person's
@@ -124,37 +126,57 @@ enum FileNamingRules {
         return custom.isEmpty ? defaultCapturePrefixes : [custom]
     }
 
+    /// The whole shape of a capture's name in every language macOS ships, end
+    /// to end: a prefix with no digits (and maybe no space, `截屏2026-10-27`),
+    /// the date, up to 12 characters of words, the time (`9.41.03`, `09:41`),
+    /// up to 8 characters of AM or PM marker, and maybe a ` (2)` counter.
+    /// `Bildschirmfoto 2026-10-27 um 09.41.03` matches. A prefix and a date
+    /// alone matched `Expense report 2026-10-28 copy`, a capture the person
+    /// had named and then copied, and that copy was renamed (review
+    /// 2026-10-28).
+    private static let localizedCapture = try! NSRegularExpression(
+        pattern: #"^[^0-9]+[0-9]{4}-[0-9]{2}-[0-9]{2}[^0-9]{0,12}[0-9]{1,2}[.:][0-9]{2}(?:[.:][0-9]{2})?[^0-9]{0,8}(?: \([0-9]+\))?$"#)
+
     /// Whether `baseName` still reads as the name macOS gave a capture: a
-    /// prefix, a space, then a digit (`Screenshot 2026-10-27 at 9.41.03 AM`).
-    /// The capture xattr survives a rename, so the mark alone cannot tell
-    /// `Bug repro.png` (a capture a person named) from a fresh one
-    /// (review 2026-10-28). A localized default name (not set in `name`) does
-    /// not match, which leaves those captures alone rather than risk a name
-    /// a person typed.
+    /// prefix, a space, then a digit (`Screenshot 2026-10-27 at 9.41.03 AM`),
+    /// or the whole localized shape. The capture xattr survives a rename,
+    /// so the mark alone cannot tell `Bug repro.png` (a capture a person
+    /// named) from a fresh one (review 2026-10-28). The dated form is what
+    /// keeps a Mac in another language working: its captures carry a
+    /// localized prefix that is not in the `name` default, and with the
+    /// English prefixes only, no capture was ever named there (review
+    /// 2026-10-28).
     static func looksLikeCapture(_ baseName: String, prefixes: [String]) -> Bool {
         for prefix in prefixes where !prefix.isEmpty {
             guard let range = baseName.range(of: prefix + " ", options: [.anchored, .caseInsensitive]) else { continue }
             if baseName[range.upperBound...].first?.isNumber == true { return true }
         }
-        return false
+        return matches(localizedCapture, baseName)
     }
 
     // MARK: - Pairs
 
-    /// Whether another file in the folder shares this file's stem with a
-    /// different extension: a Live Photo (`IMG_4471.HEIC` beside
-    /// `IMG_4471.MOV`), a raw and its JPEG, or an edit sidecar. Photos and
-    /// photo editors pair those by stem, so renaming one half splits them
-    /// (review 2026-10-28). `others` are the names of the folder's other
-    /// regular files.
+    /// Whether another file in the folder belongs with this one: the same
+    /// stem with a different extension (a Live Photo's `IMG_4471.HEIC` beside
+    /// `IMG_4471.MOV`, a raw and its JPEG), or a sidecar (`IMG_4471.xmp`,
+    /// `IMG_4471.aae`, or `IMG_0012.jpg.xmp` as darktable writes it). Photos
+    /// and photo editors pair those by name, so renaming one half splits them
+    /// (review 2026-10-28). A partner still downloading counts: its partial
+    /// suffix comes off first, so `IMG_4471.MOV.crdownload` pairs with the
+    /// HEIC that finished before it. `others` are the folder's other names.
     static func hasPair(_ fileName: String, among others: [String]) -> Bool {
-        let ns = fileName as NSString
-        let stem = ns.deletingPathExtension.lowercased()
-        let ext = ns.pathExtension.lowercased()
+        let lowerName = fileName.lowercased()
+        let ns = lowerName as NSString
+        let stem = ns.deletingPathExtension
+        let ext = ns.pathExtension
+        let sidecars: Set<String> = [lowerName + ".xmp", stem + ".xmp", stem + ".aae"]
         return others.contains { other in
-            let o = other as NSString
-            return other != fileName && !o.pathExtension.isEmpty
-                && o.deletingPathExtension.lowercased() == stem && o.pathExtension.lowercased() != ext
+            var o = other.lowercased()
+            if sidecars.contains(o) { return true }
+            if let suffix = partialSuffixes.first(where: { o.hasSuffix($0) }) { o.removeLast(suffix.count) }
+            let on = o as NSString
+            return o != lowerName && !on.pathExtension.isEmpty
+                && on.deletingPathExtension == stem && on.pathExtension != ext
         }
     }
 
@@ -226,13 +248,23 @@ enum FileNamingRules {
     }
 
     /// The folders to watch on this Mac: the screenshot folder and Downloads,
-    /// merged when they are the same, and only the ones that exist.
+    /// merged when they are the same. A folder that does not exist is kept:
+    /// its listing fails, so it is retried and armed when it appears, as for a
+    /// folder macOS has not opened yet. Filtering it out here dropped it for
+    /// the whole arm, and the existence check itself, for a folder inside
+    /// Desktop or Documents, waits on the permission dialog (review
+    /// 2026-10-28). Nothing here reads inside a folder.
     static func watchedFolders(fileManager fm: FileManager = .default) -> [FileNamingFolder] {
         let home = fm.homeDirectoryForCurrentUser
         let downloads = fm.urls(for: .downloadsDirectory, in: .userDomainMask).first
             ?? home.appendingPathComponent("Downloads", isDirectory: true)
+        return watchedFolders(defaults: screenshotDefaults(), home: home, downloads: downloads)
+    }
+
+    /// The pure half of `watchedFolders`, so a test can hand in folders that
+    /// do not exist and see them kept.
+    static func watchedFolders(defaults: [String: Any], home: URL, downloads: URL) -> [FileNamingFolder] {
         var out: [FileNamingFolder] = []
-        let defaults = screenshotDefaults()
         if let shots = screenshotFolder(defaults: defaults, home: home) {
             out.append(FileNamingFolder(url: shots, screenshots: true, downloads: false,
                                         capturePrefixes: capturePrefixes(defaults: defaults)))
@@ -242,10 +274,7 @@ enum FileNamingRules {
         } else {
             out.append(FileNamingFolder(url: downloads, screenshots: false, downloads: true))
         }
-        return out.filter {
-            var isDir: ObjCBool = false
-            return fm.fileExists(atPath: $0.url.path, isDirectory: &isDir) && isDir.boolValue
-        }
+        return out
     }
 
     // MARK: - The screen capture mark

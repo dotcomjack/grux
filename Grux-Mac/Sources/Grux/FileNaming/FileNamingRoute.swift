@@ -32,6 +32,9 @@ enum FileNamingRoute {
         let backend: ModelBackend
         let model: String
         let apiKey: String
+        /// The checked loopback address the backend sends to, so the naming
+        /// model can be unloaded on the same server. nil for a test backend.
+        var baseURL: String? = nil
     }
 
     enum Resolution {
@@ -70,7 +73,7 @@ enum FileNamingRoute {
                                     installed: usable,
                                     fallback: cfg.offlineLLMModel) else { return .noLocalModel }
         return .ok(Route(backend: backend(for: base), model: model,
-                         apiKey: ModelRegistry.compatKey(forBaseURL: base)))
+                         apiKey: ModelRegistry.compatKey(forBaseURL: base), baseURL: base))
     }
 
     /// Loopback only: localhost, 127.0.0.0/8 or ::1.
@@ -129,10 +132,10 @@ enum FileNamingRoute {
     /// answers at once or is not running.
     nonisolated static let probeTimeout: TimeInterval = 3
 
-    /// The models installed on the Ollama at `base`, or nil when the server
-    /// there is not Ollama or does not answer. Ollama is the server whose
-    /// `GET /api/version` answers `{"version": "..."}`, the same check the
-    /// backend makes before it sends anything to `/api/chat`.
+    /// The models on the Ollama at `base` that run on this Mac, or nil when
+    /// the server there is not Ollama or does not answer. Ollama is the server
+    /// whose `GET /api/version` answers `{"version": "..."}`, the same check
+    /// the backend makes before it sends anything to `/api/chat`.
     static func ollamaModels(at base: String) async -> [String]? {
         guard let versionURL = URL(string: base + "/api/version"),
               let tagsURL = URL(string: base + "/api/tags") else { return nil }
@@ -154,7 +157,22 @@ enum FileNamingRoute {
         guard let version = await object(at: versionURL), version["version"] is String,
               let tags = await object(at: tagsURL), let models = tags["models"] as? [[String: Any]]
         else { return nil }
-        return models.compactMap { $0["name"] as? String }
+        return localModelNames(models)
+    }
+
+    /// The names of the `/api/tags` entries that run on this Mac. An entry
+    /// with a `remote_host` or `remote_model` is Ollama forwarding to its
+    /// hosted service, whatever its name says: a local alias of a cloud model
+    /// (`ollama cp gpt-oss:120b-cloud gpt-oss-big`) lists without the `-cloud`
+    /// suffix the name check looks for (review 2026-10-28). The name check in
+    /// `pickModel` stays as a second guard.
+    nonisolated static func localModelNames(_ models: [[String: Any]]) -> [String] {
+        models.compactMap { model -> String? in
+            for key in ["remote_host", "remote_model"] {
+                if let value = model[key], !(value is NSNull), (value as? String)?.isEmpty != true { return nil }
+            }
+            return model["name"] as? String
+        }
     }
 
     /// One backend per checked address, kept so its session and its "this is

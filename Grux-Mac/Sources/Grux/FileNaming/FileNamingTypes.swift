@@ -33,6 +33,9 @@ enum FileUndoOutcome: Equatable {
     case newNameGone
     /// Something else now holds the old name, and an undo never overwrites.
     case oldNameTaken
+    /// The file under the new name is not the one Grux renamed: it was
+    /// changed after the rename (saved over, or replaced), so Grux leaves it.
+    case fileChanged
     case failed(String)
 }
 

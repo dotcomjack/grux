@@ -36,7 +36,12 @@ enum FileTextReader {
         return prepared(raw)
     }
 
-    /// Cap, redact, and apply the letter floor. Pure.
+    /// Cap, redact, and apply the letter floor. Pure. The floor counts the
+    /// text the file shows, never the largest-text line: that line is a label
+    /// of 11 letters plus a copy of lines already in the body, so with it
+    /// counted any one word of 3 letters cleared the floor and a photo of a
+    /// sign reading SALE went to the model (review 2026-10-28, which counted 5
+    /// of the eval's 15 no-text items lost that way).
     static func prepared(_ raw: String) -> String {
         let collapsed = raw.components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespaces) }
@@ -44,8 +49,20 @@ enum FileTextReader {
             .joined(separator: "\n")
         let capped = String(collapsed.prefix(maxCharacters))
         let redacted = SecretRedactor.redact(capped, passes: .evidenceOnly)
-        guard redacted.filter(\.isLetter).count >= minimumLetters else { return "" }
+        guard body(of: redacted).filter(\.isLetter).count >= minimumLetters else { return "" }
         return redacted
+    }
+
+    /// The start of the line `withLargestText` puts first. One constant, read
+    /// by the reader that writes the line and by `FileNamePrompt.clean`, which
+    /// must never ground a name on the label's own words.
+    static let largestTextLabel = "Largest text: "
+
+    /// `text` without a leading largest-text line: what the file shows.
+    static func body(of text: String) -> String {
+        guard text.hasPrefix(largestTextLabel) else { return text }
+        guard let end = text.firstIndex(of: "\n") else { return "" }
+        return String(text[text.index(after: end)...])
     }
 
     // MARK: - Images
@@ -105,7 +122,61 @@ enum FileTextReader {
             heads.append(item.text)
             if heads.count == 3 { break }
         }
-        return heads.isEmpty ? body : "Largest text: " + heads.joined(separator: " | ") + "\n" + body
+        return heads.isEmpty ? body : largestTextLabel + heads.joined(separator: " | ") + "\n" + body
+    }
+
+    // MARK: - Complete
+
+    /// Whether the file's content is whole, so a download written straight to
+    /// its final name (curl, wget) is not named from its first half during a
+    /// stall in the network. Read by the end of the file, because ImageIO
+    /// reads a file cut short as complete: measured 2026-10-28, half a PNG,
+    /// and a PNG, a JPEG and a HEIC cut to 90, 50 and 10 percent, all read
+    /// `statusComplete` at the source and at index 0 (review 2026-10-28).
+    ///   - PNG: the last 12 bytes are the IEND chunk.
+    ///   - JPEG: the file ends in FF D9, after at most 32 zero bytes of padding.
+    ///   - GIF: the last byte is the 0x3B trailer.
+    ///   - Any other image (HEIC, TIFF, WebP): ImageIO's status at index 0,
+    ///     the best there is for a container with no fixed end.
+    ///   - PDF: `%%EOF` within the last 1,024 bytes, read first because it is
+    ///     cheap, then the document must open.
+    /// Reads the disk, so off the main actor.
+    static func isComplete(_ url: URL, kind: FileNamingKind) -> Bool {
+        switch kind {
+        case .image:
+            guard let head = bytes(of: url, fromEnd: false, count: 8),
+                  let tail = bytes(of: url, fromEnd: true, count: 64) else { return false }
+            if head.starts(with: pngSignature) { return tail.suffix(12).elementsEqual(pngEnd) }
+            if head.starts(with: [0xFF, 0xD8, 0xFF]) {
+                var end = tail[...]
+                var padding = 0
+                while end.last == 0x00 && padding < 32 { end = end.dropLast(); padding += 1 }
+                return end.suffix(2).elementsEqual([0xFF, 0xD9])
+            }
+            if head.starts(with: Array("GIF8".utf8)) { return tail.last == 0x3B }
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return false }
+            return CGImageSourceGetStatusAtIndex(source, 0) == .statusComplete
+        case .pdf:
+            guard let tail = bytes(of: url, fromEnd: true, count: 1_024),
+                  tail.range(of: Data("%%EOF".utf8)) != nil else { return false }
+            return PDFDocument(url: url) != nil
+        }
+    }
+
+    private static let pngSignature: [UInt8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
+    /// The IEND chunk: an empty length, the type, and its fixed CRC.
+    private static let pngEnd: [UInt8] = [0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82]
+
+    /// Up to `count` bytes from the start or the end of the file.
+    private static func bytes(of url: URL, fromEnd: Bool, count: UInt64) -> Data? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        if fromEnd {
+            guard let size = try? handle.seekToEnd() else { return nil }
+            guard (try? handle.seek(toOffset: size > count ? size - count : 0)) != nil else { return nil }
+            return try? handle.readToEnd() ?? Data()
+        }
+        return try? handle.read(upToCount: Int(count)) ?? Data()
     }
 
     // MARK: - PDFs

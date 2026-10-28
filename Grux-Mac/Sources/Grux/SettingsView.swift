@@ -2444,7 +2444,11 @@ private struct FileNamingRows: View {
                         .lineLimit(1).truncationMode(.middle)
                     Spacer()
                     if rename.undoneAt == nil {
-                        Button("Undo") { undoNote = Self.note(for: naming.undo(id: rename.id)) }
+                        // The file checks and the move run off the main actor,
+                        // so a folder permission dialog never freezes Settings.
+                        Button("Undo") {
+                            Task { undoNote = Self.note(for: await naming.undoInBackground(id: rename.id)) }
+                        }
                             .controlSize(.small)
                     } else {
                         Text("Undone").font(.caption2).foregroundStyle(.secondary)
@@ -2463,6 +2467,7 @@ private struct FileNamingRows: View {
         case .nothingToUndo: return "That rename was already undone."
         case .newNameGone: return "Nothing was changed: the renamed file has since been moved, renamed or deleted."
         case .oldNameTaken: return "Nothing was changed: another file now has the old name."
+        case .fileChanged: return "Nothing was changed: the file was changed after it was renamed, so Grux left it alone."
         case .failed: return "Nothing was changed: macOS would not rename the file back."
         }
     }

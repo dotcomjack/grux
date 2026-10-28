@@ -296,7 +296,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
             if action == FileNamedNotification.undoAction,
                let raw = ui[FileNamedNotification.idKey] as? String,
                let id = UUID(uuidString: raw) {
-                Task { @MainActor in FileNamingService.shared.undo(id: id) }
+                Task { @MainActor in await FileNamingService.shared.undoInBackground(id: id) }
             }
             completionHandler()
             return

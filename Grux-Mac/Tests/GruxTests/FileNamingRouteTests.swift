@@ -156,6 +156,40 @@ final class FileNamingRouteTests: XCTestCase {
         XCTAssertEqual(ok.route?.model, "grux-local:4b")
     }
 
+    /// A LOCAL ALIAS OF A CLOUD MODEL IS NOT LOCAL. `ollama cp
+    /// gpt-oss:120b-cloud gpt-oss-big` lists under a name with no `-cloud` in
+    /// it, and Ollama forwards every call to its hosted service; the entry's
+    /// `remote_host` and `remote_model` say so (review 2026-10-28).
+    func testACloudAliasIsNeverTheRoute() async throws {
+        AppState.shared.config.offlineLLMModel = "gpt-oss-big"
+        var routes = Self.ollama
+        routes["/api/tags"] = #"{"models":[{"name":"gpt-oss-big","remote_host":"https://ollama.com:443","remote_model":"gpt-oss:120b"}]}"#
+        let alias = try stub(routes)
+        AppState.shared.config.ollamaBaseURL = alias.baseURL
+        let refused = await FileNamingRoute.resolution()
+        XCTAssertEqual(refused.statusName, "noLocalModel", "a cloud model under a local name became the route")
+        XCTAssertTrue(alias.requestLines.contains { $0.hasPrefix("GET /api/tags") }, "control: the model list was never read")
+
+        // Control: the same name with no remote fields is a model on this Mac.
+        var localRoutes = Self.ollama
+        localRoutes["/api/tags"] = #"{"models":[{"name":"gpt-oss-big","remote_host":"","remote_model":null}]}"#
+        let local = try stub(localRoutes)
+        AppState.shared.config.ollamaBaseURL = local.baseURL
+        let ok = await FileNamingRoute.resolution()
+        XCTAssertEqual(ok.route?.model, "gpt-oss-big", "control: a local model with empty remote fields gave no route")
+    }
+
+    func testOnlyEntriesWithNoRemoteRunOnThisMac() {
+        let models: [[String: Any]] = [
+            ["name": "grux-local:4b"],
+            ["name": "qwen3.5:4b", "remote_host": "", "remote_model": NSNull()],
+            ["name": "gpt-oss-big", "remote_host": "https://ollama.com:443", "remote_model": "gpt-oss:120b"],
+            ["name": "kimi-alias", "remote_model": "kimi-k2:1t"],
+            ["name": "odd-alias", "remote_host": ["host": "elsewhere"]],
+        ]
+        XCTAssertEqual(FileNamingRoute.localModelNames(models), ["grux-local:4b", "qwen3.5:4b"])
+    }
+
     func testAnOllamaWithNothingPulledGivesNoRoute() async throws {
         var routes = Self.ollama
         routes["/api/tags"] = Self.tags([])

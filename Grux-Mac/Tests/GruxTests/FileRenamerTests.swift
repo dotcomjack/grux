@@ -150,10 +150,31 @@ final class FileRenamerTests: XCTestCase {
         let theirs = try XCTUnwrap(FileFingerprint.of(dir.appendingPathComponent("Acme Receipt.png"), fileManager: fm))
         XCTAssertNotEqual(theirs.fileNumber, entry.fileID, "control: the new file reused the old number")
 
-        XCTAssertEqual(book.undo(id: entry.id), .newNameGone)
+        XCTAssertEqual(book.undo(id: entry.id), .fileChanged,
+                       "a file under the new name that is not Grux's reads as changed, not as gone")
         XCTAssertTrue(exists("Acme Receipt.png"), "the person's file was renamed")
         XCTAssertFalse(exists("IMG_4471.png"))
         XCTAssertNil(book.entry(id: entry.id)?.undoneAt)
+    }
+
+    /// A FILE SAVED OVER AFTER THE RENAME IS LEFT ALONE, AND SAID SO. An app's
+    /// safe save (Preview, TextEdit) writes a new file over the old one: same
+    /// name, new number. Undo said the file had been moved, which it had not
+    /// (review 2026-10-28).
+    func testUndoOfAFileSavedOverSaysItChanged() throws {
+        let book = ledger()
+        let entry = try renamed("IMG_4471.png", to: "Acme Receipt", in: book)
+        let saved = dir.appendingPathComponent("saved-copy.tmp")
+        try Data("marked up".utf8).write(to: saved)
+        _ = try fm.replaceItemAt(dir.appendingPathComponent("Acme Receipt.png"), withItemAt: saved)
+        let now = try XCTUnwrap(FileFingerprint.of(dir.appendingPathComponent("Acme Receipt.png"), fileManager: fm))
+        XCTAssertNotEqual(now.fileNumber, entry.fileID, "control: the save kept the file number, so this proves nothing")
+
+        XCTAssertEqual(book.undo(id: entry.id), .fileChanged)
+        XCTAssertEqual(try String(contentsOf: dir.appendingPathComponent("Acme Receipt.png"), encoding: .utf8), "marked up",
+                       "a changed file was moved")
+        XCTAssertFalse(exists("IMG_4471.png"))
+        XCTAssertEqual(FileRenameLedger.restore(entry, fileManager: fm), .fileChanged, "the disk half says the same")
     }
 
     /// A ledger written before file numbers were kept still loads, and its

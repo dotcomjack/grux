@@ -54,7 +54,7 @@ enum FileNamingTriggers {
         let service = Self.service()
         switch name {
         case undoLast:
-            let outcome = service.undoLast()
+            let outcome = await service.undoLastInBackground()
             // The outcome word only. `failed` carries an error text that can
             // quote a path, so it stays out of the log and the file.
             WakeLog.shared.log("\(undoLast): \(word(outcome))")
@@ -118,6 +118,7 @@ enum FileNamingTriggers {
         case .nothingToUndo: return "nothingToUndo"
         case .newNameGone: return "newNameGone"
         case .oldNameTaken: return "oldNameTaken"
+        case .fileChanged: return "fileChanged"
         case .failed: return "failed"
         }
     }

@@ -1,5 +1,23 @@
 import Foundation
 
+/// One serial queue for every read, listing and move in a watched folder,
+/// and for the ledger's writes. Serial and outside Swift's cooperative pool on
+/// purpose: a listing of Desktop, Documents or Downloads before macOS has
+/// granted access blocks its thread on the permission dialog and cannot be
+/// canceled. On the pool, each toggle while the dialog was up held one more
+/// of its few threads (review 2026-10-28). Here at most one thread waits, and
+/// no listing of a folder starts while another is still in flight, because
+/// none starts while anything is in flight.
+enum FileNamingIO {
+    static let queue = DispatchQueue(label: "com.gruxai.grux.file-naming", qos: .utility)
+
+    static func run<T>(_ work: @escaping @Sendable () -> T) async -> T {
+        await withCheckedContinuation { continuation in
+            queue.async { continuation.resume(returning: work()) }
+        }
+    }
+}
+
 /// "Files that name themselves": a new screenshot, or a new image or PDF in
 /// Downloads with a machine-made name, is renamed from the text it shows.
 /// Design: docs/superpowers/specs/2026-10-27-files-name-themselves-design.md.
@@ -30,10 +48,14 @@ final class FileNamingService: ObservableObject {
     /// Lists one folder, or nil when it cannot be listed. Runs off the main
     /// actor, always.
     typealias Lister = @Sendable (URL) -> [FileNamingEntry]?
+    /// Whether a file's content is whole. Runs off the main actor.
+    typealias Completeness = @Sendable (URL, FileNamingKind) -> Bool
+    /// Lets go of a naming model that is not the chat model.
+    typealias Unloader = (FileNamingRoute.Route) -> Void
 
     // MARK: - Seams (tests hand in their own; the app uses the defaults)
 
-    private let folderSource: () -> [FileNamingFolder]
+    private let folderSource: @Sendable () -> [FileNamingFolder]
     private let lister: Lister
     private let routeSource: () async -> FileNamingRoute.Resolution
     private let readText: TextReader
@@ -43,13 +65,18 @@ final class FileNamingService: ObservableObject {
     private let settleTimeout: TimeInterval
     private let pendingInterval: TimeInterval
     private let retryInterval: TimeInterval
+    private let quietInterval: TimeInterval
+    private let completeness: Completeness
+    private let incompleteRecheck: TimeInterval
+    private let unloader: Unloader
+    private let previewUnloadDelay: TimeInterval
 
     /// - Parameters:
     ///   - folders: the folders to watch, instead of the screenshot folder and
     ///     Downloads. Tests pass a temporary folder so the suite never lists a
     ///     real one.
-    ///   - folderSource: where the folders come from, called once per arm.
-    ///     Wins over `folders`; a test counts its calls.
+    ///   - folderSource: where the folders come from, called once per arm,
+    ///     off the main actor. Wins over `folders`; a test counts its calls.
     ///   - lister: how a folder is listed, instead of `FileNamingEntry.list`.
     ///   - backend, model: a model to call instead of resolving the local
     ///     route, so a test needs no server.
@@ -58,10 +85,18 @@ final class FileNamingService: ObservableObject {
     ///     reads this far apart.
     ///   - settleTimeout: a file still changing this long after it appeared
     ///     is dropped.
-    ///   - pendingInterval, retryInterval: how often the fallback re-check
-    ///     runs while a file is settling, and while a folder is not watched.
+    ///   - pendingInterval, retryInterval: how often the settling files are
+    ///     read again, and how often a folder that is not watched is retried.
+    ///   - quietInterval: a file is named only once it has not been written
+    ///     for this long.
+    ///   - completeness: instead of `FileTextReader.isComplete`.
+    ///   - incompleteRecheck: a file that read as not whole is checked again
+    ///     at most this often.
+    ///   - unloader: instead of asking Ollama to unload the naming model.
+    ///   - previewUnloadDelay: how long after a preview its naming model is
+    ///     let go, unless another preview comes first.
     init(folders: [FileNamingFolder]? = nil,
-         folderSource: (() -> [FileNamingFolder])? = nil,
+         folderSource: (@Sendable () -> [FileNamingFolder])? = nil,
          lister: Lister? = nil,
          backend: ModelBackend? = nil,
          model: String? = nil,
@@ -71,13 +106,18 @@ final class FileNamingService: ObservableObject {
          settleInterval: TimeInterval = 0.5,
          settleTimeout: TimeInterval = 600,
          pendingInterval: TimeInterval = 1,
-         retryInterval: TimeInterval = 30) {
+         retryInterval: TimeInterval = 30,
+         quietInterval: TimeInterval = 3,
+         completeness: Completeness? = nil,
+         incompleteRecheck: TimeInterval = 10,
+         unloader: Unloader? = nil,
+         previewUnloadDelay: TimeInterval = 60) {
         if let folderSource {
             self.folderSource = folderSource
         } else if let folders {
             self.folderSource = { folders }
         } else {
-            self.folderSource = { FileNamingRules.watchedFolders(fileManager: fileManager) }
+            self.folderSource = { FileNamingRules.watchedFolders() }
         }
         if let lister {
             self.lister = lister
@@ -101,6 +141,25 @@ final class FileNamingService: ObservableObject {
         self.settleTimeout = settleTimeout
         self.pendingInterval = pendingInterval
         self.retryInterval = retryInterval
+        self.quietInterval = quietInterval
+        if let completeness {
+            self.completeness = completeness
+        } else {
+            self.completeness = { url, kind in FileTextReader.isComplete(url, kind: kind) }
+        }
+        if let unloader {
+            self.unloader = unloader
+        } else {
+            // `keep_alive: 0` on the loopback base the call used, the request
+            // LocalModelUnload already builds; never sent from the test host.
+            self.unloader = { route in
+                guard !LocalModelUnload.isUnderTest, let base = route.baseURL,
+                      let request = LocalModelUnload.request(baseURL: base, model: route.model) else { return }
+                URLSession.shared.dataTask(with: request).resume()
+            }
+        }
+        self.incompleteRecheck = incompleteRecheck
+        self.previewUnloadDelay = previewUnloadDelay
         recent = ledger.recent(10)
     }
 
@@ -111,9 +170,21 @@ final class FileNamingService: ObservableObject {
     /// renaming a file, or Grux's own rename, keeps the number, so neither is
     /// ever read as a new file (review 2026-10-28, which found renamed
     /// captures being renamed again).
+    ///
+    /// `names` are the names, of files that are not empty, that the folder's
+    /// last listing held. A new number under one of those names is the same
+    /// file written again, not a new one: a tool that saves by writing a
+    /// temporary file and moving it over the original (`exiftool
+    /// -overwrite_original`, `qpdf --replace-input`) gives it a new number AND
+    /// a new creation date (review 2026-10-28). The last listing only, never
+    /// every name ever seen: that read a new download reusing a deleted
+    /// file's generic name (`document.pdf`) as a rewrite forever (review
+    /// 2026-10-28). A temp-then-move keeps the name in every listing; a
+    /// delete and a later download leave at least one listing without it.
     private struct Baseline {
         let armedAt: Date
         var seen: Set<UInt64>
+        var names: Set<String>
     }
 
     /// A new file waiting for its size to hold still.
@@ -121,9 +192,23 @@ final class FileNamingService: ObservableObject {
         let name: String
         let folder: FileNamingFolder
         let fileID: UInt64
+        let kind: FileNamingKind
         let firstSeen: Date
         var lastSize: Int64
         var lastSizeAt: Date
+        /// When the content last read as not whole, so the check, which can
+        /// parse a whole PDF, runs at most every `incompleteRecheck`.
+        var incompleteAt: Date?
+    }
+
+    /// One settling file as the pending check read it, off the main actor.
+    private struct PendingRead {
+        let path: String
+        let entry: FileNamingEntry?
+        /// The content check ran on this read.
+        let checked: Bool
+        /// Held its size, quiet, and complete: ready for the model.
+        let ready: Bool
     }
 
     /// A settled file, waiting for the model.
@@ -131,6 +216,7 @@ final class FileNamingService: ObservableObject {
         let url: URL
         let folder: FileNamingFolder
         let fingerprint: FileFingerprint
+        let kind: FileNamingKind
     }
 
     /// A file counts as new only when it was created at or after the folder's
@@ -151,8 +237,29 @@ final class FileNamingService: ObservableObject {
     private var worker: Task<Void, Never>?
     private var passTask: Task<Void, Never>?
     private var passAgain = false
-    private var fallback: Task<Void, Never>?
-    private var fallbackDelay: TimeInterval = 0
+    private var pendingTask: Task<Void, Never>?
+    private var pendingTimer: Task<Void, Never>?
+    private var retryTimer: Task<Void, Never>?
+    /// Folder path to every name its last listing held, partial names
+    /// included, for the pair check.
+    private var latestNames: [String: Set<String>] = [:]
+    /// The route of the last naming call, until the queue drains. Never set
+    /// by a preview, so a pass while the eval runs does not unload its model
+    /// between items (review 2026-10-28).
+    private var lastNamingRoute: FileNamingRoute.Route?
+    /// The route of the last preview's naming call, and its pending unload.
+    private var lastPreviewRoute: FileNamingRoute.Route?
+    private var previewUnload: Task<Void, Never>?
+    /// Resolving the folders, off the main actor, at arm.
+    private var armTask: Task<Void, Never>?
+    /// Every file number present in a watched folder at its baseline, and
+    /// every one Grux renamed or put back, across all the folders and arms. A
+    /// move between two watched folders keeps the number, so a capture the
+    /// person put back with Undo and then dragged into Downloads is not new
+    /// there (review 2026-10-28).
+    private var known: Set<UInt64> = []
+    /// Undos with their disk work in flight, so one is never run twice.
+    private var undoing: Set<UUID> = []
     /// Bumped on every arm and disarm, so work started under an old arm
     /// never renames anything.
     private var generation = 0
@@ -168,28 +275,46 @@ final class FileNamingService: ObservableObject {
         if enabled { arm() } else { disarm() }
     }
 
-    /// Takes no listing itself: the first pass, off the main actor, lists each
-    /// folder and that listing is its baseline. Listing Desktop, Documents or
-    /// Downloads before macOS has granted access waits on the permission
-    /// dialog, and on the main actor that froze the app, at launch too when a
-    /// grant had been reset (review 2026-10-28).
+    /// Touches no folder on the main actor: the folders are resolved, and
+    /// the first pass lists each one, on `FileNamingIO`, and that listing is
+    /// its baseline. Listing Desktop, Documents or Downloads before macOS has
+    /// granted access waits on the permission dialog, and on the main actor
+    /// that froze the app, at launch too when a grant had been reset. Even the
+    /// screenshot folder's existence check waits when the folder sits inside
+    /// Desktop or Documents (review 2026-10-28). A folder that does not exist
+    /// is kept: its listing fails, and the retry arms it when it appears.
     private func arm() {
         generation += 1
-        folders = folderSource()
+        let gen = generation
+        folders = []
         baselines = [:]
         arrivals = [:]
+        latestNames = [:]
         watch = FileWatch { [weak self] in self?.foldersChanged() }
         status.enabled = true
         status.armed = false
-        status.folders = folders.map(\.url.path)
-        status.unwatched = status.folders
-        WakeLog.shared.log("autoname: arming, \(folders.count) folders")
-        requestPass()
+        status.folders = []
+        status.unwatched = []
+        let source = folderSource
+        armTask = Task { [weak self] in
+            let resolved = await FileNamingIO.run { source() }
+            guard let self, self.generation == gen else { return }
+            self.armTask = nil
+            self.folders = resolved
+            self.status.folders = resolved.map(\.url.path)
+            self.status.unwatched = self.status.folders
+            WakeLog.shared.log("autoname: arming, \(resolved.count) folders")
+            self.requestPass()
+        }
         Task { await refreshStatus() }
     }
 
     private func disarm() {
+        if let route = lastNamingRoute { unloadIfNotChat(route) }
+        lastNamingRoute = nil
         generation += 1
+        armTask?.cancel()
+        armTask = nil
         watch?.stop()
         watch = nil
         worker?.cancel()
@@ -197,12 +322,17 @@ final class FileNamingService: ObservableObject {
         passTask?.cancel()
         passTask = nil
         passAgain = false
-        fallback?.cancel()
-        fallback = nil
+        pendingTask?.cancel()
+        pendingTask = nil
+        pendingTimer?.cancel()
+        pendingTimer = nil
+        retryTimer?.cancel()
+        retryTimer = nil
         queue = []
         queuedPaths = []
         baselines = [:]
         arrivals = [:]
+        latestNames = [:]
         folders = []
         status.enabled = false
         status.armed = false
@@ -243,7 +373,7 @@ final class FileNamingService: ObservableObject {
     }
 
     /// Asks for a pass over every watched folder. The FileWatch event and the
-    /// fallback call it; tests call it directly. Returns at once: the listing
+    /// retry for a folder not watched call it; tests call it directly. Returns at once: the listing
     /// runs off the main actor.
     func rescan() {
         requestPass()
@@ -251,19 +381,22 @@ final class FileNamingService: ObservableObject {
 
     /// A pass, awaited to the end, including any pass asked for while it ran.
     func rescanNow() async {
+        if let arming = armTask { await arming.value }
         requestPass()
         while let task = passTask { await task.value }
     }
 
     private func requestPass() {
-        guard status.enabled else { return }
+        // While the folders are being resolved there is nothing to list; the
+        // arm asks for the first pass itself.
+        guard status.enabled, armTask == nil else { return }
         guard passTask == nil else { passAgain = true; return }
         let gen = generation
         let targets = folders
         let lister = self.lister
         passTask = Task { [weak self] in
             let urls = targets.map(\.url)
-            let listings = await Task.detached(priority: .utility) { urls.map { lister($0) } }.value
+            let listings = await FileNamingIO.run { urls.map { lister($0) } }
             guard let self, self.generation == gen else { return }
             self.passTask = nil
             self.absorb(listings, of: targets, at: Date())
@@ -271,39 +404,128 @@ final class FileNamingService: ObservableObject {
                 self.passAgain = false
                 self.requestPass()
             } else {
-                self.scheduleFallback()
+                self.scheduleTimers()
             }
         }
     }
 
-    /// FileWatch is the main mechanism; this is the slow net under it, and it
-    /// runs only while there is something to do: every `pendingInterval`
-    /// while a new file is settling, every `retryInterval` while a folder is
-    /// not watched (access not granted yet, or the folder is gone). FileWatch's
-    /// own doc asks callers for this: a folder deleted and made again sends no
-    /// further event to the old descriptor (review 2026-10-28).
-    private func scheduleFallback() {
+    /// FileWatch is the main mechanism; these are the two slow checks beside
+    /// it, each running only while it has something to do. While a new file is
+    /// settling, every `pendingInterval` reads THAT file again and nothing
+    /// else: re-listing every folder once a second was a full listing of
+    /// Downloads and the screenshot folder, and a sort of both on the main
+    /// actor, for as long as a 0 byte file sat there, up to 10 minutes
+    /// (review 2026-10-28). While a folder is not watched (access not granted
+    /// yet, or the folder is gone), every `retryInterval` lists the folders
+    /// again; FileWatch's own doc asks for that, since a folder deleted and
+    /// made again sends nothing to the old descriptor.
+    private func scheduleTimers() {
         guard status.enabled else { return }
-        let delay: TimeInterval
-        if !arrivals.isEmpty {
-            delay = pendingInterval
-        } else if folders.contains(where: { baselines[$0.url.path] == nil }) {
-            delay = retryInterval
-        } else {
-            return
-        }
-        if fallback != nil {
-            if fallbackDelay <= delay { return }
-            fallback?.cancel()
-        }
-        fallbackDelay = delay
         let gen = generation
-        fallback = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(max(delay, 0.01) * 1_000_000_000))
-            guard let self, !Task.isCancelled, self.generation == gen else { return }
-            self.fallback = nil
-            self.rewatch()
-            self.requestPass()
+        if !arrivals.isEmpty, pendingTimer == nil, pendingTask == nil {
+            let delay = pendingInterval
+            pendingTimer = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(max(delay, 0.01) * 1_000_000_000))
+                guard let self, !Task.isCancelled, self.generation == gen else { return }
+                self.pendingTimer = nil
+                self.checkPending()
+            }
+        }
+        if retryTimer == nil, folders.contains(where: { baselines[$0.url.path] == nil }) {
+            let delay = retryInterval
+            retryTimer = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(max(delay, 0.01) * 1_000_000_000))
+                guard let self, !Task.isCancelled, self.generation == gen else { return }
+                self.retryTimer = nil
+                self.requestPass()
+            }
+        }
+    }
+
+    /// One `lstat` per settling file, off the main actor, and the content
+    /// check for the ones that look done. A file is ready when its size held
+    /// across two reads `settleInterval` apart, it has not been written for
+    /// `quietInterval`, and its content is whole: two equal sizes alone named
+    /// a download written straight to its final name from its first half
+    /// during a one second stall (review 2026-10-28).
+    private func checkPending() {
+        guard status.enabled, pendingTask == nil, !arrivals.isEmpty else { return }
+        let gen = generation
+        let snapshot = Array(arrivals.values)
+        let settle = settleInterval
+        let quiet = quietInterval
+        let complete = completeness
+        let recheck = incompleteRecheck
+        let now = Date()
+        pendingTask = Task { [weak self] in
+            let reads = await FileNamingIO.run { () -> [PendingRead] in
+                snapshot.map { arrival in
+                    let url = arrival.folder.url.appendingPathComponent(arrival.name)
+                    let entry = FileNamingEntry.read(url)
+                    var checked = false
+                    var ready = false
+                    // The content check, which can parse a whole PDF, only
+                    // once the size and the clock say the writing stopped, and
+                    // after a "not whole" at most every `recheck`: a stalled
+                    // download used to be parsed every second for 10 minutes
+                    // (review 2026-10-28).
+                    if let e = entry, e.isRegular, e.fileID == arrival.fileID, e.size > 0,
+                       e.size == arrival.lastSize, now.timeIntervalSince(arrival.lastSizeAt) >= settle,
+                       now.timeIntervalSince(e.modified) >= quiet,
+                       arrival.incompleteAt.map({ now.timeIntervalSince($0) >= recheck }) ?? true {
+                        checked = true
+                        ready = complete(url, arrival.kind)
+                    }
+                    return PendingRead(path: url.path, entry: entry, checked: checked, ready: ready)
+                }
+            }
+            guard let self, self.generation == gen else { return }
+            self.pendingTask = nil
+            self.applyPending(reads, at: now)
+            self.scheduleTimers()
+            self.unloadIfIdle()
+        }
+    }
+
+    private func applyPending(_ reads: [PendingRead], at now: Date) {
+        for read in reads {
+            guard let arrival = arrivals[read.path] else { continue }
+            guard let entry = read.entry, entry.isRegular else {
+                // Moved, renamed or deleted before it settled.
+                arrivals[read.path] = nil
+                skip(.changedMeanwhile)
+                continue
+            }
+            guard entry.fileID == arrival.fileID else {
+                // Written again under its name. The new number is a rewrite,
+                // which the next listing marks seen and leaves alone.
+                arrivals[read.path] = nil
+                continue
+            }
+            if read.ready {
+                arrivals[read.path] = nil
+                let names = Array(latestNames[arrival.folder.url.path] ?? [])
+                if FileNamingRules.hasPair(arrival.name, among: names) {
+                    skip(.unsupported)
+                    continue
+                }
+                enqueue(Ready(url: arrival.folder.url.appendingPathComponent(arrival.name), folder: arrival.folder,
+                              fingerprint: FileFingerprint(size: entry.size, fileNumber: entry.fileID),
+                              kind: arrival.kind))
+                continue
+            }
+            if now.timeIntervalSince(arrival.firstSeen) >= settleTimeout {
+                arrivals[read.path] = nil
+                skip(.unsupported)
+                continue
+            }
+            if entry.size != arrival.lastSize {
+                arrivals[read.path]?.lastSize = entry.size
+                arrivals[read.path]?.lastSizeAt = now
+                arrivals[read.path]?.incompleteAt = nil
+            } else if read.checked {
+                arrivals[read.path]?.incompleteAt = now
+            }
         }
     }
 
@@ -314,10 +536,12 @@ final class FileNamingService: ObservableObject {
     /// One pass's listings, on the main actor. A folder whose listing failed
     /// loses its baseline and waits; a folder listed for the first time takes
     /// that listing as its baseline and queues nothing; in a folder with a
-    /// baseline, a file is new only when its number is unseen AND it was
-    /// created after the baseline. A partial or hidden entry is never marked
-    /// seen: a capture's temporary file and a `.crdownload` keep their number
-    /// when they take their final name, and that name is the arrival.
+    /// baseline, a file is new only when its number is unseen, its name is
+    /// not one the folder already held, and it was created after the
+    /// baseline. Only unseen numbers are judged, so a pass costs a set lookup
+    /// per entry. A partial or hidden entry is never marked seen: a capture's
+    /// temporary file and a `.crdownload` keep their number when they take
+    /// their final name, and that name is the arrival.
     private func absorb(_ listings: [[FileNamingEntry]?], of targets: [FileNamingFolder], at now: Date) {
         for (folder, listing) in zip(targets, listings) {
             let path = folder.url.path
@@ -325,74 +549,52 @@ final class FileNamingService: ObservableObject {
                 if baselines.removeValue(forKey: path) != nil {
                     WakeLog.shared.log("autoname: a watched folder could not be listed; waiting for it")
                 }
+                latestNames[path] = nil
                 for (key, arrival) in arrivals where arrival.folder.url.path == path { arrivals[key] = nil }
                 continue
             }
+            latestNames[path] = Set(entries.map(\.name))
+            let tracked = entries.filter(Self.isTracked)
             guard var baseline = baselines[path] else {
-                baselines[path] = Baseline(armedAt: now, seen: Set(entries.filter(Self.isTracked).map(\.fileID)))
+                let present = Set(tracked.map(\.fileID))
+                known.formUnion(present)
+                baselines[path] = Baseline(armedAt: now, seen: present,
+                                           names: Set(tracked.filter { $0.size > 0 }.map(\.name)))
                 WakeLog.shared.log("autoname: a folder is watched, \(entries.count) entries already there are left alone")
                 continue
             }
             let cutoff = baseline.armedAt.addingTimeInterval(-Self.creationSlack)
-            for entry in entries.sorted(by: { $0.name < $1.name }) where Self.isTracked(entry) {
-                guard baseline.seen.insert(entry.fileID).inserted, entry.created >= cutoff else { continue }
+            let previous = baseline.names
+            let unseen = tracked.filter { !baseline.seen.contains($0.fileID) }.sorted { $0.name < $1.name }
+            for entry in unseen {
+                // An empty file is a placeholder, not an arrival: Firefox makes
+                // one and later moves the finished `.part` over it, under a new
+                // number. Neither its number nor its name is remembered, so the
+                // finished file arrives as new.
+                if entry.size == 0 { continue }
+                baseline.seen.insert(entry.fileID)
+                // A number known from another watched folder moved here.
+                if known.contains(entry.fileID) { continue }
+                // A new number under a name the last listing held is a
+                // rewrite: left alone and not counted, since nothing new
+                // arrived.
+                guard !previous.contains(entry.name), entry.created >= cutoff else { continue }
                 switch FileNamingRules.candidacy(fileName: entry.name, in: folder, isScreenCapture: { folder.screenshots }) {
                 case .ignore: continue
                 case .skip(let reason): skip(reason)
-                case .candidate:
+                case .candidate(let kind):
                     let url = folder.url.appendingPathComponent(entry.name)
-                    arrivals[url.path] = Arrival(name: entry.name, folder: folder, fileID: entry.fileID,
+                    arrivals[url.path] = Arrival(name: entry.name, folder: folder, fileID: entry.fileID, kind: kind,
                                                  firstSeen: now, lastSize: entry.size, lastSizeAt: now)
                 }
             }
+            baseline.names = Set(tracked.filter { $0.size > 0 }.map(\.name))
             baselines[path] = baseline
-            settle(in: folder, entries: entries, at: now)
         }
         rewatch()
         status.unwatched = folders.map(\.url.path).filter { baselines[$0] == nil }
         status.armed = folders.contains { baselines[$0.url.path] != nil }
-    }
-
-    /// Settling never holds the queue: each pass hands on the files whose
-    /// size held across two reads `settleInterval` apart and leaves the rest
-    /// waiting. It used to be one file at a time inside the worker, so a
-    /// download that never settled (Firefox writes a 0 byte file under the
-    /// final name, then moves the `.part` over it) held every screenshot
-    /// behind it for 60 s and was then dropped for good (review 2026-10-28).
-    private func settle(in folder: FileNamingFolder, entries: [FileNamingEntry], at now: Date) {
-        let path = folder.url.path
-        var byName: [String: FileNamingEntry] = [:]
-        for entry in entries { byName[entry.name] = entry }
-        for (key, arrival) in arrivals where arrival.folder.url.path == path {
-            guard let entry = byName[arrival.name], entry.fileID == arrival.fileID, entry.isRegular else {
-                // Renamed, moved, deleted or replaced before it settled. A
-                // replacement has its own number and is its own arrival.
-                arrivals[key] = nil
-                skip(.changedMeanwhile)
-                continue
-            }
-            if entry.size > 0, entry.size == arrival.lastSize,
-               now.timeIntervalSince(arrival.lastSizeAt) >= settleInterval {
-                arrivals[key] = nil
-                let others = entries.filter { $0.isRegular && $0.name != entry.name }.map(\.name)
-                if FileNamingRules.hasPair(entry.name, among: others) {
-                    skip(.unsupported)
-                    continue
-                }
-                enqueue(Ready(url: folder.url.appendingPathComponent(entry.name), folder: folder,
-                              fingerprint: FileFingerprint(size: entry.size, fileNumber: entry.fileID)))
-                continue
-            }
-            if now.timeIntervalSince(arrival.firstSeen) >= settleTimeout {
-                arrivals[key] = nil
-                skip(.unsupported)
-                continue
-            }
-            if entry.size != arrival.lastSize {
-                arrivals[key]?.lastSize = entry.size
-                arrivals[key]?.lastSizeAt = now
-            }
-        }
+        unloadIfIdle()
     }
 
     private func enqueue(_ item: Ready) {
@@ -413,7 +615,10 @@ final class FileNamingService: ObservableObject {
                 await self.process(item, generation: gen)
                 self.queuedPaths.remove(item.url.path)
             }
-            if let self, self.generation == gen { self.worker = nil }
+            if let self, self.generation == gen {
+                self.worker = nil
+                self.unloadIfIdle()
+            }
         }
     }
 
@@ -427,7 +632,7 @@ final class FileNamingService: ObservableObject {
         // like every other read of a watched folder.
         var isCapture = false
         if item.folder.screenshots {
-            isCapture = await Task.detached(priority: .utility) { FileNamingRules.isScreenCapture(url) }.value
+            isCapture = await FileNamingIO.run { FileNamingRules.isScreenCapture(url) }
         }
         guard generation == gen else { return }
         let kind: FileNamingKind
@@ -444,6 +649,29 @@ final class FileNamingService: ObservableObject {
             log(proposal, outcome: "left")
             return
         }
+
+        // The checks that passed when it settled, again: the model call can
+        // run long after, behind a chat turn or other files, and a partner, a
+        // write or a stall can land in that gap (review 2026-10-28).
+        let folderURL = item.folder.url
+        let complete = completeness
+        let quiet = quietInterval
+        let recheck = await FileNamingIO.run { () -> (whole: Bool, quiet: Bool, names: [String]?) in
+            let quietNow = FileNamingEntry.read(url).map { Date().timeIntervalSince($0.modified) >= quiet } ?? false
+            let names = try? FileManager.default.contentsOfDirectory(atPath: folderURL.path)
+            return (complete(url, kind), quietNow, names)
+        }
+        guard generation == gen else { return }
+        guard let names = recheck.names, !FileNamingRules.hasPair(fileName, among: names) else {
+            skip(.unsupported)
+            log(proposal, outcome: "pair")
+            return
+        }
+        guard recheck.whole, recheck.quiet else {
+            skip(.changedMeanwhile)
+            log(proposal, outcome: "changedMeanwhile")
+            return
+        }
         do {
             let renamer = FileRenamer(fileManager: fileManager)
             let renamed = try renamer.rename(url, to: base, expecting: item.fingerprint)
@@ -451,10 +679,16 @@ final class FileNamingService: ObservableObject {
             // already seen; said here so that never rests on how the move
             // was made.
             baselines[item.folder.url.path]?.seen.insert(item.fingerprint.fileNumber)
+            known.insert(item.fingerprint.fileNumber)
+            // The old name is free again: a later download that takes it is a
+            // new file, not this one written again.
+            baselines[item.folder.url.path]?.names.remove(fileName)
+            baselines[item.folder.url.path]?.names.insert(renamed.lastPathComponent)
             let entry = FileRename(id: UUID(), folder: item.folder.url.path, oldName: fileName,
                                    newName: renamed.lastPathComponent, at: Date(), undoneAt: nil,
                                    fileID: item.fingerprint.fileNumber)
-            ledger.append(entry)
+            ledger.appendInMemory(entry)
+            writeLedger()
             recent = ledger.recent(10)
             status.named += 1
             status.lastNamedAt = entry.at
@@ -486,7 +720,7 @@ final class FileNamingService: ObservableObject {
 
     /// Route, read, ask, clean. Shared by the live path and the preview, so
     /// the eval measures exactly what renames files.
-    private func propose(url: URL, kind: FileNamingKind) async -> Proposal {
+    private func propose(url: URL, kind: FileNamingKind, forPreview: Bool = false) async -> Proposal {
         let resolution = await routeSource()
         noteRoute(resolution)
         guard let route = resolution.route else {
@@ -525,7 +759,10 @@ final class FileNamingService: ObservableObject {
         // name is rare, a few a day, against chat turns all day. What keeps
         // the cost down is keeping this call short: at most 3,000 characters
         // of text in and 24 tokens out. Measure the first chat turn after a
-        // rename on a 16 GB Mac before adding a re-warm here.
+        // rename on a 16 GB Mac before adding a re-warm here. A naming model
+        // that is not the chat model is a second model in memory, and is let
+        // go once the queue drains (`unloadIfIdle`).
+        if forPreview { lastPreviewRoute = route } else { lastNamingRoute = route }
         let modelStart = Date()
         let reply: String?
         var failure = FileNamingSkip.error
@@ -566,6 +803,9 @@ final class FileNamingService: ObservableObject {
     /// other rule applies, with the file's own folder treated as both a
     /// screenshot folder and Downloads. The eval harness's entry point.
     func preview(path: String) async -> FileNamingPreview {
+        // A preview right after another keeps the model it is about to use.
+        previewUnload?.cancel()
+        previewUnload = nil
         let url = URL(fileURLWithPath: path)
         func leave(_ reason: String) -> FileNamingPreview {
             FileNamingPreview(path: path, decision: "leave", reason: reason, proposedName: nil,
@@ -576,11 +816,11 @@ final class FileNamingService: ObservableObject {
         let lister = self.lister
         // Every read of the file and its folder off the main actor: the path
         // can be anywhere, Documents included.
-        let probe = await Task.detached(priority: .utility) { () -> (regular: Bool, capture: Bool, others: [String]) in
+        let probe = await FileNamingIO.run { () -> (regular: Bool, capture: Bool, others: [String]) in
             let regular = FileFingerprint.of(url, fileManager: .default) != nil
-            let others = (lister(folderURL) ?? []).filter { $0.isRegular && $0.name != fileName }.map(\.name)
+            let others = (lister(folderURL) ?? []).map(\.name).filter { $0 != fileName }
             return (regular, regular && FileNamingRules.isScreenCapture(url), others)
-        }.value
+        }
         guard probe.regular else { return leave(FileNamingSkip.unsupported.rawValue) }
         let folder = FileNamingFolder(url: folderURL, screenshots: true, downloads: true)
         let kind: FileNamingKind
@@ -590,27 +830,81 @@ final class FileNamingService: ObservableObject {
         case .candidate(let k): kind = k
         }
         if FileNamingRules.hasPair(fileName, among: probe.others) { return leave(FileNamingSkip.unsupported.rawValue) }
-        let p = await propose(url: url, kind: kind)
+        let complete = completeness
+        let whole = await FileNamingIO.run { complete(url, kind) }
+        guard whole else { return leave(FileNamingSkip.unsupported.rawValue) }
+        let p = await propose(url: url, kind: kind, forPreview: true)
+        if let route = lastPreviewRoute {
+            lastPreviewRoute = nil
+            schedulePreviewUnload(route)
+        }
         return FileNamingPreview(path: path, decision: p.name == nil ? "leave" : "rename", reason: p.reason,
                                  proposedName: p.name, readMs: p.readMs, modelMs: p.modelMs, model: p.model)
     }
 
+    // MARK: - The naming model
+
+    /// A naming model that is not the chat model is a second model in
+    /// memory: one screenshot loaded it beside chat, held for 30 minutes at
+    /// the chat's window, and on a 16 GB Mac that can push the chat model out,
+    /// so the next chat turn pays a cold load (review 2026-10-28). So it is
+    /// let go once nothing is left to name. The chat model itself is never
+    /// unloaded here.
+    private func unloadIfIdle() {
+        guard queue.isEmpty, worker == nil, arrivals.isEmpty, let route = lastNamingRoute else { return }
+        lastNamingRoute = nil
+        unloadIfNotChat(route)
+    }
+
+    /// The eval runs one preview after another, often with the feature off,
+    /// where nothing else would ever let the naming model go: it stayed loaded
+    /// beside chat for 30 minutes (review 2026-10-28). So a preview's model is
+    /// let go `previewUnloadDelay` after the last preview, and a preview before
+    /// then cancels it, which keeps the model warm across the eval's items.
+    /// Not while the armed feature still has files to name: its own unload
+    /// covers that model once the queue drains.
+    private func schedulePreviewUnload(_ route: FileNamingRoute.Route) {
+        previewUnload?.cancel()
+        previewUnload = nil
+        guard !route.model.isEmpty,
+              !FileNamingRoute.sameTag(route.model, AppState.shared.config.offlineLLMModel) else { return }
+        guard !status.armed || (queue.isEmpty && worker == nil && arrivals.isEmpty) else { return }
+        let delay = previewUnloadDelay
+        previewUnload = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(max(delay, 0.01) * 1_000_000_000))
+            guard let self, !Task.isCancelled else { return }
+            self.previewUnload = nil
+            self.unloadIfNotChat(route)
+        }
+    }
+
+    private func unloadIfNotChat(_ route: FileNamingRoute.Route) {
+        guard !route.model.isEmpty,
+              !FileNamingRoute.sameTag(route.model, AppState.shared.config.offlineLLMModel) else { return }
+        WakeLog.shared.log("autoname: unloading the naming model \(route.model), chat uses another")
+        unloader(route)
+    }
+
     // MARK: - Undo
 
+    /// Undoes one rename with the file checks and the move done right here.
+    /// Kept for callers that need the outcome at once; the app's own Undo
+    /// buttons and the trigger use `undoInBackground`, which keeps the folder
+    /// off the main actor.
     @discardableResult
     func undo(id: UUID) -> FileUndoOutcome {
-        let entry = ledger.entry(id: id)
-        let outcome = ledger.undo(id: id)
-        if outcome == .restored, let entry {
-            // The restored name is the same file, so the same number: already
-            // seen while armed, and in the baseline of any later arm, so it is
-            // never read as new and renamed straight back. Marked here as well
-            // so that never rests on how the move was made.
-            if let fileID = entry.fileID { baselines[entry.folder]?.seen.insert(fileID) }
-            status.undone += 1
+        guard let entry = ledger.entry(id: id), entry.undoneAt == nil, !undoing.contains(id) else {
+            WakeLog.shared.log("autoname: undo nothingToUndo")
+            return .nothingToUndo
         }
-        recent = ledger.recent(10)
-        WakeLog.shared.log("autoname: undo \(Self.outcomeName(outcome))")
+        let outcome = FileRenameLedger.restore(entry, fileManager: fileManager)
+        if outcome == .restored {
+            ledger.markUndone(id: id)
+            // Through the same queue as every other ledger write, so the
+            // order on disk is the order they were made.
+            writeLedger()
+        }
+        finishUndo(entry, outcome)
         return outcome
     }
 
@@ -621,6 +915,62 @@ final class FileNamingService: ObservableObject {
             return .nothingToUndo
         }
         return undo(id: last.id)
+    }
+
+    /// Undoes one rename with the file checks, the move and the ledger write
+    /// on `FileNamingIO`. Undo runs from a notification, Settings and a
+    /// trigger, feature on or off, and a folder whose access was reset since
+    /// the rename would hold the main actor on the permission dialog
+    /// (review 2026-10-28).
+    @discardableResult
+    func undoInBackground(id: UUID) async -> FileUndoOutcome {
+        guard let entry = ledger.entry(id: id), entry.undoneAt == nil, undoing.insert(id).inserted else {
+            WakeLog.shared.log("autoname: undo nothingToUndo")
+            return .nothingToUndo
+        }
+        let outcome = await FileNamingIO.run { FileRenameLedger.restore(entry, fileManager: .default) }
+        undoing.remove(id)
+        if outcome == .restored {
+            ledger.markUndone(id: id)
+            writeLedger()
+        }
+        finishUndo(entry, outcome)
+        return outcome
+    }
+
+    @discardableResult
+    func undoLastInBackground() async -> FileUndoOutcome {
+        guard let last = ledger.entries.last(where: { $0.undoneAt == nil && !undoing.contains($0.id) }) else {
+            WakeLog.shared.log("autoname: undo nothingToUndo")
+            return .nothingToUndo
+        }
+        return await undoInBackground(id: last.id)
+    }
+
+    private func finishUndo(_ entry: FileRename?, _ outcome: FileUndoOutcome) {
+        if outcome == .restored, let entry {
+            // The restored name is the same file, so the same number: already
+            // seen while armed, and in the baseline of any later arm, so it is
+            // never read as new and renamed straight back, in this folder or
+            // another watched one it is moved to.
+            if let fileID = entry.fileID {
+                baselines[entry.folder]?.seen.insert(fileID)
+                known.insert(fileID)
+            }
+            baselines[entry.folder]?.names.remove(entry.newName)
+            baselines[entry.folder]?.names.insert(entry.oldName)
+            status.undone += 1
+        }
+        recent = ledger.recent(10)
+        WakeLog.shared.log("autoname: undo \(Self.outcomeName(outcome))")
+    }
+
+    /// The ledger as it stands now, written on `FileNamingIO` in the order
+    /// the writes were asked for, so a later write never loses to an earlier.
+    private func writeLedger() {
+        guard let data = ledger.encoded() else { return }
+        let url = ledger.url
+        FileNamingIO.queue.async { FileRenameLedger.write(data, to: url) }
     }
 
     // MARK: - Log lines (never a file's text or names)
@@ -637,6 +987,7 @@ final class FileNamingService: ObservableObject {
         case .nothingToUndo: return "nothingToUndo"
         case .newNameGone: return "newNameGone"
         case .oldNameTaken: return "oldNameTaken"
+        case .fileChanged: return "fileChanged"
         case .failed: return "failed"
         }
     }

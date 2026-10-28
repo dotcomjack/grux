@@ -92,6 +92,9 @@ final class FileNamingRulesTests: XCTestCase {
             // not a hash (review 2026-10-28).
             "Acme order 112-1234567-1234567",
             "Acme tracking 9400111202555842761302",
+            // A stamp needs a digit after it (review 2026-10-28).
+            "Screen Recording Policy",
+            "Screen recording consent form",
         ]
         XCTAssertGreaterThanOrEqual(human.count, 15)
         for name in human {
@@ -198,6 +201,72 @@ final class FileNamingRulesTests: XCTestCase {
                        .skip(.humanName))
     }
 
+    /// A CAPTURE ON A MAC IN ANOTHER LANGUAGE. Its prefix is localized and
+    /// not in the `name` default, so with the English prefixes alone no
+    /// capture was ever named there (review 2026-10-28). Every locale's name
+    /// carries the date, so any prefix, a space and `YYYY-MM-DD` counts.
+    func testALocalizedCaptureNameIsACandidate() {
+        let shots = FileNamingFolder(url: URL(fileURLWithPath: "/tmp/shots"), screenshots: true, downloads: false)
+        let localized = [
+            "Bildschirmfoto 2026-10-28 um 09.41.03.png",
+            "Capture d\u{2019}\u{E9}cran 2026-10-28 \u{E0} 09.41.03.png",
+            "Captura de pantalla 2026-10-28 a las 9.41.03.png",
+            "\u{622A}\u{5C4F}2026-10-28 \u{4E0B}\u{5348}3.41.03.png",
+        ]
+        for name in localized {
+            XCTAssertEqual(FileNamingRules.candidacy(fileName: name, in: shots, isScreenCapture: { true }),
+                           .candidate(.image), "\(name) is a capture on a Mac in another language")
+            XCTAssertEqual(FileNamingRules.candidacy(fileName: name, in: shots, isScreenCapture: { false }),
+                           .skip(.humanName), "control: without the capture mark \(name) is not a capture")
+        }
+        XCTAssertFalse(FileNamingRules.looksLikeCapture("Bildschirmfoto vom Fehler", prefixes: ["Screenshot"]),
+                       "a localized prefix with no date is a name a person typed")
+        XCTAssertFalse(FileNamingRules.looksLikeCapture("Bildschirmfoto 2026", prefixes: ["Screenshot"]), "a year is not a date")
+        XCTAssertFalse(FileNamingRules.looksLikeCapture("2026-10-28 notes", prefixes: ["Screenshot"]), "a date must follow a prefix")
+    }
+
+    /// THE WHOLE SHAPE OF A CAPTURE'S NAME, END TO END. A prefix and a date
+    /// alone read `Expense report 2026-10-28 copy`, a named capture's copy,
+    /// as a fresh capture (review 2026-10-28). Checked with no English
+    /// prefix, so only the localized shape can answer.
+    func testTheLocalizedCaptureShapeIsTheWholeName() {
+        let captures = [
+            "Bildschirmfoto 2026-10-27 um 09.41.03",
+            "Capture d'\u{E9}cran 2026-10-27 \u{E0} 09.41.03",
+            "\u{622A}\u{5C4F}2026-10-27 09.41.03",
+            "Screenshot 2026-10-27 at 9.41.03 AM (2)",
+            "Bildschirmfoto 2026-10-27 um 09:41",
+        ]
+        for name in captures {
+            XCTAssertTrue(FileNamingRules.looksLikeCapture(name, prefixes: []), "\(name) is a capture's own name")
+        }
+        let typed = [
+            "Expense report 2026-10-28 copy",
+            "Standup notes 2026-10-27",
+            "Lease 2026-11-01 signed",
+            "Bildschirmfoto 2026-10-27 um 09.41.03 und Notizen dazu",
+            "2026-10-27 09.41.03",
+            "Notes 2026-10-27 9.41.03 v2",
+        ]
+        for name in typed {
+            XCTAssertFalse(FileNamingRules.looksLikeCapture(name, prefixes: []), "\(name) reads as a capture, and a person named it")
+        }
+    }
+
+    /// A folder that does not exist is kept, so the retry can arm it once it
+    /// appears (review 2026-10-28: it was dropped for the whole arm).
+    func testAMissingFolderIsStillAFolderToWatch() {
+        let home = URL(fileURLWithPath: "/tmp/file-naming-missing-\(UUID().uuidString)", isDirectory: true)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: home.path), "control: the home folder exists")
+        let downloads = home.appendingPathComponent("Downloads", isDirectory: true)
+        let folders = FileNamingRules.watchedFolders(defaults: ["location": "~/Desktop/Shots"], home: home, downloads: downloads)
+        XCTAssertEqual(folders.map(\.url.path), [home.appendingPathComponent("Desktop/Shots").path, downloads.path])
+        XCTAssertEqual(folders.map(\.screenshots), [true, false])
+        let merged = FileNamingRules.watchedFolders(defaults: ["location": "~/Downloads"], home: home, downloads: downloads)
+        XCTAssertEqual(merged.count, 1, "the screenshot folder and Downloads are one folder")
+        XCTAssertEqual(merged.first?.downloads, true)
+    }
+
     func testTheCapturePrefixComesFromTheDefaults() {
         XCTAssertEqual(FileNamingRules.capturePrefixes(defaults: [:]), ["Screenshot", "Screen Shot"])
         XCTAssertEqual(FileNamingRules.capturePrefixes(defaults: ["name": "  "]), ["Screenshot", "Screen Shot"])
@@ -219,6 +288,16 @@ final class FileNamingRulesTests: XCTestCase {
         XCTAssertFalse(FileNamingRules.hasPair("IMG_4471.HEIC", among: ["IMG_4471.heic"]), "the same file, another case")
         XCTAssertFalse(FileNamingRules.hasPair("IMG_4471.HEIC", among: ["IMG_4471"]), "no extension is no pair")
         XCTAssertFalse(FileNamingRules.hasPair("IMG_4471.HEIC", among: []))
+        // A partner still downloading, and a sidecar named after the whole
+        // file name (review 2026-10-28).
+        XCTAssertTrue(FileNamingRules.hasPair("IMG_4471.HEIC", among: ["IMG_4471.MOV.crdownload"]), "a movie still downloading")
+        XCTAssertTrue(FileNamingRules.hasPair("IMG_4471.HEIC", among: ["IMG_4471.MOV.download"]), "a Safari download")
+        XCTAssertTrue(FileNamingRules.hasPair("IMG_0012.jpg", among: ["IMG_0012.jpg.xmp"]), "a darktable sidecar")
+        XCTAssertTrue(FileNamingRules.hasPair("IMG_0012.JPG", among: ["img_0012.jpg.XMP"]), "any case")
+        XCTAssertTrue(FileNamingRules.hasPair("IMG_0012.jpg", among: ["IMG_0012.aae"]), "a Photos edit sidecar")
+        XCTAssertFalse(FileNamingRules.hasPair("IMG_4471.HEIC", among: ["IMG_4471.HEIC.crdownload"]),
+                       "the same file still downloading is not a partner")
+        XCTAssertFalse(FileNamingRules.hasPair("IMG_0012.jpg", among: ["IMG_0013.jpg.xmp", "IMG_00121.aae"]))
     }
 
     // MARK: - The screenshot folder

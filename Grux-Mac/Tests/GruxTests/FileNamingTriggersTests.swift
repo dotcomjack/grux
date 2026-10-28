@@ -145,22 +145,55 @@ final class FileNamingTriggersTests: XCTestCase {
         XCTAssertTrue(idle["lastNamedAt"] is NSNull, "a missing last time is not written as null")
     }
 
-    /// THE STATUS FILE NEVER CARRIES A FILE NAME, checked against a service
-    /// that holds real ones. The old check looped over the shared service's
-    /// renames, which are always none in the suite, so it checked nothing
-    /// (review 2026-10-28). The service is on, so the file carries its folder
-    /// path; which status line is written depends on the route this machine
-    /// resolves, and either one is checked.
-    func test_theStatusFileHoldsNoNameTheServiceKnows() throws {
-        let (service, folder, entry) = try seededService()
+    /// THE STATUS FILE NEVER CARRIES A FILE NAME, checked against a status
+    /// built by a real rename. A name can only reach the file through a status
+    /// field set while the service names a file, so the rename goes through
+    /// the pipeline itself (a dropped download, a model reply, the rename)
+    /// rather than a ledger written by hand: with that, a status line that
+    /// started quoting the last name would be caught here (review 2026-10-28,
+    /// twice).
+    func test_theStatusFileHoldsNoNameTheServiceKnows() async throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("file-naming-trigger-pipeline-\(UUID().uuidString)")
+        roots.append(root)
+        let folder = root.appendingPathComponent("watched")
+        let staging = root.appendingPathComponent("staging")
+        let out = root.appendingPathComponent("out")
+        for made in [folder, staging, out] { try fm.createDirectory(at: made, withIntermediateDirectories: true) }
+        let service = FileNamingService(
+            folders: [FileNamingFolder(url: folder, screenshots: false, downloads: true)],
+            backend: FixedNameBackend(reply: newBase),
+            model: "grux-local-test",
+            fileManager: fm,
+            ledgerURL: root.appendingPathComponent("ledger/ledger.json"),
+            textReader: { _, _ in "Northwind Studio\nInvoice 2041\nOctober 2026" },
+            settleInterval: 0.05,
+            pendingInterval: 0.05,
+            retryInterval: 0.2,
+            quietInterval: 0,
+            completeness: { _, _ in true })
+        seeded.append(service)
+        FileNamingTriggers.service = { service }
         service.apply(enabled: true)
-        let status = try fire(FileNamingTriggers.status)
-        XCTAssertEqual(status["enabled"] as? Bool, true, "control: this is not the seeded service's status")
-        XCTAssertEqual(status["folders"] as? [String], [folder.path], "control: this is not the seeded service's status")
-        let text = try XCTUnwrap(String(
-            data: JSONSerialization.data(withJSONObject: status, options: [.sortedKeys]), encoding: .utf8))
-        XCTAssertTrue(text.contains(folder.lastPathComponent), "control: the folder is in the file")
-        for name in [entry.oldName, entry.newName, (entry.oldName as NSString).deletingPathExtension, newBase] {
+        await service.rescanNow()
+
+        let temp = staging.appendingPathComponent("download")
+        try Data("%PDF-fixture bytes".utf8).write(to: temp)
+        try fm.moveItem(at: temp, to: folder.appendingPathComponent(oldName))
+        service.rescan()
+        let deadline = Date().addingTimeInterval(5)
+        while service.status.named < 1, Date() < deadline { try await Task.sleep(for: .milliseconds(25)) }
+        XCTAssertEqual(service.status.named, 1, "control: the pipeline renamed nothing, so this proves nothing")
+        let given = try XCTUnwrap(service.recent.first?.newName, "control: the rename is not in the service's list")
+        XCTAssertTrue(fm.fileExists(atPath: folder.appendingPathComponent(given).path), "control: the file was not renamed on disk")
+
+        await FileNamingTriggers.fire(FileNamingTriggers.status, contents: "", dir: out)
+        let data = try Data(contentsOf: out.appendingPathComponent(FileNamingTriggers.statusFile))
+        let text = try XCTUnwrap(String(data: data, encoding: .utf8))
+        let status = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(status["named"] as? Int, 1, "control: this is not the renaming service's status")
+        XCTAssertEqual(status["folders"] as? [String], [folder.path], "control: this is not the renaming service's status")
+        for name in [oldName, given, (oldName as NSString).deletingPathExtension, newBase] {
             XCTAssertFalse(text.contains(name), "the status file carries the file name \(name)")
         }
         XCTAssertEqual(Set(status.keys), Self.documentedStatusKeys)
@@ -192,6 +225,7 @@ final class FileNamingTriggersTests: XCTestCase {
         XCTAssertEqual(FileNamingTriggers.word(.nothingToUndo), "nothingToUndo")
         XCTAssertEqual(FileNamingTriggers.word(.newNameGone), "newNameGone")
         XCTAssertEqual(FileNamingTriggers.word(.oldNameTaken), "oldNameTaken")
+        XCTAssertEqual(FileNamingTriggers.word(.fileChanged), "fileChanged")
     }
 
     /// The preview takes an absolute path and nothing else, and says so in the
@@ -235,5 +269,50 @@ final class FileNamingTriggersTests: XCTestCase {
                        "a trigger file name changed")
         XCTAssertEqual(FileNamingTriggers.statusFile, "file-naming-status.json")
         XCTAssertEqual(FileNamingTriggers.previewFile, "file-naming-preview.json")
+    }
+}
+
+// MARK: - A backend that answers one name
+
+private struct FixedNameBackendNotExercised: Error {}
+
+/// Replies with one name to every call; the rest of `ModelBackend` is never
+/// used here and throws. `completeShortAnswer` is the protocol's default, which
+/// calls `complete`, so the naming call reaches the reply.
+private actor FixedNameBackend: ModelBackend {
+    private let reply: String
+
+    init(reply: String) { self.reply = reply }
+
+    func complete(apiKey: String, model: String, system: String?,
+                  messages: [ClaudeMessage], maxTokens: Int, temperature: Double,
+                  spanName: String, feature: String) async throws -> String {
+        reply
+    }
+
+    func completeVision(apiKey: String, model: String, system: String?,
+                        userText: String, imageJPEG: Data, mediaType: String,
+                        maxTokens: Int, temperature: Double,
+                        spanName: String, feature: String) async throws -> String {
+        throw FixedNameBackendNotExercised()
+    }
+
+    func streamCompleteWithTools(apiKey: String, model: String,
+                                 systemBlocks: [[String: Any]], messages: [[String: Any]],
+                                 tools: [ClaudeTool], maxTokens: Int, temperature: Double,
+                                 spanName: String, feature: String)
+        -> AsyncThrowingStream<ClaudeStreamEvent, Error> {
+        AsyncThrowingStream<ClaudeStreamEvent, Error> { $0.finish(throwing: FixedNameBackendNotExercised()) }
+    }
+
+    func completeWithTools(apiKey: String, model: String, system: String?,
+                           messages: [[String: Any]], tools: [ClaudeTool],
+                           maxTokens: Int, temperature: Double,
+                           spanName: String, feature: String) async throws -> ClaudeToolsResponse {
+        throw FixedNameBackendNotExercised()
+    }
+
+    func usageSnapshot() -> (input: Int, output: Int, cacheCreate: Int, cacheRead: Int) {
+        (0, 0, 0, 0)
     }
 }
