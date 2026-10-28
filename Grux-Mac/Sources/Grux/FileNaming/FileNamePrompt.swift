@@ -127,7 +127,8 @@ enum FileNamePrompt {
         //    and ` - ` card numbers passing, and then the comma rule refusing
         //    "Oct 14, 2026". `\p{Nd}` also catches full-width digits.
         for text in [beforeSeparators, name] {
-            if secretDigits.contains(where: { text.range(of: $0, options: .regularExpression) != nil }) { return nil }
+            let checked = withoutAmounts(text)
+            if secretDigits.contains(where: { checked.range(of: $0, options: .regularExpression) != nil }) { return nil }
         }
         if name.range(of: "REDACTED", options: .caseInsensitive) != nil { return nil }
         if SecretRedactor.redact(name, passes: .evidenceOnly) != name { return nil }
@@ -144,6 +145,21 @@ enum FileNamePrompt {
         #"\p{Nd}(?:[ \-./,_]{0,3}\p{Nd}){7,}"#,
         #"\p{Nd}(?:[\-./,_]{0,3}\p{Nd}){5,}"#,
     ]
+
+    /// `text` with money amounts set aside before the digit rules. An amount
+    /// shows it is money: a currency sign (`$12,400`), or cents (`1,250.00`,
+    /// `81.57`). Bare comma groups (`123,456`) could be an account number and
+    /// stay under the rules; a card number is grouped in fours, so it never
+    /// reads as an amount (review 2026-10-28 found "$1,250.00" refused).
+    static func withoutAmounts(_ text: String) -> String {
+        var out = text
+        for pattern in [#"[$\x{20AC}\x{A3}\x{A5}] ?[0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]{2})?(?![0-9.,])"#,
+                        #"(?<![0-9.,])[0-9]{1,3}(?:,[0-9]{3})+\.[0-9]{2}(?![0-9.,])"#,
+                        #"(?<![0-9.,])[0-9]{1,6}\.[0-9]{2}(?![0-9.,])"#] {
+            out = out.replacingOccurrences(of: pattern, with: " ", options: .regularExpression)
+        }
+        return out
+    }
 
     /// `text` folded for case and diacritics, its whitespace collapsed to
     /// single spaces.

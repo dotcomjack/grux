@@ -160,6 +160,20 @@ final class FileNamePromptTests: XCTestCase {
     }
 
     /// THE SECRET GUARD. A run of six digits could be an account or a card.
+    /// An amount with cents or thousands is money, not a secret (review
+    /// 2026-10-28); a card number grouped in fours still is.
+    func testAMoneyAmountIsNotASecret() {
+        let source = "Northwind Studio invoice total 1,250.00 paid 81.57 card 4111 1111 1111 1111"
+        XCTAssertEqual(FileNamePrompt.clean("Northwind Invoice 1,250.00", sourceText: source, fileExtension: "pdf"),
+                       "Northwind Invoice 1,250.00")
+        XCTAssertEqual(FileNamePrompt.clean("Northwind Invoice 81.57", sourceText: source, fileExtension: "pdf"),
+                       "Northwind Invoice 81.57")
+        XCTAssertNil(FileNamePrompt.clean("Northwind Card 4111 1111 1111 1111", sourceText: source, fileExtension: "pdf"),
+                     "control: a card number is still refused")
+        XCTAssertNil(FileNamePrompt.clean("Northwind Card 4111-1111", sourceText: source, fileExtension: "pdf"),
+                     "control: six digits joined by a hyphen are still refused")
+    }
+
     func testADigitRunIsRefused() {
         // 6 or more digits in a row.
         XCTAssertNil(FileNamePrompt.clean("Northwind Card 4111111111111111", sourceText: source))

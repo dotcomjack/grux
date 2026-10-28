@@ -407,9 +407,15 @@ final class FileNamingService: ObservableObject {
             let read = await FileNamingIO.run { () -> (listings: [[FileNamingEntry]?], missing: [String]) in
                 let listings = urls.map { lister($0) }
                 var missing: [String] = []
+                // Missing means the path is not there (ENOENT or ENOTDIR). A
+                // folder macOS refuses to stat (EPERM, a denied subfolder of
+                // Documents) exists, and its status asks for access instead
+                // (review 2026-10-28: `fileExists` read refused as missing).
                 for (url, listing) in zip(urls, listings) where listing == nil {
-                    var isDir: ObjCBool = false
-                    if !(FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) && isDir.boolValue) {
+                    var st = stat()
+                    if lstat(url.path, &st) != 0 {
+                        if errno == ENOENT || errno == ENOTDIR { missing.append(url.path) }
+                    } else if (st.st_mode & S_IFMT) != S_IFDIR {
                         missing.append(url.path)
                     }
                 }

@@ -238,6 +238,26 @@ final class FileNamingRulesTests: XCTestCase {
     /// front of a timestamp read a renamed capture's copy, `Login error
     /// 2026-10-28 at 9.41.03 AM copy`, as fresh (review 2026-10-28, twice), so
     /// the prefix is one macOS really writes.
+    /// Every language's real capture name, built from this Mac's own table
+    /// (review 2026-10-28): Russian puts a no-break space and a dash before the
+    /// date, Canadian French ", le ", Romanian " din ", and Arabic starts with a
+    /// right-to-left mark. A typed name that keeps a prefix and a date but no
+    /// time is a person's, never a capture's.
+    func testEveryLanguagesCaptureShapeAndNoTypedName() {
+        let prefixes = ["Screenshot", "Bildschirmfoto", "Снимок экрана", "Capture d\u{2019}\u{E9}cran", "Captur\u{103} de ecran", "\u{200F}لقطة شاشة"]
+        for name in ["Снимок экрана\u{A0}\u{2014} 2026-10-28 в\u{A0}09.41.03",
+                     "Capture d\u{2019}\u{E9}cran, le 2026-10-28 \u{E0} 09.41.03",
+                     "Captur\u{103} de ecran din 2026-10-28 la 09.41.03",
+                     "\u{200F}لقطة شاشة 2026-10-28 في 9.41.03 ص",
+                     "Screenshot 2026-10-28 at 9.41.03 AM copy"] {
+            XCTAssertTrue(FileNamingRules.looksLikeCapture(name, prefixes: prefixes), "\(name) is a capture's own name")
+        }
+        for name in ["Screenshot 2026-10-28 login error copy", "Bildschirmfoto 2026-10-28 Rechnung Telekom Kopie",
+                     "Screenshot 2026-10-28"] {
+            XCTAssertFalse(FileNamingRules.looksLikeCapture(name, prefixes: prefixes), "\(name) was typed by a person")
+        }
+    }
+
     func testTheLocalizedCaptureShapeIsTheWholeName() {
         let prefixes = FileNamingRules.capturePrefixes(defaults: [:], system: localizedPrefixes)
         let captures = [
@@ -308,8 +328,9 @@ final class FileNamingRulesTests: XCTestCase {
         XCTAssertEqual(FileNamingRules.capturePrefixes(defaults: [:]), ["Screenshot", "Screen Shot"])
         XCTAssertEqual(FileNamingRules.capturePrefixes(defaults: ["name": "  "]), ["Screenshot", "Screen Shot"])
         XCTAssertEqual(FileNamingRules.capturePrefixes(defaults: ["name": "Grab"]), ["Grab", "Screenshot", "Screen Shot"])
-        XCTAssertTrue(FileNamingRules.looksLikeCapture("Grab 2026-10-27", prefixes: ["Grab"]))
-        XCTAssertTrue(FileNamingRules.looksLikeCapture("screenshot 2026-10-27", prefixes: ["Screenshot"]))
+        XCTAssertTrue(FileNamingRules.looksLikeCapture("Grab 2026-10-27 at 9.41.03 AM", prefixes: ["Grab"]))
+        XCTAssertTrue(FileNamingRules.looksLikeCapture("screenshot 2026-10-27 at 9.41.03 AM", prefixes: ["Screenshot"]))
+        XCTAssertFalse(FileNamingRules.looksLikeCapture("Grab 2026-10-27", prefixes: ["Grab"]), "every capture name carries a time")
         XCTAssertFalse(FileNamingRules.looksLikeCapture("Grabbed 2026", prefixes: ["Grab"]), "a space must follow")
         XCTAssertFalse(FileNamingRules.looksLikeCapture("Screenshot final", prefixes: ["Screenshot"]), "a digit must follow")
         XCTAssertFalse(FileNamingRules.looksLikeCapture("My Screenshot 2026", prefixes: ["Screenshot"]), "at the start only")

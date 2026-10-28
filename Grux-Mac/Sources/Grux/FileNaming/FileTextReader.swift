@@ -156,6 +156,9 @@ enum FileTextReader {
                 var padding = 0
                 while end.last == 0x00 && padding < 32 { end = end.dropLast(); padding += 1 }
                 if end.suffix(2).elementsEqual([0xFF, 0xD9]) { return true }
+                // Samsung's camera appends its own trailer after the image,
+                // ending in "SEFT" (review 2026-10-28).
+                if end.suffix(4).elementsEqual(Array("SEFT".utf8)) { return true }
                 return isMotionPhoto(url)
             }
             if head.starts(with: Array("GIF8".utf8)) { return tail.last == 0x3B }

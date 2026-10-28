@@ -158,25 +158,32 @@ enum FileNamingRules {
     }
 
     /// What follows the prefix in a capture's name in every language macOS
-    /// ships, end to end: maybe a space (`截屏2026-10-27` has none), the date,
+    /// ships, end to end: up to 6 characters before the date (`截屏2026-10-27`
+    /// has none, Russian has a no-break space and a dash, Canadian French
+    /// ", le ", Romanian " din "; review 2026-10-28 built all 42 of this Mac's
+    /// formats and found those three failing a bare space), the date,
     /// up to 12 characters of words, the time (`9.41.03`, `09:41`), up to 8
     /// characters of AM or PM marker, and maybe a ` (2)` counter.
     private static let captureStamp = try! NSRegularExpression(
-        pattern: #"^\s*[0-9]{4}-[0-9]{2}-[0-9]{2}[^0-9]{0,12}[0-9]{1,2}[.:][0-9]{2}(?:[.:][0-9]{2})?[^0-9]{0,8}(?: \([0-9]+\))?$"#)
+        pattern: #"^[^0-9]{0,6}[0-9]{4}-[0-9]{2}-[0-9]{2}[^0-9]{0,12}[0-9]{1,2}[.:][0-9]{2}(?:[.:][0-9]{2})?[^0-9]{0,8}(?: \([0-9]+\))?$"#)
 
-    /// Whether `baseName` still reads as the name macOS gave a capture: a
-    /// prefix, a space, then a digit (`Screenshot 2026-10-27 at 9.41.03 AM`),
-    /// or a prefix followed by the whole capture stamp (`Bildschirmfoto
-    /// 2026-10-27 um 09.41.03`, `截屏2026-10-27 09.41.03`). The capture xattr
-    /// survives a rename, so the mark alone cannot tell `Bug repro.png` (a
-    /// capture a person named) from a fresh one (review 2026-10-28). The
-    /// prefix is always one of `prefixes`, the real ones, never any words.
+    /// Whether `baseName` still reads as the name macOS gave a capture: one
+    /// of the real `prefixes`, then the whole capture stamp, date AND time
+    /// (`Screenshot 2026-10-27 at 9.41.03 AM`, `Bildschirmfoto 2026-10-27 um
+    /// 09.41.03`, `截屏2026-10-27 09.41.03`). The capture xattr survives a
+    /// rename and a copy, so the mark alone cannot tell `Bug repro.png` (a
+    /// capture a person named) from a fresh one. A prefix, a space and any
+    /// digit was enough once, and let "Screenshot 2026-10-28 login error copy"
+    /// through (review 2026-10-28): every capture macOS names carries a time.
+    /// Arabic names start with a right-to-left mark, which is set aside.
     static func looksLikeCapture(_ baseName: String, prefixes: [String]) -> Bool {
-        for prefix in prefixes where !prefix.isEmpty {
-            if let range = baseName.range(of: prefix + " ", options: [.anchored, .caseInsensitive]),
-               baseName[range.upperBound...].first?.isNumber == true { return true }
-            if let range = baseName.range(of: prefix, options: [.anchored, .caseInsensitive]),
-               matches(captureStamp, String(baseName[range.upperBound...])) { return true }
+        let marks = CharacterSet(charactersIn: "\u{200E}\u{200F}\u{061C}")
+        let name = baseName.trimmingCharacters(in: marks)
+        for prefix in prefixes {
+            let clean = prefix.trimmingCharacters(in: marks)
+            guard !clean.isEmpty,
+                  let range = name.range(of: clean, options: [.anchored, .caseInsensitive]) else { continue }
+            if matches(captureStamp, String(name[range.upperBound...])) { return true }
         }
         return false
     }
