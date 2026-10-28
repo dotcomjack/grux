@@ -153,9 +153,14 @@ enum FileNamePrompt {
     /// reads as an amount (review 2026-10-28 found "$1,250.00" refused).
     static func withoutAmounts(_ text: String) -> String {
         var out = text
-        for pattern in [#"[$\x{20AC}\x{A3}\x{A5}] ?[0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]{2})?(?![0-9.,])"#,
-                        #"(?<![0-9.,])[0-9]{1,3}(?:,[0-9]{3})+\.[0-9]{2}(?![0-9.,])"#,
-                        #"(?<![0-9.,])[0-9]{1,6}\.[0-9]{2}(?![0-9.,])"#] {
+        // An amount stands alone: no digit within 3 characters on either
+        // side, so "12 34-56.78" stays one number to the rules (CI 2026-10-28
+        // caught the cents pattern hiding it).
+        let alone = (before: #"(?<![0-9][ \-./,_]{0,3})"#, after: #"(?![ \-./,_]{0,3}[0-9])"#)
+        for core in [#"[$\x{20AC}\x{A3}\x{A5}] ?[0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]{2})?"#,
+                     #"[0-9]{1,3}(?:,[0-9]{3})+\.[0-9]{2}"#,
+                     #"[0-9]{1,6}\.[0-9]{2}"#] {
+            let pattern = alone.before + core + alone.after
             out = out.replacingOccurrences(of: pattern, with: " ", options: .regularExpression)
         }
         return out

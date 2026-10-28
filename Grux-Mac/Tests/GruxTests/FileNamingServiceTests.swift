@@ -162,7 +162,8 @@ final class FileNamingServiceTests: XCTestCase {
                       complete: @escaping FileNamingService.Completeness = { _, _ in true },
                       recheck: TimeInterval = 0.05,
                       unloader: FileNamingService.Unloader? = nil,
-                      previewDelay: TimeInterval = 60)
+                      previewDelay: TimeInterval = 60,
+                      idleDelay: TimeInterval = 0)
         -> (FileNamingService, NamingRecordingBackend) {
         let backend = NamingRecordingBackend(reply: reply, error: error)
         let fixed = text ?? invoiceText
@@ -183,7 +184,8 @@ final class FileNamingServiceTests: XCTestCase {
             completeness: complete,
             incompleteRecheck: recheck,
             unloader: unloader,
-            previewUnloadDelay: previewDelay)
+            previewUnloadDelay: previewDelay,
+            idleUnloadDelay: idleDelay)
         services.append(service)
         return (service, backend)
     }
@@ -805,6 +807,31 @@ final class FileNamingServiceTests: XCTestCase {
     /// A NAMING MODEL THAT IS NOT THE CHAT MODEL IS LET GO. Otherwise one
     /// screenshot holds a second model beside chat for 30 minutes (review
     /// 2026-10-28).
+    /// Unloading after every rename made each screenshot reload the model
+    /// (2,052 and 4,406 ms against about 700 warm, measured 2026-10-28). It
+    /// stays loaded for the idle delay after the last file and goes after it.
+    func testTheNamingModelStaysLoadedUntilTheIdleDelayPasses() async throws {
+        let savedModel = AppState.shared.config.offlineLLMModel
+        let savedSuspended = Persistence.writesSuspended
+        Persistence.writesSuspended = true
+        AppState.shared.config.offlineLLMModel = "chat-model-test:4b"
+        defer {
+            AppState.shared.config.offlineLLMModel = savedModel
+            Persistence.writesSuspended = savedSuspended
+        }
+        var unloaded: [String] = []
+        let (service, _) = make(reply: invoiceName, unloader: { unloaded.append($0.model) }, idleDelay: 1.5)
+        await arm(service)
+        try drop("document (3).pdf")
+        service.rescan()
+        let named = await eventually { service.status.named == 1 }
+        XCTAssertTrue(named, "control: nothing was named: \(service.status)")
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(unloaded, [], "the naming model was let go right after the rename")
+        let gone = await eventually { unloaded == ["grux-local-test"] }
+        XCTAssertTrue(gone, "the naming model was never let go after the idle delay: \(unloaded)")
+    }
+
     func testANamingModelThatIsNotTheChatModelIsUnloadedWhenIdle() async throws {
         let savedModel = AppState.shared.config.offlineLLMModel
         let savedSuspended = Persistence.writesSuspended

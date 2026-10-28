@@ -204,6 +204,19 @@ enum FileTextReader {
         return try? handle.read(upToCount: Int(count)) ?? Data()
     }
 
+    /// One recognition pass over a small blank image, so Vision's models are
+    /// loaded before the first real file. Its result is thrown away.
+    static func warmUp() {
+        let width = 64, height = 32
+        guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+                                      bytesPerRow: 0, space: CGColorSpaceCreateDeviceGray(),
+                                      bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return }
+        context.setFillColor(gray: 1, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        guard let image = context.makeImage() else { return }
+        _ = recognize(image)
+    }
+
     // MARK: - PDFs
 
     /// The text layer of the first pages. A scan has none, so page 1 is

@@ -70,6 +70,8 @@ final class FileNamingService: ObservableObject {
     private let incompleteRecheck: TimeInterval
     private let unloader: Unloader
     private let previewUnloadDelay: TimeInterval
+    private let idleUnloadDelay: TimeInterval
+    private var idleUnload: Task<Void, Never>?
 
     /// - Parameters:
     ///   - folders: the folders to watch, instead of the screenshot folder and
@@ -95,6 +97,8 @@ final class FileNamingService: ObservableObject {
     ///   - unloader: instead of asking Ollama to unload the naming model.
     ///   - previewUnloadDelay: how long after a preview its naming model is
     ///     let go, unless another preview comes first.
+    ///   - idleUnloadDelay: how long the naming model stays loaded after the
+    ///     last file is named, unless another arrives first.
     init(folders: [FileNamingFolder]? = nil,
          folderSource: (@Sendable () -> [FileNamingFolder])? = nil,
          lister: Lister? = nil,
@@ -111,7 +115,8 @@ final class FileNamingService: ObservableObject {
          completeness: Completeness? = nil,
          incompleteRecheck: TimeInterval = 10,
          unloader: Unloader? = nil,
-         previewUnloadDelay: TimeInterval = 60) {
+         previewUnloadDelay: TimeInterval = 60,
+         idleUnloadDelay: TimeInterval = 300) {
         if let folderSource {
             self.folderSource = folderSource
         } else if let folders {
@@ -160,6 +165,7 @@ final class FileNamingService: ObservableObject {
         }
         self.incompleteRecheck = incompleteRecheck
         self.previewUnloadDelay = previewUnloadDelay
+        self.idleUnloadDelay = idleUnloadDelay
         recent = ledger.recent(10)
     }
 
@@ -308,11 +314,20 @@ final class FileNamingService: ObservableObject {
             self.status.screenshotFolder = resolved.first(where: \.screenshots)?.url.path
             WakeLog.shared.log("autoname: arming, \(resolved.count) folders")
             self.requestPass()
+            // Vision loads its text models on first use: the first screenshot
+            // after launch read in 11,654 ms and the next in 351 ms (measured
+            // 2026-10-28, 48 GB MacBook). One read of a blank image while
+            // arming pays that before anybody waits on it.
+            if !Persistence.isUnderTest {
+                Task.detached(priority: .utility) { FileTextReader.warmUp() }
+            }
         }
         Task { await refreshStatus() }
     }
 
     private func disarm() {
+        idleUnload?.cancel()
+        idleUnload = nil
         if let route = lastNamingRoute { unloadIfNotChat(route) }
         lastNamingRoute = nil
         generation += 1
@@ -788,7 +803,11 @@ final class FileNamingService: ObservableObject {
         // rename on a 16 GB Mac before adding a re-warm here. A naming model
         // that is not the chat model is a second model in memory, and is let
         // go once the queue drains (`unloadIfIdle`).
-        if forPreview { lastPreviewRoute = route } else { lastNamingRoute = route }
+        if forPreview { lastPreviewRoute = route } else {
+            lastNamingRoute = route
+            idleUnload?.cancel()
+            idleUnload = nil
+        }
         let modelStart = Date()
         let reply: String?
         var failure = FileNamingSkip.error
@@ -876,10 +895,25 @@ final class FileNamingService: ObservableObject {
     /// so the next chat turn pays a cold load (review 2026-10-28). So it is
     /// let go once nothing is left to name. The chat model itself is never
     /// unloaded here.
+    ///
+    /// Not at once: measured 2026-10-28 on a 48 GB MacBook, letting it go
+    /// after every rename made each screenshot reload it (model 2,052 and
+    /// 4,406 ms against about 700 warm). It stays `idleUnloadDelay` (5
+    /// minutes) after the last file, and a new arrival cancels the countdown,
+    /// so a run of screenshots names quickly and the memory still comes back.
     private func unloadIfIdle() {
-        guard queue.isEmpty, worker == nil, arrivals.isEmpty, let route = lastNamingRoute else { return }
-        lastNamingRoute = nil
-        unloadIfNotChat(route)
+        guard queue.isEmpty, worker == nil, arrivals.isEmpty, lastNamingRoute != nil else { return }
+        idleUnload?.cancel()
+        let delay = idleUnloadDelay
+        idleUnload = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(max(delay, 0) * 1_000_000_000))
+            guard let self, !Task.isCancelled else { return }
+            self.idleUnload = nil
+            guard self.queue.isEmpty, self.worker == nil, self.arrivals.isEmpty,
+                  let route = self.lastNamingRoute else { return }
+            self.lastNamingRoute = nil
+            self.unloadIfNotChat(route)
+        }
     }
 
     /// The eval runs one preview after another, often with the feature off,
