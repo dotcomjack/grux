@@ -59,6 +59,12 @@
 	<string>Grux reads your calendar events so the workday log can show which meetings you attended and align them with ambient transcripts.</string>
 	<key>NSContactsUsageDescription</key>
 	<string>Grux reads your contacts so it can look up emails and phone numbers for you and link meeting speakers to real people.</string>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>When Files that name themselves is on, Grux reads new screenshots saved to your Desktop so it can name them from what they show, on this Mac.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>When Files that name themselves is on, Grux reads new screenshots saved to your Documents folder so it can name them from what they show, on this Mac.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>When Files that name themselves is on, Grux reads new downloads with machine-made names so it can name them from what they show, on this Mac.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSLocalNetworkUsageDescription</key>

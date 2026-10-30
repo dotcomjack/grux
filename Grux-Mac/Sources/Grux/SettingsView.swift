@@ -1703,6 +1703,28 @@ if showGeneral(9) && sectionVisible("general.permissions") {
                         .id("data.screenControl")
                     }
 
+                    // Shaped like screen control on purpose: a capability that acts
+                    // on the person's own things, off by default, with the caption
+                    // as the "off state explained" half of the house rule. The
+                    // toggle only writes config; the launch observer on
+                    // `$config.map(\.fileNamingEnabled)` arms and disarms the
+                    // watcher, so an edit to config.json on disk does the same.
+                    if sectionVisible("data.fileNaming") {
+                        Section("Files that name themselves") {
+                            Toggle("Name new screenshots and downloads from what they show", isOn: Binding(
+                                get: { state.config.fileNamingEnabled },
+                                set: { v in
+                                    state.config.fileNamingEnabled = v
+                                    state.saveConfig()
+                                }
+                            ))
+                            Text("Off by default. When on, Grux watches your screenshot folder and Downloads, reads the text of each new screenshot, and of each new image or PDF that arrives with a machine-made name, and renames it from what it shows. The extension and the folder stay the same. Everything happens on this Mac: the text is read here and the name comes from a Grux Local or other Ollama model running here, never a cloud model, so one has to be installed. macOS asks once for access to those folders when you turn it on. It never moves a file, never touches a name you typed, and leaves files that were already there alone unless you choose Name the files already here. Every rename can be undone here or from its notification. With it off, Grux never opens those folders.")
+                                .font(.caption).foregroundStyle(.secondary)
+                            FileNamingRows()
+                        }
+                        .id("data.fileNaming")
+                    }
+
                     if sectionVisible("data.web") {
                         Section("Real-time web research") {
                             Toggle("Let Grux answer questions by searching the web", isOn: $webResearchEnabled)
@@ -2391,6 +2413,94 @@ private struct ClampToAvailableWidth: ViewModifier {
     func body(content: Content) -> some View {
         GeometryReader { geo in
             content.frame(width: geo.size.width, alignment: .top)
+        }
+    }
+}
+
+/// The live half of "Files that name themselves": the status line and the last
+/// renames, each with its own Undo. Its own view so it can observe the service
+/// directly, which is what keeps both current while Settings stays open (the
+/// live state rule) without re-rendering every other section on each rename.
+private struct FileNamingRows: View {
+    @ObservedObject private var naming = FileNamingService.shared
+    /// Why the last Undo did nothing, when it did nothing. An Undo that silently
+    /// fails reads as a broken button.
+    @State private var undoNote: String?
+
+    var body: some View {
+        Group {
+            Text(naming.status.settingsLine)
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                // On the one status line, not the Group: a modifier on a Group
+                // lands on every child, so it would run once per row. The route
+                // can change while Settings is closed (a model pulled or
+                // removed), so it is re-resolved each time the line is shown.
+                .task { await naming.refreshStatus() }
+            // The files that were there before naming was turned on. The
+            // watcher never touches those, so this is the one way to name
+            // them, and the run undoes as a whole. Only while naming is on:
+            // the caption promises that with it off Grux never opens the
+            // folders.
+            if naming.status.enabled || naming.backlog != nil {
+                HStack(spacing: 8) {
+                    if let run = naming.backlog, run.running {
+                        ProgressView().controlSize(.small)
+                        Button("Stop") { naming.stopRun() }
+                            .controlSize(.small)
+                    } else if naming.status.enabled {
+                        Button("Name the files already here") {
+                            Task { await naming.nameExisting() }
+                        }
+                        .controlSize(.small)
+                        .help("Names the screenshots and machine-named downloads already in these folders, by the same rules as new ones. Each rename can be undone, and so can the whole run.")
+                    }
+                    Spacer()
+                    if let run = naming.backlog, !run.running, run.named > run.undone {
+                        Button("Undo this run") {
+                            Task { await naming.undoBatch(run.batch) }
+                        }
+                        .controlSize(.small)
+                    }
+                }
+            }
+            if let run = naming.backlog {
+                Text(run.settingsLine)
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            ForEach(Array(naming.recent.prefix(10))) { rename in
+                HStack(spacing: 8) {
+                    Text("\(rename.oldName) to \(rename.newName)")
+                        .font(.caption)
+                        .lineLimit(1).truncationMode(.middle)
+                    Spacer()
+                    if rename.undoneAt == nil {
+                        // The file checks and the move run off the main actor,
+                        // so a folder permission dialog never freezes Settings.
+                        Button("Undo") {
+                            Task { undoNote = Self.note(for: await naming.undoInBackground(id: rename.id)) }
+                        }
+                            .controlSize(.small)
+                    } else {
+                        Text("Undone").font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            if let undoNote {
+                Text(undoNote).font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    static func note(for outcome: FileUndoOutcome) -> String? {
+        switch outcome {
+        case .restored: return nil
+        case .nothingToUndo: return "That rename was already undone."
+        case .newNameGone: return "Nothing was changed: the renamed file has since been moved, renamed or deleted."
+        case .oldNameTaken: return "Nothing was changed: another file now has the old name."
+        case .fileChanged: return "Nothing was changed: the file was changed after it was renamed, so Grux left it alone."
+        case .failed: return "Nothing was changed: macOS would not rename the file back."
         }
     }
 }

@@ -186,6 +186,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Held only while the first-run flow is on screen. Released the moment it
     // finishes, which is also the moment the consent-gated work starts.
     private var onboardingGateSub: AnyCancellable?
+    /// Files that name themselves: follows `config.fileNamingEnabled` for the
+    /// life of the app, so the Settings toggle and an edit to config.json on
+    /// disk arm and disarm the watcher the same way.
+    private var fileNamingSub: AnyCancellable?
 
     // Throttle for the re-auth observer: applicationDidBecomeActive fires on
     // every focus return, so we rate-limit the `claude auth status` probe to
@@ -1342,6 +1346,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Until then the rows read "Status unknown until first run.", which is true.
         if CapabilityResolver.isSatisfied(.stepCorpusSourcesConfirmed) {
             CorpusCoordinator.shared.bootstrap()
+        }
+
+        // Files that name themselves. Behind this gate for the first reason:
+        // arming opens the screenshot folder and Downloads, which macOS guards
+        // with a permission dialog, and a dialog over onboarding is what this
+        // gate exists to stop. Off (the default) the service touches no folder.
+        // The observer, not the toggle, is what arms it, because a toggle's
+        // `set:` never sees an edit made to config.json on disk.
+        if fileNamingSub == nil {
+            FileNamingService.shared.onRenamed = { rename in
+                NotificationManager.shared.sendFileNamed(rename)
+            }
+            fileNamingSub = AppState.shared.$config
+                .map(\.fileNamingEnabled)
+                .removeDuplicates()
+                .sink { enabled in
+                    Task { @MainActor in FileNamingService.shared.apply(enabled: enabled) }
+                }
         }
     }
 
