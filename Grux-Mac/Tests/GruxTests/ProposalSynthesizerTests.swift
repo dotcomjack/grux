@@ -309,33 +309,82 @@ final class ProposalSynthesizerTests: XCTestCase {
                        "a worktree (whose .git is a file) should ground the pass")
     }
 
-    /// The copy comes from the newest main the checkout can fetch, never
-    /// the frozen working tree: a commit that exists only on origin's main
-    /// shows up in the copy, and a local edit on the checkout does not.
-    func testTheCopyIsTheNewestMainNotTheCheckout() throws {
+    private struct GitFixture {
+        let base: URL, origin: URL, checkout: URL, into: URL
+    }
+
+    /// An origin with one commit, a clone of it, then a second origin commit
+    /// the clone has not fetched and a local edit in the clone.
+    private func gitFixture(file: StaticString = #filePath, line: UInt = #line) throws -> GitFixture {
         let fm = FileManager.default
         let base = fm.temporaryDirectory.appendingPathComponent("synth-git-\(UUID().uuidString)")
-        defer { try? fm.removeItem(at: base) }
-        let origin = base.appendingPathComponent("origin"), checkout = base.appendingPathComponent("checkout")
-        let into = base.appendingPathComponent("copy")
-        try fm.createDirectory(at: origin.appendingPathComponent("Grux-Mac"), withIntermediateDirectories: true)
-        try fm.createDirectory(at: into, withIntermediateDirectories: true)
-        func git(_ dir: URL, _ args: String...) { _ = ProposalSynthesizer.runTool("/usr/bin/git", ["-C", dir.path] + args, timeout: 30) }
-        func write(_ url: URL, _ text: String) throws { try text.write(to: url, atomically: true, encoding: .utf8) }
-        try write(origin.appendingPathComponent("Grux-Mac/Package.swift"), "// one")
-        git(origin, "init", "-q", "-b", "main")
-        git(origin, "-c", "user.email=t@t", "-c", "user.name=t", "add", ".")
-        git(origin, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "one")
-        _ = ProposalSynthesizer.runTool("/usr/bin/git", ["clone", "-q", origin.path, checkout.path], timeout: 30)
-        try write(origin.appendingPathComponent("Grux-Mac/Package.swift"), "// two")
-        git(origin, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-am", "two")
-        try write(checkout.appendingPathComponent("Grux-Mac/Package.swift"), "// local edit")
+        let f = GitFixture(base: base, origin: base.appendingPathComponent("origin"),
+                           checkout: base.appendingPathComponent("checkout"), into: base.appendingPathComponent("copy"))
+        try fm.createDirectory(at: f.origin.appendingPathComponent("Grux-Mac"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: f.into, withIntermediateDirectories: true)
+        try "// one".write(to: f.origin.appendingPathComponent("Grux-Mac/Package.swift"), atomically: true, encoding: .utf8)
+        try git(f.origin, ["init", "-q", "-b", "main"], file: file, line: line)
+        try git(f.origin, ["add", "."], file: file, line: line)
+        try git(f.origin, ["commit", "-q", "--no-gpg-sign", "--no-verify", "-m", "one"], file: file, line: line)
+        XCTAssertTrue(ProposalSynthesizer.runTool("/usr/bin/git", ["clone", "-q", f.origin.path, f.checkout.path], timeout: 30).ok,
+                      "clone failed", file: file, line: line)
+        try "// local edit".write(to: f.checkout.appendingPathComponent("Grux-Mac/Package.swift"), atomically: true, encoding: .utf8)
+        return f
+    }
 
-        XCTAssertTrue(ProposalSynthesizer.gitSnapshot(of: checkout, into: into))
-        XCTAssertEqual(try String(contentsOf: into.appendingPathComponent("Grux-Mac/Package.swift"), encoding: .utf8), "// two")
-        let note = try String(contentsOf: into.appendingPathComponent(ProposalSynthesizer.snapshotNoteFile), encoding: .utf8)
-        XCTAssertTrue(note.hasPrefix("the newest main at "), note)
+    private func git(_ dir: URL, _ args: [String], file: StaticString = #filePath, line: UInt = #line) throws {
+        let ok = ProposalSynthesizer.runTool("/usr/bin/git",
+                                             ["-C", dir.path, "-c", "user.email=t@t", "-c", "user.name=t"] + args, timeout: 30).ok
+        XCTAssertTrue(ok, "git \(args.joined(separator: " ")) failed", file: file, line: line)
+    }
+
+    private func copied(_ f: GitFixture) throws -> (file: String, note: String) {
+        (try String(contentsOf: f.into.appendingPathComponent("Grux-Mac/Package.swift"), encoding: .utf8),
+         try String(contentsOf: f.into.appendingPathComponent(ProposalSynthesizer.snapshotNoteFile), encoding: .utf8))
+    }
+
+    /// The copy comes from the newest default branch the checkout can fetch,
+    /// never its working tree: a commit that exists only on origin shows up,
+    /// a local edit does not.
+    func testTheCopyIsTheNewestMainNotTheCheckout() throws {
+        let f = try gitFixture()
+        defer { try? FileManager.default.removeItem(at: f.base) }
+        try "// two".write(to: f.origin.appendingPathComponent("Grux-Mac/Package.swift"), atomically: true, encoding: .utf8)
+        try git(f.origin, ["commit", "-q", "--no-gpg-sign", "--no-verify", "-am", "two"])
+
+        XCTAssertTrue(ProposalSynthesizer.gitSnapshot(of: f.checkout, into: f.into))
+        let (text, note) = try copied(f)
+        XCTAssertEqual(text, "// two")
+        XCTAssertTrue(note.hasPrefix("origin/main at "), note)
         XCTAssertFalse(note.contains("not refreshed"), note)
+    }
+
+    /// When the remote's default branch has no Grux-Mac (a fork, another
+    /// project), the copy falls back to the checkout's own HEAD.
+    func testARemoteWithoutTheCodeFallsBackToHead() throws {
+        let f = try gitFixture()
+        defer { try? FileManager.default.removeItem(at: f.base) }
+        try git(f.origin, ["rm", "-q", "-r", "Grux-Mac"])
+        try "x".write(to: f.origin.appendingPathComponent("README"), atomically: true, encoding: .utf8)
+        try git(f.origin, ["add", "README"])
+        try git(f.origin, ["commit", "-q", "--no-gpg-sign", "--no-verify", "-m", "elsewhere"])
+
+        XCTAssertTrue(ProposalSynthesizer.gitSnapshot(of: f.checkout, into: f.into))
+        let (text, note) = try copied(f)
+        XCTAssertEqual(text, "// one")
+        XCTAssertTrue(note.hasPrefix("the checkout's own HEAD at "), note)
+    }
+
+    /// A checkout whose fetch fails still yields a copy, and says it is stale.
+    func testAFailedFetchIsNamed() throws {
+        let f = try gitFixture()
+        defer { try? FileManager.default.removeItem(at: f.base) }
+        try git(f.checkout, ["remote", "set-url", "origin", f.base.appendingPathComponent("gone").path])
+
+        XCTAssertTrue(ProposalSynthesizer.gitSnapshot(of: f.checkout, into: f.into))
+        let (text, note) = try copied(f)
+        XCTAssertEqual(text, "// one")
+        XCTAssertTrue(note.hasSuffix(", not refreshed: the fetch failed"), note)
     }
 
     // MARK: - A pass, end to end, with the Claude run stubbed

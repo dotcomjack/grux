@@ -353,48 +353,66 @@ enum ProposalSynthesizer {
     /// Where gitSnapshot records what it copied, read back for the pass note.
     static let snapshotNoteFile = "source-commit.txt"
 
-    /// Run git or tar to completion, killed after `timeout` seconds. True on exit 0.
+    /// Run git or tar to completion, killed after `timeout` seconds. True on
+    /// exit 0. Only a call that reads its output gets a pipe: a pipe is held
+    /// open by any helper the tool spawns, and reading it would outlast the
+    /// timeout.
     nonisolated static func runTool(_ path: String, _ args: [String], timeout: TimeInterval,
-                                    environment: [String: String]? = nil) -> (ok: Bool, output: String) {
+                                    environment: [String: String]? = nil,
+                                    capture: Bool = false) -> (ok: Bool, output: String) {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: path)
         p.arguments = args
         if let environment { p.environment = environment }
         let out = Pipe()
-        p.standardOutput = out
+        p.standardOutput = capture ? out : FileHandle.nullDevice
         p.standardError = FileHandle.nullDevice
         p.standardInput = FileHandle.nullDevice
         guard (try? p.run()) != nil else { return (false, "") }
         let killer = DispatchWorkItem { if p.isRunning { p.terminate() } }
         DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: killer)
-        let data = out.fileHandleForReading.readDataToEndOfFile()
+        let data = capture ? out.fileHandleForReading.readDataToEndOfFile() : Data()
         p.waitUntilExit()
         killer.cancel()
         return (p.terminationStatus == 0, String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     /// A read-only copy of the checkout's Grux-Mac tree in `into`, from the
-    /// newest main it can reach: it fetches first (remote-tracking refs only,
-    /// never the working tree, no prompt), then copies the remote's default
-    /// branch, else the checkout's own HEAD. A copy that nothing updated was
-    /// how the June queue went stale, so a pass that could not fetch says so.
+    /// newest default branch it can reach. It fetches first, touching only
+    /// remote-tracking refs: no FETCH_HEAD (a pull in progress reads it), no
+    /// auto gc, no submodules, no pruning, no prompt. It copies the remote's
+    /// default branch, and the checkout's own HEAD when that branch cannot
+    /// supply Grux-Mac (a fork, another project). A copy nothing updated was
+    /// how the June queue went stale, so the note says what was read and
+    /// whether the fetch failed.
     nonisolated static func gitSnapshot(of checkout: URL, into: URL) -> Bool {
         let git = "/usr/bin/git"
         var env = ProcessInfo.processInfo.environment
         env["GIT_TERMINAL_PROMPT"] = "0"
-        let fetched = runTool(git, ["-C", checkout.path, "fetch", "--quiet", "--no-tags", "origin"],
+        env.removeValue(forKey: "GIT_ASKPASS")
+        env.removeValue(forKey: "SSH_ASKPASS")
+        let fetched = runTool(git, ["-C", checkout.path, "-c", "fetch.prune=false", "fetch", "--quiet", "--no-tags",
+                                    "--no-write-fetch-head", "--no-auto-gc", "--no-recurse-submodules", "origin"],
                               timeout: 60, environment: env).ok
-        let remoteHead = runTool(git, ["-C", checkout.path, "rev-parse", "--verify", "--quiet", "origin/HEAD"], timeout: 10)
-        let ref = remoteHead.ok ? "origin/HEAD" : "HEAD"
-        let commit = runTool(git, ["-C", checkout.path, "rev-parse", "--short", ref], timeout: 10).output
 
         let tar = into.appendingPathComponent("source.tar")
-        guard runTool(git, ["-C", checkout.path, "archive", "--format=tar", "-o", tar.path, ref, "Grux-Mac"], timeout: 120).ok,
-              runTool("/usr/bin/tar", ["-xf", tar.path, "-C", into.path], timeout: 120).ok
-        else { return false }
+        func copy(_ ref: String) -> Bool {
+            runTool(git, ["-C", checkout.path, "archive", "--format=tar", "-o", tar.path, ref, "Grux-Mac"], timeout: 120).ok
+                && runTool("/usr/bin/tar", ["-xf", tar.path, "-C", into.path], timeout: 120).ok
+        }
+        var label: String
+        var ref = "origin/HEAD"
+        if runTool(git, ["-C", checkout.path, "rev-parse", "--verify", "--quiet", ref], timeout: 10).ok, copy(ref) {
+            let branch = runTool(git, ["-C", checkout.path, "rev-parse", "--abbrev-ref", ref], timeout: 10, capture: true).output
+            label = branch.isEmpty ? "the remote's default branch" : branch
+        } else {
+            ref = "HEAD"
+            guard copy(ref) else { return false }
+            label = "the checkout's own HEAD"
+        }
         try? FileManager.default.removeItem(at: tar)
-        let note = "\(ref == "HEAD" ? "the checkout's own HEAD" : "the newest main") at \(commit)"
-            + (fetched ? "" : ", not refreshed: the fetch failed")
+        let commit = runTool(git, ["-C", checkout.path, "rev-parse", "--short", ref], timeout: 10, capture: true).output
+        let note = "\(label) at \(commit)" + (fetched ? "" : ", not refreshed: the fetch failed")
         try? note.write(to: into.appendingPathComponent(snapshotNoteFile), atomically: true, encoding: .utf8)
         return FileManager.default.fileExists(atPath: into.appendingPathComponent("Grux-Mac/Package.swift").path)
     }
@@ -482,6 +500,8 @@ enum ProposalSynthesizer {
         }
 
         readFrom = (try? String(contentsOf: scratch.appendingPathComponent(snapshotNoteFile), encoding: .utf8))
+        // Out of the copy before the model reads it: it is not source.
+        try? fm.removeItem(at: scratch.appendingPathComponent(snapshotNoteFile))
         let report: SignalHarvestReport
         if let harvested { report = harvested } else { report = await SignalHarvester.standard().harvest() }
         outcome.signals = report.signals.count
