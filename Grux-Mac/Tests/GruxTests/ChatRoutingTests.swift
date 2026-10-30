@@ -39,15 +39,27 @@ private actor RecordingBackend: ModelBackend {
     }
 
     private(set) var calls: [Call] = []
+    private(set) var shortAnswers = 0
     private let reply: String
+    private let error: Error?
 
-    init(reply: String) { self.reply = reply }
+    init(reply: String, error: Error? = nil) { self.reply = reply; self.error = error }
 
     func complete(apiKey: String, model: String, system: String?,
                   messages: [ClaudeMessage], maxTokens: Int, temperature: Double,
                   spanName: String, feature: String) async throws -> String {
         calls.append(Call(apiKey: apiKey, model: model, system: system, maxTokens: maxTokens))
+        if let error { throw error }
         return reply
+    }
+
+    func completeShortAnswer(apiKey: String, model: String, system: String?,
+                             messages: [ClaudeMessage], maxTokens: Int, temperature: Double,
+                             spanName: String, feature: String) async throws -> String {
+        shortAnswers += 1
+        return try await complete(apiKey: apiKey, model: model, system: system, messages: messages,
+                                  maxTokens: maxTokens, temperature: temperature,
+                                  spanName: spanName, feature: feature)
     }
 
     func completeVision(apiKey: String, model: String, system: String?,
@@ -80,6 +92,40 @@ private actor RecordingBackend: ModelBackend {
 // MARK: - The compactor spends the route it is handed
 
 final class ChatCompactorBackendTests: XCTestCase {
+
+    private func title(from backend: RecordingBackend) async -> String? {
+        await ChatCompactor.generateTitle(messages: transcript, backend: backend,
+                                          model: "grux-local:4b", apiKey: "")
+    }
+
+    /// The title is a short answer, so a backend whose model thinks first is
+    /// asked not to (OpenAICompatBackend on Ollama sends `think: false`).
+    func testTheTitleIsAskedForAsAShortAnswer() async {
+        let backend = RecordingBackend(reply: "shipping the compactor")
+        let got = await title(from: backend)
+        XCTAssertEqual(got, "shipping the compactor")
+        let short = await backend.shortAnswers
+        XCTAssertEqual(short, 1, "the title was asked for as a plain completion")
+    }
+
+    /// A model that answered with no title would only answer with none again,
+    /// and asking after every reply cost 1.27 s of the local model on 49 of 50
+    /// turns. Empty, not nil, so the caller names the thread from what the
+    /// person said.
+    func testAModelThatAnswersWithNoTitleGivesAnEmptyTitleNotAFailure() async {
+        let blank = await title(from: RecordingBackend(reply: "  \n "))
+        XCTAssertEqual(blank, "")
+        let thinking = await title(from: RecordingBackend(
+            reply: "", error: ClaudeError.http(200, OpenAICompatBackend.thinkingBudgetMessage)))
+        XCTAssertEqual(thinking, "", "a model that thought through its whole budget must read as an empty title, not a failed call")
+    }
+
+    /// A failed call (no network, a model still loading) is asked again next
+    /// reply rather than naming the thread from a raw first message for good.
+    func testAFailedTitleCallIsNilSoItIsAskedAgain() async {
+        let got = await title(from: RecordingBackend(reply: "", error: URLError(.timedOut)))
+        XCTAssertNil(got)
+    }
 
     private var transcript: [ChatMessage] {
         [ChatMessage(role: .user, content: "we agreed to ship the compactor this week"),

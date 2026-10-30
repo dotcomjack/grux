@@ -885,6 +885,58 @@ final class OpenAICompatStreamFixtureTests: XCTestCase {
                        "the server is asked what it is once, not per call")
     }
 
+    /// A chat title gets 32 tokens and Qwen 3.5 spent all of them thinking: no
+    /// title came back on 49 of 50 real-app turns, so the call ran again after
+    /// every reply. A short answer on Ollama asks the model not to think;
+    /// every other call keeps the model's default.
+    func test_aShortAnswerOnOllamaAsksTheModelNotToThink() async throws {
+        let server = SSEFixtureServer(
+            frames: [#"{"model":"m","message":{"role":"assistant","content":"capital cities quiz"},"done":true,"done_reason":"stop","prompt_eval_count":9,"eval_count":4}"#],
+            contentType: "application/json", ollamaVersion: "0.22.0")
+        try server.start()
+        defer { server.stop() }
+        let backend = OpenAICompatBackend(baseURL: server.baseURL)
+        let title = try await backend.completeShortAnswer(
+            apiKey: "ollama", model: "qwen3.5:4b", system: "Pick a title.",
+            messages: [ClaudeMessage(role: "user", content: "CHAT: ...")],
+            maxTokens: 32, temperature: 0.3, spanName: "test.title", feature: "test")
+        XCTAssertEqual(title, "capital cities quiz")
+        let short = try XCTUnwrap(try JSONSerialization.jsonObject(with: server.requestBody) as? [String: Any])
+        XCTAssertEqual(short["think"] as? Bool, false,
+                       "a short answer lets the model think through its whole reply budget")
+
+        _ = try await backend.complete(apiKey: "ollama", model: "qwen3.5:4b", system: "s",
+                                       messages: [ClaudeMessage(role: "user", content: "summarize")],
+                                       maxTokens: 800, temperature: 0.2)
+        let plain = try XCTUnwrap(try JSONSerialization.jsonObject(with: server.requestBody) as? [String: Any])
+        XCTAssertNil(plain["think"], "a plain completion had the model's thinking changed")
+
+        _ = try await backend.completeWithTools(
+            apiKey: "ollama", model: "qwen3.5:4b", system: nil,
+            messages: [["role": "user", "content": "hi"]], tools: [], maxTokens: 16, temperature: 0)
+        let turn = try XCTUnwrap(try JSONSerialization.jsonObject(with: server.requestBody) as? [String: Any])
+        XCTAssertNil(turn["think"], "a chat turn with tools had its thinking changed")
+    }
+
+    /// The field is Ollama's own. A server that is not Ollama gets the OpenAI
+    /// body, and a hosted API can refuse a field it does not know.
+    func test_aServerThatIsNotOllamaIsNeverSentTheThinkField() async throws {
+        let server = SSEFixtureServer(
+            frames: [#"{"choices":[{"message":{"role":"assistant","content":"four"},"finish_reason":"stop"}],"usage":{"prompt_tokens":9,"completion_tokens":1}}"#],
+            contentType: "application/json")
+        try server.start()
+        defer { server.stop() }
+        let backend = OpenAICompatBackend(baseURL: server.baseURL)
+        let text = try await backend.completeShortAnswer(
+            apiKey: "k", model: "m", system: "s",
+            messages: [ClaudeMessage(role: "user", content: "two plus two")],
+            maxTokens: 16, temperature: 0, spanName: "test.title", feature: "test")
+        XCTAssertEqual(text, "four")
+        XCTAssertTrue(server.requestLine.hasPrefix("POST /v1/chat/completions "), server.requestLine)
+        let body = try XCTUnwrap(try JSONSerialization.jsonObject(with: server.requestBody) as? [String: Any])
+        XCTAssertNil(body["think"], "a server that is not Ollama was sent Ollama's think field")
+    }
+
     // MARK: - Ollama: the per-turn block rides after the tools
 
     /// Measured 2026-09-27 on this Mac mini (Ollama 0.22.0, qwen2.5:7b): a

@@ -175,12 +175,13 @@ actor OpenAICompatBackend: ModelBackend {
     /// the same body in Ollama's shape on `/api/chat`. `native` says which, so
     /// the reply is read back the same way.
     private func request(for body: [String: Any], stream: Bool, surface: String,
-                         apiKey: String) async throws -> (URLRequest, native: Bool) {
+                         apiKey: String, think: Bool? = nil) async throws -> (URLRequest, native: Bool) {
         let native = await speaksOllama()
         var req = try makeRequest(stream: stream, surface: surface, native: native)
         authorize(&req, apiKey: apiKey)
         let wire = native ? Self.ollamaChatBody(body, stream: stream,
-                                                contextTokens: Self.contextTokens(forBaseURL: baseURL))
+                                                contextTokens: Self.contextTokens(forBaseURL: baseURL),
+                                                think: think)
                           : Self.shaped(body, baseURL: baseURL)
         // The call asked this Mac's server to keep the model: Grux unloads it
         // itself on critical memory pressure and on quit (LocalModelUnload).
@@ -250,7 +251,8 @@ actor OpenAICompatBackend: ModelBackend {
     }
 
     static func ollamaChatBody(_ body: [String: Any], stream: Bool,
-                               contextTokens: Int? = ollamaContextTokens) -> [String: Any] {
+                               contextTokens: Int? = ollamaContextTokens,
+                               think: Bool? = nil) -> [String: Any] {
         var options: [String: Any] = [:]
         if let contextTokens { options["num_ctx"] = contextTokens }
         if let n = body["max_tokens"] { options["num_predict"] = n }
@@ -262,6 +264,7 @@ actor OpenAICompatBackend: ModelBackend {
             "options": options
         ]
         if let tools = body["tools"] { out["tools"] = tools }
+        if let think { out["think"] = think }
         // A server on this Mac keeps the model, and what it read, for longer
         // than its 5 minute default (LocalTurn.keepAlive).
         if contextTokens != nil { out["keep_alive"] = LocalTurn.keepAlive }
@@ -510,13 +513,38 @@ actor OpenAICompatBackend: ModelBackend {
     func complete(apiKey: String, model: String, system: String?,
                   messages: [ClaudeMessage], maxTokens: Int = 1024, temperature: Double = 0.2,
                   spanName: String = "openai.complete", feature: String = "uncategorized") async throws -> String {
+        try await plainComplete(apiKey: apiKey, model: model, system: system, messages: messages,
+                                maxTokens: maxTokens, temperature: temperature, think: nil)
+    }
+
+    // A SHORT ANSWER ON OLLAMA ASKS THE MODEL NOT TO THINK.
+    //
+    // A chat title gets 32 tokens, all meant for the title. Qwen 3.5 thinks
+    // first by default and spent the whole budget doing it. Measured 2026-10-27
+    // on qwen3.5:4b with the title call's own prompt: 32 tokens, all thinking,
+    // `done_reason` length, content empty; with `think: false` the title came
+    // back in 5 tokens and 0.13 s. In the real app no title came back on 49 of
+    // 50 turns, so the call ran again after every reply, 1.27 s of the model
+    // each time. Every other call keeps the model's default, and a server that
+    // is not Ollama never sees the field.
+    func completeShortAnswer(apiKey: String, model: String, system: String?,
+                             messages: [ClaudeMessage], maxTokens: Int, temperature: Double,
+                             spanName: String, feature: String) async throws -> String {
+        try await plainComplete(apiKey: apiKey, model: model, system: system, messages: messages,
+                                maxTokens: maxTokens, temperature: temperature, think: false)
+    }
+
+    private func plainComplete(apiKey: String, model: String, system: String?,
+                               messages: [ClaudeMessage], maxTokens: Int, temperature: Double,
+                               think: Bool?) async throws -> String {
         let body: [String: Any] = [
             "model": model,
             "max_tokens": maxTokens,
             "temperature": temperature,
             "messages": openAIMessages(system: system, messages: messages)
         ]
-        let (req, native) = try await request(for: body, stream: false, surface: "completion", apiKey: apiKey)
+        let (req, native) = try await request(for: body, stream: false, surface: "completion",
+                                              apiKey: apiKey, think: think)
 
         let (reply, resp) = try await session.data(for: req)
         let data = Self.openAIReply(reply, native: native)
