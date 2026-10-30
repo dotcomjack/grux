@@ -269,6 +269,26 @@ final class ProposalSynthesizerTests: XCTestCase {
         XCTAssertFalse(text.contains("\u{2014}"))
     }
 
+    /// The proposal-only source grounds a pass without arming Build: it is
+    /// read only when no build source is recorded, and only as a real checkout.
+    func testTheProposalOnlySourceIsTheFallback() throws {
+        let checkout = FileManager.default.temporaryDirectory.appendingPathComponent("synth-checkout-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: checkout.appendingPathComponent("Grux-Mac"), withIntermediateDirectories: true)
+        try "// p".write(to: checkout.appendingPathComponent("Grux-Mac/Package.swift"), atomically: true, encoding: .utf8)
+        try FileManager.default.createDirectory(at: checkout.appendingPathComponent(".git"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: checkout) }
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("synth-source-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        XCTAssertNil(ProposalSynthesizer.sourceRoot(recorded: nil, proposalSourceFile: file))
+        try "  \(checkout.path)\n".write(to: file, atomically: true, encoding: .utf8)
+        XCTAssertEqual(ProposalSynthesizer.sourceRoot(recorded: nil, proposalSourceFile: file)?.path, checkout.path)
+        let recorded = URL(fileURLWithPath: "/tmp/recorded-build-source")
+        XCTAssertEqual(ProposalSynthesizer.sourceRoot(recorded: recorded, proposalSourceFile: file), recorded)
+        try "relative/path".write(to: file, atomically: true, encoding: .utf8)
+        XCTAssertNil(ProposalSynthesizer.sourceRoot(recorded: nil, proposalSourceFile: file))
+    }
+
     // MARK: - A pass, end to end, with the Claude run stubbed
 
     private func runPass(reply text: String, store: ProposalStore, timeline: FoundryTimelineStore,

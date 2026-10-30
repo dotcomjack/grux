@@ -325,6 +325,29 @@ enum ProposalSynthesizer {
         return UpgradeLane.allCases.first { $0.rawValue.lowercased() == key }
     }
 
+    // MARK: - Where the pass reads code
+
+    /// A checkout the proposal pass may read when the install has none
+    /// recorded for building: one line, its absolute path. Separate from
+    /// ~/.grux/source.json on purpose, because that file also arms the card's
+    /// Build button, and an owner can want fresh proposals on a Mac where
+    /// builds must not run (2026-10-30: the owner's MacBook, where Swift
+    /// builds are off limits by their own rule).
+    nonisolated static var proposalSourceFile: URL {
+        Persistence.gruxDir.appendingPathComponent("foundry-proposal-source")
+    }
+
+    /// The checkout a pass reads: the recorded build source, else the
+    /// proposal-only source, else nil (and the pass is skipped).
+    nonisolated static func sourceRoot(recorded: URL? = FoundryEngine.resolveRepoRoot(),
+                                       proposalSourceFile: URL = proposalSourceFile) -> URL? {
+        if let recorded { return recorded }
+        guard let text = try? String(contentsOf: proposalSourceFile, encoding: .utf8) else { return nil }
+        let path = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard path.hasPrefix("/") else { return nil }
+        return FoundryEngine.validatedCheckout(at: path)
+    }
+
     // MARK: - One pass
 
     /// A read-only copy of the checkout's committed Grux-Mac tree in `into`.

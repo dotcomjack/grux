@@ -214,7 +214,7 @@ final class FoundryEngine: ObservableObject {
         // away and must stand down when they return, and a synthesis run
         // cannot be interrupted part way. Nor after the governor yielded.
         if pass != .opportunistic, case .running = FoundryGovernor.shared.phase {
-            _ = await ProposalSynthesizer.refresh(sourceRoot: Self.resolveRepoRoot(), harvested: report)
+            _ = await ProposalSynthesizer.refresh(sourceRoot: ProposalSynthesizer.sourceRoot(), harvested: report)
         }
 
         // Build: every accepted proposal rides the rail, one at a time.

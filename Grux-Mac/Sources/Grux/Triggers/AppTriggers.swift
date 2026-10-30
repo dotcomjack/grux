@@ -1692,7 +1692,8 @@ enum AppTriggers {
         }
 
         // fire-foundry-refresh (contents = an absolute path to a Grux source
-        // checkout, or empty for the one this install recorded): one Self-Upgrade
+        // checkout, or empty for the one this install recorded, else the one
+        // named in ~/.grux/foundry-proposal-source): one Self-Upgrade
         // proposal pass now, on the user's Claude plan, whether or not the
         // nightly loop is on, since asking for it is the decision. Retires the
         // stale queue, files fresh proposals, and writes foundry-refresh.json
@@ -1720,7 +1721,7 @@ enum AppTriggers {
             }
             let root: URL
             if named.isEmpty {
-                guard let recorded = FoundryEngine.resolveRepoRoot() else {
+                guard let recorded = ProposalSynthesizer.sourceRoot() else {
                     write(["refused": "noCheckout"], to: foundryRefreshRefused)
                     return
                 }
