@@ -185,19 +185,36 @@ enum ProposalSynthesizer {
     // every brief, and the screen then dropped all of them for naming sudo.
     static let briefRules = "Rules for this build: work only inside this repository. Never fetch anything from the network, run a downloaded script, use elevated privileges, or push."
 
-    // Grux keeps its own state in these two places, so a brief may name them
-    // (a trigger to verify with, a store to inspect). Any other home reach is
-    // still dropped.
-    static let gruxOwnFolders = ["~/.grux/", "~/Library/Application Support/Grux"]
+    // What a brief may name under the home folder: the one trigger a build
+    // verifies with, Grux's read-only status files, and files in Grux's own
+    // Application Support folder. Matched as whole paths with no climbing
+    // (a brief carrying "~" and ".." in one path is dropped first), so
+    // "~/.grux/../.aws" or "Application Support/GruxBackup" never pass. Any
+    // other home reach is still dropped. Removing a matched path, not a bare
+    // prefix, is what keeps the rest of the brief under the "~/" rule.
+    static let gruxOwnPaths = [
+        #"~/\.grux/(fire-open-tab|[a-z0-9-]+-status\.json)(?![\w./-])"#,
+        #"~/Library/Application Support/Grux/[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*"#,
+    ]
 
     /// The path as it belongs in touchedPaths: relative to the repository,
     /// under Grux-Mac. A model reading the copy often writes it relative to
     /// the package (Sources/...) or as the absolute path of the copy.
     nonisolated static func repoRelative(_ raw: String, sourceCopy: URL?) -> String {
         var path = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let range = path.range(of: "/Grux-Mac/") { path = "Grux-Mac/" + path[range.upperBound...] }
+        if let sourceCopy {
+            for root in [sourceCopy.path, sourceCopy.resolvingSymlinksInPath().path] where path.hasPrefix(root + "/") {
+                path = String(path.dropFirst(root.count + 1))
+            }
+        }
         while path.hasPrefix("./") { path.removeFirst(2) }
-        if path.hasPrefix("Sources/") || path.hasPrefix("Tests/") { path = "Grux-Mac/" + path }
+        // Package relative (Sources/..., Package.swift, build.sh): it names a
+        // file in the copy's Grux-Mac folder when one exists there.
+        if !path.hasPrefix("/"), !path.hasPrefix("Grux-Mac/"), !path.contains(".."),
+           let sourceCopy,
+           FileManager.default.fileExists(atPath: sourceCopy.appendingPathComponent("Grux-Mac/" + path).path) {
+            path = "Grux-Mac/" + path
+        }
         return path
     }
 
@@ -211,15 +228,22 @@ enum ProposalSynthesizer {
             p.status != .rejected || (p.retiredStale != true && p.updatedAt > memory)
         }.map { titleKey($0.title) })
         let forbidden = forbiddenBriefPatterns.compactMap { try? NSRegularExpression(pattern: $0, options: [.caseInsensitive]) }
+        let allowed = gruxOwnPaths.compactMap { try? NSRegularExpression(pattern: $0) }
+        let climbing = try! NSRegularExpression(pattern: #"~[^\s"']*\.\.|~/Library/Application Support/[^\s"']*\.\."#)
 
         var out: [UpgradeProposal] = []
         for object in objects {
             let title = oneLine(clean(object["title"] as? String ?? ""), max: 200)
             let brief = clean(object["readyPrompt"] as? String ?? "")
-            let screened = gruxOwnFolders.reduce(brief) { $0.replacingOccurrences(of: $1, with: "") }
+            let screened = allowed.reduce(brief) {
+                $1.stringByReplacingMatches(in: $0, range: NSRange($0.startIndex..., in: $0), withTemplate: "")
+            }
             let reason: String? = {
                 if !(8...160).contains(title.count) { return "title" }
                 if !(80...maxBriefCharacters).contains(brief.count) { return "brief length" }
+                if climbing.firstMatch(in: brief, range: NSRange(brief.startIndex..., in: brief)) != nil {
+                    return "brief reach: climbing out of the home folder"
+                }
                 if lane(object["lane"] as? String ?? "") == nil { return "lane" }
                 if UpgradeDomain(rawValue: (object["domain"] as? String ?? "").lowercased()) == nil { return "domain" }
                 if let hit = forbidden.first(where: { $0.firstMatch(in: screened, range: NSRange(screened.startIndex..., in: screened)) != nil }) {

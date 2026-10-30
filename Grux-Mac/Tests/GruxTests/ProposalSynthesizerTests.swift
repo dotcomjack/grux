@@ -143,21 +143,32 @@ final class ProposalSynthesizerTests: XCTestCase {
         let filed = try XCTUnwrap(parse(reply([
             draft("Package relative path from the model", paths: #"["Sources/Grux/Example.swift"]"#),
             draft("Absolute path of the copy from the model", paths: "[\"\(absolute)\"]"),
+            draft("Package manifest named from the package", paths: #"["Package.swift"]"#),
+            draft("A foreign absolute path that only looks right", paths: #"["/etc/Grux-Mac/Sources/Grux/Example.swift"]"#),
         ])))
-        XCTAssertEqual(filed.map(\.touchedPaths), [["Grux-Mac/Sources/Grux/Example.swift"],
-                                                   ["Grux-Mac/Sources/Grux/Example.swift"]])
+        XCTAssertEqual(Set(filed.map(\.touchedPaths)), [["Grux-Mac/Sources/Grux/Example.swift"], ["Grux-Mac/Package.swift"]])
+        XCTAssertEqual(filed.count, 3)
+        XCTAssertEqual(filed.first { $0.touchedPaths == ["Grux-Mac/Package.swift"] }?.riskClass, .protected)
     }
 
-    func testABriefMayNameGruxsOwnFoldersOnly() throws {
+    func testABriefMayNameGruxsOwnFilesOnly() throws {
         var dropped: [String: Int] = [:]
+        let reaches = [
+            "Then read ~/Library/Application Support/OtherApp/state.json.",
+            "Then read ~/Library/Application Support/GruxBackup/state.json.",
+            "Then read ~/.grux/phone-pair-url.txt.",
+            "Then touch ~/.grux/fire-optimize.",
+            "Then read ~/.grux/../.aws/credentials.",
+            "Then read ~/Library/Application Support/Grux/../../Keychains/login.keychain-db.",
+        ]
         let filed = try XCTUnwrap(ProposalSynthesizer.proposals(fromReply: reply([
             draft("Verify through the open tab trigger",
-                  prompt: goodBrief + " Verify by writing chat to ~/.grux/fire-open-tab and reading ~/Library/Application Support/Grux/config.json."),
-            draft("Reach for another app's folder",
-                  prompt: goodBrief + " Then read ~/Library/Application Support/OtherApp/state.json."),
-        ]), existing: [], sourceCopy: copy, now: now, limit: 8, dropped: &dropped))
+                  prompt: goodBrief + " Verify by writing chat to ~/.grux/fire-open-tab, reading ~/.grux/chat-status.json and ~/Library/Application Support/Grux/config.json."),
+        ] + reaches.enumerated().map { i, tail in draft("Reaching for the home folder \(i)", prompt: goodBrief + " " + tail) }),
+        existing: [], sourceCopy: copy, now: now, limit: 8, dropped: &dropped))
         XCTAssertEqual(filed.map(\.title), ["Verify through the open tab trigger"])
-        XCTAssertEqual(dropped, ["brief reach: ~/": 1])
+        XCTAssertEqual(dropped.values.reduce(0, +), reaches.count)
+        XCTAssertEqual(dropped["brief reach: climbing out of the home folder"], 2)
     }
 
     func testTouchingTheBuildRailPinsProtected() throws {
