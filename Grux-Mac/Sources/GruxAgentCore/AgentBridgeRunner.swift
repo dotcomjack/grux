@@ -175,6 +175,13 @@ public actor AgentBridgeRunner {
         isRunning = true
         defer { isRunning = false }
 
+        // Cancelled before it started: spawn nothing. Without this a cancel
+        // that lands between construction and spawn was only noticed at the
+        // first byte of output, after the CLI was already running.
+        if cancelled {
+            return BridgeRunResult(runId: runId, success: false, finalText: "", events: [], costUSD: nil, exitCode: -1, note: "cancelled before start")
+        }
+
         var events: [AdapterEvent] = []
         func record(_ ev: AdapterEvent) async {
             events.append(ev)

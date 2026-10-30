@@ -353,21 +353,11 @@ final class AccountSwitcher: ObservableObject {
             let proc = Process()
             proc.executableURL = URL(fileURLWithPath: bin.contains("/") ? bin : "/usr/bin/env")
             proc.arguments = bin.contains("/") ? args : (["claude"] + args)
-            // Match SwarmWorker's env-strip posture so this introspection
+            // The same env-strip as every spawned claude, so this introspection
             // call can never accidentally route through API billing instead
             // of OAuth - `auth status` would happily report the API-key
             // identity if one is present in the env.
-            var env = ProcessInfo.processInfo.environment
-            for k in [
-                "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_TOKEN",
-                "CLAUDE_API_KEY", "CLAUDE_AUTH_TOKEN", "ANTHROPIC_AUTH_HEADER",
-                "ANTHROPIC_CUSTOM_HEADERS", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_URL",
-                "ANTHROPIC_BEDROCK_API_KEY", "ANTHROPIC_VERTEX_PROJECT_ID",
-                "ANTHROPIC_VERTEX_REGION", "CLAUDE_CODE_USE_BEDROCK",
-                "CLAUDE_CODE_USE_VERTEX", "CLAUDECODE", "CLAUDE_CODE",
-                "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_EXECPATH",
-                "CLAUDE_CODE_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"
-            ] { env.removeValue(forKey: k) }
+            var env = AgentCLIRegistry.oauthSafeEnvironment()
             env["PATH"] = ClaudeBinaryLocator.spawnPATH(
                 for: bin, base: env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin")
             proc.environment = env

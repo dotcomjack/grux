@@ -13,7 +13,7 @@ public struct ClaudeCodeAdapter: AgentAdapter {
     public let displayName = "Claude Code"
     public let defaultModel: String
 
-    public init(defaultModel: String = "claude-opus-4-8") {
+    public init(defaultModel: String = SubscriptionModels.code) {
         self.defaultModel = defaultModel
     }
 

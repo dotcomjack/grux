@@ -27,7 +27,7 @@ protocol DesignSystemProviding {
 // Post-generation critique (contrast, spacing, brand fit). Returns a short
 // verdict summary appended to the assistant transcript message, or nil.
 protocol DesignCritiquing {
-    func critique(html: String, brandSlug: String?) async -> String?
+    func critique(html: String, brandSlug: String?, route: ExecutionRoute) async -> String?
 }
 
 // Pre-run cost estimate for the picker. Every rendering of the result carries
@@ -153,6 +153,8 @@ final class DesignStudioEngine: ObservableObject {
         streamTask?.cancel()
         // Subscription route: reach the retained AgentBridgeRunner via the delegate.
         Task { @MainActor in await Self.agentDelegate?.cancelActiveRun() }
+        // Either route's review may be running on the plan.
+        Task { await CritiqueGate.cancelPlanReviewers() }
         if let pid = runningProjectId {
             store.appendMessage(id: pid, DesignChatMessage(role: .assistant, text: "Run stopped."))
         }
@@ -304,6 +306,7 @@ final class DesignStudioEngine: ObservableObject {
         cancelRequested = false
         lastError = nil
         liveStatus = "Thinking"
+        await CritiqueGate.beginPlanReview()
         NotificationCenter.default.post(name: .gruxDesignRunStateChanged, object: projectId)
         defer {
             isGenerating = false
@@ -431,7 +434,7 @@ final class DesignStudioEngine: ObservableObject {
             apply(parser.finish())
 
             liveStatus = "Reviewing design"
-            let critiqueLine = await runCritique(projectId: projectId, brandSlug: config.brandSlug)
+            let critiqueLine = await runCritique(projectId: projectId, brandSlug: config.brandSlug, route: config.route)
             // Cancelled DURING the critique await: cancelRun() already recorded
             // "Run stopped.", so bail before appending a success summary + critique
             // line (which would double up with the stop line).
@@ -471,7 +474,7 @@ final class DesignStudioEngine: ObservableObject {
             // too, so the anti-slop gate covers every route, not just the API one.
             if cancelRequested { return }
             liveStatus = "Reviewing design"
-            let critiqueLine = await runCritique(projectId: projectId, brandSlug: config.brandSlug)
+            let critiqueLine = await runCritique(projectId: projectId, brandSlug: config.brandSlug, route: config.route)
             // Cancelled DURING the critique await: cancelRun() already recorded
             // "Run stopped.", so do not append the critique line on top of it.
             if cancelRequested || Task.isCancelled { return }
@@ -486,11 +489,11 @@ final class DesignStudioEngine: ObservableObject {
 
     // Post-generation critique via the seam, run against the site's index.html.
     // Returns nil when no critic is bound or there is no index to review.
-    private func runCritique(projectId: UUID, brandSlug: String?) async -> String? {
+    private func runCritique(projectId: UUID, brandSlug: String?, route: ExecutionRoute) async -> String? {
         guard let critic = Self.critic,
               let indexURL = store.siteIndexURL(id: projectId),
               let html = try? String(contentsOf: indexURL, encoding: .utf8) else { return nil }
-        return await critic.critique(html: html, brandSlug: brandSlug)
+        return await critic.critique(html: html, brandSlug: brandSlug, route: route)
     }
 
     private func recordFailure(projectId: UUID, error: Error) {

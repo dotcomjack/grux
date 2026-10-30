@@ -2,6 +2,7 @@ import Foundation
 import Combine
 import AppKit
 import GruxShellCore
+import GruxAgentCore
 
 // MARK: - Engine
 //
@@ -1084,7 +1085,7 @@ enum CommandV2Executor {
                 result = await CommandV2AgentBridge.runSingleAgent(
                     prompt: resolved,
                     cwd: cwd,
-                    model: "claude-sonnet-4-6",
+                    model: SubscriptionModels.routine,
                     ttlSeconds: ttl,
                     runId: run.id
                 )
@@ -1116,7 +1117,7 @@ enum CommandV2Executor {
                 result = await CommandV2AgentBridge.runSwarm(
                     prompts: resolved,
                     cwd: cwd,
-                    model: "claude-sonnet-4-6",
+                    model: SubscriptionModels.routine,
                     ttlSeconds: 1800,
                     runId: run.id,
                     title: "v2:\(run.definitionId):\(run.currentPhaseId)"

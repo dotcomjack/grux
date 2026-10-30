@@ -427,12 +427,12 @@ final class RDWorker: ObservableObject {
         var repoRoot: URL
         // Autonomous R&D defaults to Sonnet: it does structural dup/lint and
         // iteration work at a fraction of Opus cost with negligible quality
-        // loss. Pass "claude-opus-4-8" explicitly for genuinely high-stakes runs.
-        var model: String = "claude-sonnet-4-6"
+        // loss. Pass SubscriptionModels.code explicitly for genuinely high-stakes runs.
+        var model: String = SubscriptionModels.routine
         var mode: Mode = .headless
         var runsDir: URL = RDWorkerPaths.runsDir
 
-        init(repoRoot: URL, model: String = "claude-sonnet-4-6", mode: Mode = .headless, runsDir: URL = RDWorkerPaths.runsDir) {
+        init(repoRoot: URL, model: String = SubscriptionModels.routine, mode: Mode = .headless, runsDir: URL = RDWorkerPaths.runsDir) {
             self.repoRoot = repoRoot
             self.model = model
             self.mode = mode

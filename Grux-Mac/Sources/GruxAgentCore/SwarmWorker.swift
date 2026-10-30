@@ -410,40 +410,9 @@ public actor SwarmWorker {
         // though they have a paid subscription. Also strip Claude-Code-loop
         // detection vars so the spawned CLI doesn't think it's nested inside
         // a parent Claude Code session and inherit that session's API auth.
-        var env = ProcessInfo.processInfo.environment
-        let stripKeys: Set<String> = [
-            // Direct API key auth - top priority to remove.
-            "ANTHROPIC_API_KEY",
-            "ANTHROPIC_AUTH_TOKEN",
-            "ANTHROPIC_API_TOKEN",
-            "CLAUDE_API_KEY",
-            "CLAUDE_AUTH_TOKEN",
-            // Custom auth header / base URL overrides.
-            "ANTHROPIC_AUTH_HEADER",
-            "ANTHROPIC_CUSTOM_HEADERS",
-            "ANTHROPIC_BASE_URL",
-            "ANTHROPIC_API_URL",
-            // Cloud-provider auth alternatives that also bypass OAuth.
-            "ANTHROPIC_BEDROCK_API_KEY",
-            "ANTHROPIC_VERTEX_PROJECT_ID",
-            "ANTHROPIC_VERTEX_REGION",
-            "CLAUDE_CODE_USE_BEDROCK",
-            "CLAUDE_CODE_USE_VERTEX",
-            // Claude Code parent-session detection. If these are set, the
-            // spawned `claude` decides it's running inside Claude Code and
-            // adopts that parent's auth/API mode. We want a fresh, OAuth-only
-            // session.
-            "CLAUDECODE",
-            "CLAUDE_CODE",
-            "CLAUDE_CODE_ENTRYPOINT",
-            "CLAUDE_CODE_EXECPATH",
-            "CLAUDE_CODE_API_KEY",
-            "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS",
-            "CLAUDE_CODE_SIMPLE",
-            "CLAUDE_CODE_OAUTH_TOKEN"
-        ]
-        for k in stripKeys { env.removeValue(forKey: k) }
-        env["NODE_NO_WARNINGS"] = "1"
+        // The list lives in AgentCLIRegistry.oauthSafeEnvironment, the one copy
+        // a test covers; this file used to carry its own, identical only by luck.
+        var env = AgentCLIRegistry.oauthSafeEnvironment()
         env["PATH"] = ClaudeBinaryLocator.spawnPATH(
             for: claudePath, base: env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin")
         let prepared = executor.prepare(CommandRequest(

@@ -34,7 +34,7 @@ public struct SwarmWorkerSpec: Codable, Identifiable, Sendable {
     public var goal: String            // the prompt for this worker
     public var cwd: String             // working dir
     public var dependsOn: [String]     // ids of workers that must finish first
-    public var model: String           // coding model, e.g. "claude-opus-4-8"
+    public var model: String           // coding model, e.g. SubscriptionModels.code
     public var maxTurns: Int?          // optional hard cap, unset = unbounded
     public var budgetUSD: Double       // hard stop on cost
     public var allowedTools: [String]?  // nil = default; explicit list narrows
@@ -57,7 +57,7 @@ public struct SwarmWorkerSpec: Codable, Identifiable, Sendable {
         goal: String,
         cwd: String,
         dependsOn: [String] = [],
-        model: String = "claude-opus-4-8",
+        model: String = SubscriptionModels.code,
         maxTurns: Int? = nil,
         budgetUSD: Double = 1.0,
         allowedTools: [String]? = nil,
@@ -117,10 +117,9 @@ public enum SwarmPlanFactory {
         template: SwarmTemplate,
         goal: String,
         rootDir: String,
-        // Every coding/build role runs on Opus 4.8. (Audited 2026-06-16: Grux's
-        // coding was split across Opus 4.7 + Sonnet 4.6; consolidated to 4.8.)
+        // Every coding/build role runs on one model (SubscriptionModels.code).
         // One model param; a caller may still override it per job.
-        codeModel: String = "claude-opus-4-8"
+        codeModel: String = SubscriptionModels.code
     ) -> [SwarmWorkerSpec] {
         switch template {
         case .singleWorker:

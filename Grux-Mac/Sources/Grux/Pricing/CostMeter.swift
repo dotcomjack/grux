@@ -207,12 +207,11 @@ final class CostMeter: ObservableObject {
         let apiUSD = genAPIUSD + review
         let apiLabel = hasReview ? "\(usdLabel(apiUSD)) (gen + review)" : usdLabel(apiUSD)
 
-        // Subscription route: generation rides the plan quota, so its only real
-        // out-of-pocket dollars are the API review. Without a review it stays
-        // "metered (plan quota)", not "estimated" (a plan run is billed, not free).
-        let subLabel = hasReview
-            ? "subscription gen on plan quota, review \(usdLabel(review))"
-            : "subscription, $0 metered (plan quota)"
+        // Subscription route: generation AND the review ride the plan quota
+        // (CritiqueGate reviews on the plan for this route), so no API dollars.
+        // It reads "metered (plan quota)", not "estimated" (a plan run is
+        // billed against quota, not free).
+        let subLabel = "subscription, $0 metered (plan quota)"
 
         // Local route: $0 if genuinely local, but a custom endpoint (OpenRouter)
         // on this route IS metered, so never claim "free" unconditionally. The
@@ -225,7 +224,7 @@ final class CostMeter: ObservableObject {
             DesignRouteCost(route: .api, modelId: modelId,
                             estimatedUSD: apiUSD, label: apiLabel),
             DesignRouteCost(route: .subscriptionCLI, modelId: modelId,
-                            estimatedUSD: review, label: subLabel),
+                            estimatedUSD: 0, label: subLabel),
             DesignRouteCost(route: .localModel, modelId: modelId,
                             estimatedUSD: review, label: localLabel)
         ]
@@ -234,9 +233,10 @@ final class CostMeter: ObservableObject {
     // MARK: - Critique cost
 
     // The post-generation CritiqueGate review runs on the Anthropic API (Sonnet)
-    // no matter which route generated the design, and only when an API key is
-    // present (without one the gate is skipped). Pricing it lets the "free"
-    // routes surface the real review dollars instead of reading $0. The generated
+    // for the API and local routes, and only when an API key is present (without
+    // one the gate is skipped). The subscription route reviews on the plan and
+    // never takes this figure. Pricing it lets the local route surface the real
+    // review dollars instead of reading $0. The generated
     // HTML is approximated by the run's output budget, clamped to the gate's own
     // html cap; the first review dimension warms that payload into the prompt
     // cache and the rest read it cheaply (the gate's warm-then-fan-out pattern).
