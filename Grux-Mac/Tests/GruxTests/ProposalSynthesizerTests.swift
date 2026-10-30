@@ -289,6 +289,26 @@ final class ProposalSynthesizerTests: XCTestCase {
         XCTAssertNil(ProposalSynthesizer.sourceRoot(recorded: nil, proposalSourceFile: file))
     }
 
+    /// The promise the proposal-only source exists for: it grounds the pass
+    /// and never arms Build, which reads only the recorded build source.
+    func testTheProposalOnlySourceNeverArmsBuild() throws {
+        let checkout = FileManager.default.temporaryDirectory.appendingPathComponent("synth-armed-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: checkout.appendingPathComponent("Grux-Mac"), withIntermediateDirectories: true)
+        try "// p".write(to: checkout.appendingPathComponent("Grux-Mac/Package.swift"), atomically: true, encoding: .utf8)
+        try "gitdir: elsewhere".write(to: checkout.appendingPathComponent(".git"), atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: checkout) }
+        let file = ProposalSynthesizer.proposalSourceFile
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try checkout.path.write(to: file, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        let noRecordedSource = FileManager.default.temporaryDirectory.appendingPathComponent("no-source-\(UUID().uuidString).json")
+        XCTAssertNil(FoundryEngine.resolveRepoRoot(environment: [:], sourceFile: noRecordedSource),
+                     "the proposal-only source armed Build")
+        XCTAssertEqual(ProposalSynthesizer.sourceRoot(recorded: nil)?.path, checkout.path,
+                       "a worktree (whose .git is a file) should ground the pass")
+    }
+
     // MARK: - A pass, end to end, with the Claude run stubbed
 
     private func runPass(reply text: String, store: ProposalStore, timeline: FoundryTimelineStore,
