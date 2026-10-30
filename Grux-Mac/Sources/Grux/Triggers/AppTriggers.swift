@@ -1740,7 +1740,8 @@ enum AppTriggers {
                 }
                 var fields: [String: Any] = [
                     "running": false, "filed": outcome.filed, "retired": outcome.retired,
-                    "signals": outcome.signals,
+                    "signals": outcome.signals, "dropped": outcome.dropped,
+                    "droppedFor": outcome.droppedFor,
                 ]
                 if let error = outcome.error { fields["error"] = error }
                 write(fields)

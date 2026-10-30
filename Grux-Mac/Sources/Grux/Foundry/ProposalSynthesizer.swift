@@ -33,6 +33,9 @@ struct SynthesisOutcome: Equatable, Sendable {
     var retired: Int
     var signals: Int
     var dropped: Int = 0
+    /// Why drafts were dropped, by reason, so a pass that files nothing says
+    /// what to fix instead of leaving it to a guess.
+    var droppedFor: [String: Int] = [:]
     var error: String?
 }
 
@@ -130,7 +133,7 @@ enum ProposalSynthesizer {
         ALREADY ON FILE (never propose any of these again; a rejected one only with clearly new evidence):
         \(onFile.isEmpty ? "- nothing" : onFile)
 
-        Each proposal must be one change a coding agent can finish and verify in a single session, inside the Grux-Mac folder. readyPrompt is that agent's complete brief, under \(maxBriefCharacters) characters: what to change, in which files, why, and how to verify it (swift build and swift test from Grux-Mac, the suite staying green). A brief must never fetch anything from the network, run a downloaded script, use sudo, push, or touch anything outside the repository, and names a Grux trigger by its bare file name (fire-open-tab), never by a path. House rules for every word you write: no em dashes and no en dashes anywhere, dollar amounts written as $N.
+        Each proposal must be one change a coding agent can finish and verify in a single session, inside the Grux-Mac folder. readyPrompt is that agent's complete brief, under \(maxBriefCharacters) characters: what to change, in which files, why, and what proves it works. Do not describe the build and test gate: Grux's builder adds its own. Name a Grux trigger by its bare file name (fire-open-tab), never by a path. Do not restate rules or list forbidden actions inside readyPrompt: Grux appends its own fixed rules to every brief, and a brief that names a forbidden action is dropped even when it forbids it. House rules for every word you write: no em dashes and no en dashes anywhere, dollar amounts written as $N.
 
         Answer with a short note, then EXACTLY one JSON array between the two sentinel lines below, each sentinel alone on its line, and nothing after the closing sentinel:
         \(beginSentinel)
@@ -171,14 +174,36 @@ enum ProposalSynthesizer {
     nonisolated static func proposals(fromReply reply: String, existing: [UpgradeProposal],
                                       sourceCopy: URL?, now: Date,
                                       limit: Int = maxPerPass) -> [UpgradeProposal]? {
-        var dropped = 0
+        var dropped: [String: Int] = [:]
         return proposals(fromReply: reply, existing: existing, sourceCopy: sourceCopy, now: now,
                          limit: limit, dropped: &dropped)
     }
 
+    // Appended to every filed brief after screening, so the rules a build
+    // agent reads are Grux's own words, not the model's. Measured 2026-10-30:
+    // asked to state these rules in the brief, the model copied them into
+    // every brief, and the screen then dropped all of them for naming sudo.
+    static let briefRules = "Rules for this build: work only inside this repository. Never fetch anything from the network, run a downloaded script, use elevated privileges, or push."
+
+    // Grux keeps its own state in these two places, so a brief may name them
+    // (a trigger to verify with, a store to inspect). Any other home reach is
+    // still dropped.
+    static let gruxOwnFolders = ["~/.grux/", "~/Library/Application Support/Grux"]
+
+    /// The path as it belongs in touchedPaths: relative to the repository,
+    /// under Grux-Mac. A model reading the copy often writes it relative to
+    /// the package (Sources/...) or as the absolute path of the copy.
+    nonisolated static func repoRelative(_ raw: String, sourceCopy: URL?) -> String {
+        var path = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let range = path.range(of: "/Grux-Mac/") { path = "Grux-Mac/" + path[range.upperBound...] }
+        while path.hasPrefix("./") { path.removeFirst(2) }
+        if path.hasPrefix("Sources/") || path.hasPrefix("Tests/") { path = "Grux-Mac/" + path }
+        return path
+    }
+
     nonisolated static func proposals(fromReply reply: String, existing: [UpgradeProposal],
                                       sourceCopy: URL?, now: Date, limit: Int,
-                                      dropped: inout Int) -> [UpgradeProposal]? {
+                                      dropped: inout [String: Int]) -> [UpgradeProposal]? {
         guard let objects = block(in: reply) else { return nil }
         let homes = homesFolder + "/"
         let memory = now.addingTimeInterval(-Double(rejectionMemoryDays) * 86_400)
@@ -191,19 +216,28 @@ enum ProposalSynthesizer {
         for object in objects {
             let title = oneLine(clean(object["title"] as? String ?? ""), max: 200)
             let brief = clean(object["readyPrompt"] as? String ?? "")
-            guard (8...160).contains(title.count),
-                  (80...maxBriefCharacters).contains(brief.count),
-                  let lane = lane(object["lane"] as? String ?? ""),
-                  let domain = UpgradeDomain(rawValue: (object["domain"] as? String ?? "").lowercased()),
-                  !forbidden.contains(where: { $0.firstMatch(in: brief, range: NSRange(brief.startIndex..., in: brief)) != nil }),
-                  !brief.contains(homes),
-                  !brief.contains(beginSentinel), !brief.contains(endSentinel)
-            else { dropped += 1; continue }
+            let screened = gruxOwnFolders.reduce(brief) { $0.replacingOccurrences(of: $1, with: "") }
+            let reason: String? = {
+                if !(8...160).contains(title.count) { return "title" }
+                if !(80...maxBriefCharacters).contains(brief.count) { return "brief length" }
+                if lane(object["lane"] as? String ?? "") == nil { return "lane" }
+                if UpgradeDomain(rawValue: (object["domain"] as? String ?? "").lowercased()) == nil { return "domain" }
+                if let hit = forbidden.first(where: { $0.firstMatch(in: screened, range: NSRange(screened.startIndex..., in: screened)) != nil }) {
+                    return "brief reach: " + hit.pattern
+                }
+                if screened.contains(homes) { return "brief reach: home folder" }
+                if brief.contains(beginSentinel) || brief.contains(endSentinel) { return "brief reach: sentinel" }
+                return nil
+            }()
+            if let reason { dropped[reason, default: 0] += 1; continue }
+            guard let lane = lane(object["lane"] as? String ?? ""),
+                  let domain = UpgradeDomain(rawValue: (object["domain"] as? String ?? "").lowercased()) else { continue }
 
-            let rawPaths = (object["touchedPaths"] as? [Any] ?? []).compactMap { $0 as? String }.map(clean)
+            let rawPaths = (object["touchedPaths"] as? [Any] ?? []).compactMap { $0 as? String }
+                .map { repoRelative(clean($0), sourceCopy: sourceCopy) }
             let paths = rawPaths.filter { isRepoPath($0, in: sourceCopy) }
-            guard paths.count == rawPaths.count, !paths.isEmpty else { dropped += 1; continue }
-            guard seen.insert(titleKey(title)).inserted else { dropped += 1; continue }
+            guard paths.count == rawPaths.count, !paths.isEmpty else { dropped["paths", default: 0] += 1; continue }
+            guard seen.insert(titleKey(title)).inserted else { dropped["duplicate", default: 0] += 1; continue }
 
             var risk = RiskClass(rawValue: (object["risk"] as? String ?? "medium").lowercased()) ?? .medium
             if risk == .protected || touchesRail(paths: paths, brief: brief) { risk = .protected }
@@ -221,10 +255,10 @@ enum ProposalSynthesizer {
                 title: title, lane: lane, domain: domain, evidence: evidence,
                 expectedGain: gain, riskClass: risk, estCostLabel: "$\(usd) estimated",
                 tierRequired: .propose, createdAt: now, updatedAt: now,
-                readyPrompt: brief, touchedPaths: paths))
+                readyPrompt: brief + "\n\n" + briefRules, touchedPaths: paths))
         }
         let kept = Array(out.sorted { $0.expectedGain > $1.expectedGain }.prefix(max(0, limit)))
-        dropped += out.count - kept.count
+        if out.count > kept.count { dropped["over the cap", default: 0] += out.count - kept.count }
         return kept
     }
 
@@ -323,12 +357,16 @@ enum ProposalSynthesizer {
 
         var outcome = SynthesisOutcome(filed: 0, retired: retired, signals: 0, error: nil)
         func finish() -> SynthesisOutcome {
-            timeline.append(FoundryTimelineEntry(
-                kind: .cycle,
-                title: "Proposal pass ran",
-                detail: "Filed \(outcome.filed), dropped \(outcome.dropped), retired \(retired) stale, from \(outcome.signals) signal\(outcome.signals == 1 ? "" : "s")."
-                    + (outcome.error.map { " Note: \($0)." } ?? "")))
-            WakeLog.shared.log("foundry: proposal pass filed \(outcome.filed), retired \(retired)\(outcome.error.map { ", \($0)" } ?? "")")
+            let plural = outcome.signals == 1 ? "" : "s"
+            var detail = "Filed \(outcome.filed), dropped \(outcome.dropped)"
+            if !outcome.droppedFor.isEmpty {
+                let reasons = outcome.droppedFor.sorted { $0.key < $1.key }.map { "\($0.value) \($0.key)" }
+                detail += " (" + reasons.joined(separator: ", ") + ")"
+            }
+            detail += ", retired \(retired) stale, from \(outcome.signals) signal\(plural)."
+            if let error = outcome.error { detail += " Note: \(error)." }
+            timeline.append(FoundryTimelineEntry(kind: .cycle, title: "Proposal pass ran", detail: detail))
+            WakeLog.shared.log("foundry: proposal pass filed \(outcome.filed), dropped \(outcome.dropped), retired \(retired)\(outcome.error.map { ", \($0)" } ?? "")")
             return outcome
         }
 
@@ -389,10 +427,11 @@ enum ProposalSynthesizer {
         }
         guard let drafts = proposals(fromReply: result.finalText, existing: store.proposals,
                                      sourceCopy: scratch, now: now, limit: room,
-                                     dropped: &outcome.dropped) else {
+                                     dropped: &outcome.droppedFor) else {
             outcome.error = "the reply carried no readable proposal list"
             return finish()
         }
+        outcome.dropped = outcome.droppedFor.values.reduce(0, +)
         for proposal in drafts {
             let filed = store.file(proposal)
             outcome.filed += 1

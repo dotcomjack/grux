@@ -71,6 +71,7 @@ final class ProposalSynthesizerTests: XCTestCase {
         XCTAssertEqual(p.estCostLabel, "$4 estimated")
         XCTAssertEqual(p.createdAt, now)
         XCTAssertEqual(p.evidence.first?.display, "flake: retried 3x")
+        XCTAssertEqual(p.readyPrompt, goodBrief + "\n\n" + ProposalSynthesizer.briefRules)
     }
 
     func testModelNumbersAreToleratedAndClamped() throws {
@@ -117,12 +118,46 @@ final class ProposalSynthesizerTests: XCTestCase {
         XCTAssertEqual(filed, [])
     }
 
+    /// The model was once told to state the build rules and copied them into
+    /// every brief, so the screen dropped every draft for naming sudo. The
+    /// prompt no longer asks, and Grux appends the rules itself.
+    func testThePromptNeverAsksForTheRulesTheScreenRefuses() throws {
+        let text = ProposalSynthesizer.prompt(signals: [], existing: [], now: now)
+        let forbidden = ProposalSynthesizer.forbiddenBriefPatterns.compactMap {
+            try? NSRegularExpression(pattern: $0, options: [.caseInsensitive])
+        }
+        let hits = forbidden.filter { $0.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil }
+        XCTAssertEqual(hits.map(\.pattern), [], "the prompt names an action the screen drops")
+    }
+
     func testOrdinaryGitWordsInABriefAreKept() throws {
         let filed = try XCTUnwrap(parse(reply([
             draft("A brief that mentions git in passing",
                   prompt: goodBrief + " Check that git status shows no remote changes before you start."),
         ])))
         XCTAssertEqual(filed.count, 1)
+    }
+
+    func testPathsAreReadTheWaysAModelWritesThem() throws {
+        let absolute = copy.appendingPathComponent("Grux-Mac/Sources/Grux/Example.swift").path
+        let filed = try XCTUnwrap(parse(reply([
+            draft("Package relative path from the model", paths: #"["Sources/Grux/Example.swift"]"#),
+            draft("Absolute path of the copy from the model", paths: "[\"\(absolute)\"]"),
+        ])))
+        XCTAssertEqual(filed.map(\.touchedPaths), [["Grux-Mac/Sources/Grux/Example.swift"],
+                                                   ["Grux-Mac/Sources/Grux/Example.swift"]])
+    }
+
+    func testABriefMayNameGruxsOwnFoldersOnly() throws {
+        var dropped: [String: Int] = [:]
+        let filed = try XCTUnwrap(ProposalSynthesizer.proposals(fromReply: reply([
+            draft("Verify through the open tab trigger",
+                  prompt: goodBrief + " Verify by writing chat to ~/.grux/fire-open-tab and reading ~/Library/Application Support/Grux/config.json."),
+            draft("Reach for another app's folder",
+                  prompt: goodBrief + " Then read ~/Library/Application Support/OtherApp/state.json."),
+        ]), existing: [], sourceCopy: copy, now: now, limit: 8, dropped: &dropped))
+        XCTAssertEqual(filed.map(\.title), ["Verify through the open tab trigger"])
+        XCTAssertEqual(dropped, ["brief reach: ~/": 1])
     }
 
     func testTouchingTheBuildRailPinsProtected() throws {
