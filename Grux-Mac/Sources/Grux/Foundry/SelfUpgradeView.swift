@@ -452,6 +452,20 @@ struct FoundryProposalCard: View {
             detailRow("Area", card.domain)
             detailRow("Stage", Self.stageName(card.stage))
             detailRow("Rank", String(format: "%.2f", card.score))
+            // The brief a coding agent runs on Build, shown before anyone
+            // presses it: a proposal pass writes it from untrusted signals.
+            if !card.readyPrompt.isEmpty {
+                Text("Build brief")
+                    .font(GruxType.microCaps)
+                    .kerning(0.8)
+                    .foregroundStyle(GruxTheme.textTertiary)
+                    .padding(.top, GruxSpacing.xs)
+                Text(DashSanitizer.stripDashesOnly(card.readyPrompt))
+                    .font(GruxType.caption)
+                    .foregroundStyle(GruxTheme.textSecondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(GruxSpacing.s)
         .frame(maxWidth: .infinity, alignment: .leading)

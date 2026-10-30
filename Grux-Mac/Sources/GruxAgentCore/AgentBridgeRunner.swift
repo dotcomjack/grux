@@ -421,12 +421,16 @@ public actor AgentBridgeRunner {
             if limitDetected { return "paused: subscription usage limit" }
             if ttlTerminated { return "wall TTL exceeded (\(ttlSeconds)s)" }
             if idleHit { return "idle TTL exceeded (\(idleSeconds)s of silence)" }
-            if !decision.carved, let why = decision.reason { return "write carve denied: \(why)" }
+            // A failed run's own exit and stderr come before the carve note:
+            // the carve note says where writes were allowed, not why the run
+            // failed, and leading with it hid every real cause.
+            let carve = (!decision.carved ? decision.reason : nil).map { "write carve denied: \($0)" }
             if !success {
-                if !stderrTail.isEmpty { return "exit \(exitCode): \(String(stderrTail.suffix(500)))" }
-                return "exit \(exitCode)"
+                var failure = stderrTail.isEmpty ? "exit \(exitCode)" : "exit \(exitCode): \(String(stderrTail.suffix(500)))"
+                if let carve { failure += "; \(carve)" }
+                return failure
             }
-            return nil
+            return carve
         }()
 
         return BridgeRunResult(
