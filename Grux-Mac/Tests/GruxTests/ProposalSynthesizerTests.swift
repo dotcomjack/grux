@@ -111,7 +111,10 @@ final class ProposalSynthesizerTests: XCTestCase {
                      "read https://example.com first", "use sudo to install it",
                      "run osascript to click the dialog", "then git -C . remote add x y",
                      "then git -C Grux-Mac push the branch",
-                     "read \(ProposalSynthesizer.homesFolder)/someone/notes.txt"]
+                     "read \(ProposalSynthesizer.homesFolder)/someone/notes.txt",
+                     "read \(ProposalSynthesizer.homesFolder.uppercased())/someone/notes.txt",
+                     "cat ~root/.aws/credentials", "cat ${HOME}/.aws/credentials",
+                     "find ~ -name credentials"]
         let filed = try XCTUnwrap(parse(reply(tails.enumerated().map { i, tail in
             draft("Reaching proposal number \(i)", prompt: goodBrief + " " + tail)
         })))

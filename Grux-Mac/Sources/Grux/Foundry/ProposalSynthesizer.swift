@@ -72,7 +72,7 @@ enum ProposalSynthesizer {
         #"\brsync\b"#, #"\bnc\s"#, #"base64\s+-d"#, #"\bgit\s+(-C\s+\S+\s+)?(push|remote)\b"#, #"\bgh\s"#,
         #"\bosascript\b"#, #"\bopen\s+-a\b"#, #"\blaunchctl\b"#, #"\bdefaults\s+write\b"#,
         #"\bsecurity\s+find-"#, #"\bnpm\s+publish\b"#, #"python3?\s+-c\b"#,
-        #"~/"#, #"\.ssh\b"#, #"https?://"#, #"\$HOME\b"#,
+        #"~/"#, #"~[A-Za-z_][A-Za-z0-9_-]*/"#, #"(^|\s)~(\s|$)"#, #"\.ssh\b"#, #"https?://"#, #"\$\{?HOME\b"#,
     ]
 
     /// The folder that holds home folders on this Mac (its parent of
@@ -229,7 +229,7 @@ enum ProposalSynthesizer {
         }.map { titleKey($0.title) })
         let forbidden = forbiddenBriefPatterns.compactMap { try? NSRegularExpression(pattern: $0, options: [.caseInsensitive]) }
         let allowed = gruxOwnPaths.compactMap { try? NSRegularExpression(pattern: $0) }
-        let climbing = try! NSRegularExpression(pattern: #"~[^\s"']*\.\.|~/Library/Application Support/[^\s"']*\.\."#)
+        let climbing = try! NSRegularExpression(pattern: #"~[^\s"']*/\.\.|~/Library/Application Support/[^\s"']*/\.\."#)
 
         var out: [UpgradeProposal] = []
         for object in objects {
@@ -249,7 +249,7 @@ enum ProposalSynthesizer {
                 if let hit = forbidden.first(where: { $0.firstMatch(in: screened, range: NSRange(screened.startIndex..., in: screened)) != nil }) {
                     return "brief reach: " + hit.pattern
                 }
-                if screened.contains(homes) { return "brief reach: home folder" }
+                if screened.range(of: homes, options: .caseInsensitive) != nil { return "brief reach: home folder" }
                 if brief.contains(beginSentinel) || brief.contains(endSentinel) { return "brief reach: sentinel" }
                 return nil
             }()
