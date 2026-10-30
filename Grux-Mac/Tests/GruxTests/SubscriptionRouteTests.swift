@@ -170,4 +170,15 @@ final class SubscriptionRouteTests: XCTestCase {
         XCTAssertTrue(opening.contains("await CritiqueGate.beginPlanReview()"),
                       "generate() must clear the previous Stop before the run starts")
     }
+
+    /// The stranded-card sweep runs at launch with self-upgrade off too, not
+    /// only inside activate(), which an install with it off never calls.
+    func testTheStrandedSweepRunsWithSelfUpgradeOff() throws {
+        let app = sourcesRoot.appendingPathComponent("Grux/GruxApp.swift")
+        let text = try String(contentsOf: app, encoding: .utf8)
+        let gate = try XCTUnwrap(text.range(of: "if AppState.shared.config.foundryEnabled {"))
+        let tail = text[gate.upperBound...].prefix(600)
+        let elseBranch = try XCTUnwrap(tail.range(of: "} else {"))
+        XCTAssertTrue(tail[elseBranch.upperBound...].contains("FoundryEngine.shared.reconcileStaleHandles()"))
+    }
 }

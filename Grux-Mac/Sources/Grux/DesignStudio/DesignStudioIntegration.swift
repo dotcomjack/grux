@@ -187,12 +187,17 @@ private final class StudioAgentDelegate: DesignAgentDelegating {
     // the sink so its events are not silently dropped (the runner holds it weakly).
     private var currentRunner: AgentBridgeRunner?
     private var currentSink: StudioAgentEventSink?
+    // A Stop that lands while the run is still finding the CLI, before any
+    // runner exists to cancel. Checked once the runner is in place.
+    private var stopRequested = false
 
     func cancelActiveRun() async {
+        stopRequested = true
         await currentRunner?.cancel()
     }
 
     func runGeneration(projectId: UUID, brief: String, config: DesignRunConfig) async throws {
+        stopRequested = false
         guard let siteURL = DesignProjectStore.shared.siteRootURL(id: projectId) else {
             throw DesignStudioError.noProject
         }
@@ -240,6 +245,11 @@ private final class StudioAgentDelegate: DesignAgentDelegating {
         let runner = AgentBridgeRunner(adapter: adapter, invocation: invocation, observer: sink)
         currentSink = sink
         currentRunner = runner
+        if stopRequested {
+            currentRunner = nil
+            currentSink = nil
+            throw CancellationError()
+        }
         defer {
             currentRunner = nil
             currentSink = nil

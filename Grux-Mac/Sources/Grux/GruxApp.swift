@@ -807,6 +807,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // tokens on the first night of any install.
         if AppState.shared.config.foundryEnabled {
             FoundryEngine.shared.activate()
+        } else {
+            // Off, the loop never starts, but a card left in "building" by an
+            // earlier run still needs clearing, and that repair spends nothing.
+            // Measured 2026-10-30: with self-upgrade off, 13 cards had read
+            // "building" since June because only activate() ran the sweep.
+            Task { @MainActor in await FoundryEngine.shared.reconcileStaleHandles() }
         }
 
         // Backstop the swarm-worker confinement: catch any UNTRACKED file an
