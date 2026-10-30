@@ -227,6 +227,6 @@ final class FileRenamerTests: XCTestCase {
         XCTAssertEqual(reread.entries.map(\.id), book.entries.map(\.id), "the ledger on disk is not the ledger in memory")
         XCTAssertEqual(reread.entries.last?.newName, "Acme \(count - 1).png")
         XCTAssertEqual(reread.recent(10).count, 10)
-        XCTAssertEqual(reread.recent(10).first?.id, ids[204], "recent is not newest first")
+        XCTAssertEqual(reread.recent(10).first?.id, ids[count - 1], "recent is not newest first")
     }
 }
