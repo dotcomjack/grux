@@ -350,23 +350,52 @@ enum ProposalSynthesizer {
 
     // MARK: - One pass
 
-    /// A read-only copy of the checkout's committed Grux-Mac tree in `into`.
+    /// Where gitSnapshot records what it copied, read back for the pass note.
+    static let snapshotNoteFile = "source-commit.txt"
+
+    /// Run git or tar to completion, killed after `timeout` seconds. True on exit 0.
+    nonisolated static func runTool(_ path: String, _ args: [String], timeout: TimeInterval,
+                                    environment: [String: String]? = nil) -> (ok: Bool, output: String) {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: path)
+        p.arguments = args
+        if let environment { p.environment = environment }
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = FileHandle.nullDevice
+        p.standardInput = FileHandle.nullDevice
+        guard (try? p.run()) != nil else { return (false, "") }
+        let killer = DispatchWorkItem { if p.isRunning { p.terminate() } }
+        DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: killer)
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        killer.cancel()
+        return (p.terminationStatus == 0, String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// A read-only copy of the checkout's Grux-Mac tree in `into`, from the
+    /// newest main it can reach: it fetches first (remote-tracking refs only,
+    /// never the working tree, no prompt), then copies the remote's default
+    /// branch, else the checkout's own HEAD. A copy that nothing updated was
+    /// how the June queue went stale, so a pass that could not fetch says so.
     nonisolated static func gitSnapshot(of checkout: URL, into: URL) -> Bool {
+        let git = "/usr/bin/git"
+        var env = ProcessInfo.processInfo.environment
+        env["GIT_TERMINAL_PROMPT"] = "0"
+        let fetched = runTool(git, ["-C", checkout.path, "fetch", "--quiet", "--no-tags", "origin"],
+                              timeout: 60, environment: env).ok
+        let remoteHead = runTool(git, ["-C", checkout.path, "rev-parse", "--verify", "--quiet", "origin/HEAD"], timeout: 10)
+        let ref = remoteHead.ok ? "origin/HEAD" : "HEAD"
+        let commit = runTool(git, ["-C", checkout.path, "rev-parse", "--short", ref], timeout: 10).output
+
         let tar = into.appendingPathComponent("source.tar")
-        let archive = Process()
-        archive.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        archive.arguments = ["-C", checkout.path, "archive", "--format=tar", "-o", tar.path, "HEAD", "Grux-Mac"]
-        let unpack = Process()
-        unpack.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
-        unpack.arguments = ["-xf", tar.path, "-C", into.path]
-        for step in [archive, unpack] {
-            step.standardOutput = FileHandle.nullDevice
-            step.standardError = FileHandle.nullDevice
-            guard (try? step.run()) != nil else { return false }
-            step.waitUntilExit()
-            guard step.terminationStatus == 0 else { return false }
-        }
+        guard runTool(git, ["-C", checkout.path, "archive", "--format=tar", "-o", tar.path, ref, "Grux-Mac"], timeout: 120).ok,
+              runTool("/usr/bin/tar", ["-xf", tar.path, "-C", into.path], timeout: 120).ok
+        else { return false }
         try? FileManager.default.removeItem(at: tar)
+        let note = "\(ref == "HEAD" ? "the checkout's own HEAD" : "the newest main") at \(commit)"
+            + (fetched ? "" : ", not refreshed: the fetch failed")
+        try? note.write(to: into.appendingPathComponent(snapshotNoteFile), atomically: true, encoding: .utf8)
         return FileManager.default.fileExists(atPath: into.appendingPathComponent("Grux-Mac/Package.swift").path)
     }
 
@@ -403,6 +432,7 @@ enum ProposalSynthesizer {
         }
 
         var outcome = SynthesisOutcome(filed: 0, retired: retired, signals: 0, error: nil)
+        var readFrom: String?
         func finish() -> SynthesisOutcome {
             let plural = outcome.signals == 1 ? "" : "s"
             var detail = "Filed \(outcome.filed), dropped \(outcome.dropped)"
@@ -411,6 +441,7 @@ enum ProposalSynthesizer {
                 detail += " (" + reasons.joined(separator: ", ") + ")"
             }
             detail += ", retired \(retired) stale, from \(outcome.signals) signal\(plural)."
+            if let readFrom { detail += " Read \(readFrom)." }
             if let error = outcome.error { detail += " Note: \(error)." }
             timeline.append(FoundryTimelineEntry(kind: .cycle, title: "Proposal pass ran", detail: detail))
             WakeLog.shared.log("foundry: proposal pass filed \(outcome.filed), dropped \(outcome.dropped), retired \(retired)\(outcome.error.map { ", \($0)" } ?? "")")
@@ -450,6 +481,7 @@ enum ProposalSynthesizer {
             return finish()
         }
 
+        readFrom = (try? String(contentsOf: scratch.appendingPathComponent(snapshotNoteFile), encoding: .utf8))
         let report: SignalHarvestReport
         if let harvested { report = harvested } else { report = await SignalHarvester.standard().harvest() }
         outcome.signals = report.signals.count

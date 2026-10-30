@@ -309,6 +309,35 @@ final class ProposalSynthesizerTests: XCTestCase {
                        "a worktree (whose .git is a file) should ground the pass")
     }
 
+    /// The copy comes from the newest main the checkout can fetch, never
+    /// the frozen working tree: a commit that exists only on origin's main
+    /// shows up in the copy, and a local edit on the checkout does not.
+    func testTheCopyIsTheNewestMainNotTheCheckout() throws {
+        let fm = FileManager.default
+        let base = fm.temporaryDirectory.appendingPathComponent("synth-git-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: base) }
+        let origin = base.appendingPathComponent("origin"), checkout = base.appendingPathComponent("checkout")
+        let into = base.appendingPathComponent("copy")
+        try fm.createDirectory(at: origin.appendingPathComponent("Grux-Mac"), withIntermediateDirectories: true)
+        try fm.createDirectory(at: into, withIntermediateDirectories: true)
+        func git(_ dir: URL, _ args: String...) { _ = ProposalSynthesizer.runTool("/usr/bin/git", ["-C", dir.path] + args, timeout: 30) }
+        func write(_ url: URL, _ text: String) throws { try text.write(to: url, atomically: true, encoding: .utf8) }
+        try write(origin.appendingPathComponent("Grux-Mac/Package.swift"), "// one")
+        git(origin, "init", "-q", "-b", "main")
+        git(origin, "-c", "user.email=t@t", "-c", "user.name=t", "add", ".")
+        git(origin, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "one")
+        _ = ProposalSynthesizer.runTool("/usr/bin/git", ["clone", "-q", origin.path, checkout.path], timeout: 30)
+        try write(origin.appendingPathComponent("Grux-Mac/Package.swift"), "// two")
+        git(origin, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-am", "two")
+        try write(checkout.appendingPathComponent("Grux-Mac/Package.swift"), "// local edit")
+
+        XCTAssertTrue(ProposalSynthesizer.gitSnapshot(of: checkout, into: into))
+        XCTAssertEqual(try String(contentsOf: into.appendingPathComponent("Grux-Mac/Package.swift"), encoding: .utf8), "// two")
+        let note = try String(contentsOf: into.appendingPathComponent(ProposalSynthesizer.snapshotNoteFile), encoding: .utf8)
+        XCTAssertTrue(note.hasPrefix("the newest main at "), note)
+        XCTAssertFalse(note.contains("not refreshed"), note)
+    }
+
     // MARK: - A pass, end to end, with the Claude run stubbed
 
     private func runPass(reply text: String, store: ProposalStore, timeline: FoundryTimelineStore,
