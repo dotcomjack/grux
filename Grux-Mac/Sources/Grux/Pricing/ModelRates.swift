@@ -45,7 +45,18 @@ enum ModelRates {
     // Haiku 4.5 row. Values for the exact Claude ids match what ClaudeModelPricing
     // shipped, so the session-replay cost numbers are unchanged by the migration.
     private static let ladder: [(prefix: String, rates: Rates)] = [
+        // The 5.1 and 5.5 line, from Anthropic's pricing page on 2026-10-29,
+        // with the 5-minute cache write at 1.25x input like every row here.
+        // Each sits before the shorter prefix it would otherwise fall into:
+        // "claude-fable-5" priced Fable 5.1's cache reads at 4x, and
+        // "claude-sonnet-5" priced Sonnet 5.5. Haiku 5.5's row is its rate
+        // for prompts up to 100,000 tokens.
+        ("claude-fable-5-1", Rates(input: 10.00, output: 50.00, cacheRead: 0.25, cacheWrite: 12.50)),
         ("claude-fable-5",   Rates(input: 10.00, output: 50.00, cacheRead: 1.00, cacheWrite: 12.50)),
+        ("claude-opus-5-5",  Rates(input: 4.00,  output: 20.00, cacheRead: 0.20, cacheWrite: 5.00)),
+        ("claude-opus-5",    Rates(input: 5.00,  output: 25.00, cacheRead: 0.50, cacheWrite: 6.25)),
+        ("claude-sonnet-5-5", Rates(input: 2.00, output: 10.00, cacheRead: 0.10, cacheWrite: 2.50)),
+        ("claude-haiku-5-5", Rates(input: 0.10,  output: 0.50,  cacheRead: 0.01, cacheWrite: 0.125)),
         ("claude-opus-4-8",  Rates(input: 5.00,  output: 25.00, cacheRead: 0.50, cacheWrite: 6.25)),
         ("claude-opus-4-7",  Rates(input: 15.00, output: 75.00, cacheRead: 1.50, cacheWrite: 18.75)),
         ("claude-opus-4-6",  Rates(input: 15.00, output: 75.00, cacheRead: 1.50, cacheWrite: 18.75)),

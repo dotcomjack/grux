@@ -38,8 +38,21 @@ enum ComposerFooter {
         if let colon = s.firstIndex(of: ":") { s = String(s[..<colon]) }
         if s.hasPrefix("claude-") { s = String(s.dropFirst("claude-".count)) }
         if let r = s.range(of: #"-\d{8}$"#, options: .regularExpression) { s = String(s[..<r.lowerBound]) }
-        s = s.replacingOccurrences(of: "-", with: " ")
         guard !s.isEmpty else { return id }
-        return s.split(separator: " ").map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: " ")
+        // A version written with hyphens reads as one: "opus-5-5" is
+        // "Opus 5.5", not "Opus 5 5". Only short runs of digits join, so a
+        // date-like "0731" stays a word of its own.
+        var words: [String] = []
+        var joinable = false
+        for token in s.split(separator: "-").map(String.init) where !token.isEmpty {
+            let short = token.count <= 2 && token.allSatisfy(\.isASCII) && token.allSatisfy(\.isNumber)
+            if short, joinable, let last = words.popLast() {
+                words.append(last + "." + token)
+            } else {
+                words.append(token.prefix(1).uppercased() + token.dropFirst())
+            }
+            joinable = short
+        }
+        return words.isEmpty ? id : words.joined(separator: " ")
     }
 }

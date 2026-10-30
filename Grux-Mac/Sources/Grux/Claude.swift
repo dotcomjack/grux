@@ -158,11 +158,22 @@ actor ClaudeClient {
         (lastInputTokens, lastOutputTokens, lastCacheCreationTokens, lastCacheReadTokens)
     }
 
-    // Opus 4.8 (and newer reasoning models) deprecate the `temperature` request
-    // param: sending it returns HTTP 400 "temperature is deprecated for this
-    // model." Omit it for those models. Sonnet 4.6 / Haiku 4.5 still accept it.
+    // The models that still take a `temperature`. Every Claude model from Opus
+    // 4.7 on answers one with HTTP 400 ("temperature is deprecated for this
+    // model"), and Sonnet 5.5 and Haiku 5.5 refuse any value but the default.
+    // So the rule lists the models that ACCEPT it, not the ones that refuse it:
+    // the next model will refuse it too. The old rule named Opus 4.8 alone, and
+    // Fable 5 and Sonnet 5, both offered in the Chat model picker, were sent a
+    // temperature on every turn (2026-10-29).
+    static let modelsAcceptingTemperature = [
+        "claude-3", "claude-opus-4-0", "claude-sonnet-4-0", "claude-opus-4-2025", "claude-sonnet-4-2025",
+        "claude-opus-4-1", "claude-opus-4-5", "claude-sonnet-4-5", "claude-haiku-4-5",
+        "claude-opus-4-6", "claude-sonnet-4-6",
+    ]
+
     nonisolated static func modelDeprecatesTemperature(_ model: String) -> Bool {
-        model.contains("opus-4-8") || model.contains("opus-4.8")
+        let id = model.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return !modelsAcceptingTemperature.contains { id.hasPrefix($0) }
     }
 
     func complete(apiKey: String, model: String, system: String?, messages: [ClaudeMessage], maxTokens: Int = 1024, temperature: Double = 0.2, spanName: String = "claude.complete", feature: String = "uncategorized") async throws -> String {

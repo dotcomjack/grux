@@ -61,6 +61,7 @@ struct ChatView: View {
     // saved custom endpoints).
     @ObservedObject private var costMeter = CostMeter.shared
     @ObservedObject private var registry = ModelRegistry.shared
+    @ObservedObject private var modelCatalog = ClaudeModelCatalog.shared
     @ObservedObject private var endpoints = CustomEndpointStore.shared
 
     // Skills live in the composer (Phase C fold). The chip beside the model
@@ -1317,7 +1318,8 @@ struct ChatView: View {
                         // setting the id alone left a custom route in place.
                         registry.setActiveProvider(.anthropic)
                     } label: {
-                        Text(activeModelId == id ? "\u{2713}  \(id)" : id)
+                        let name = ComposerFooter.displayName(id: id, registryName: nil)
+                        Text(activeModelId == id ? "\u{2713}  \(name)" : name)
                     }
                 }
             }
@@ -1364,6 +1366,7 @@ struct ChatView: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .help("Switch the model for chat. Cloud runs are metered; local and subscription runs are free.")
+        .task { await modelCatalog.refreshIfNeeded(apiKey: state.anthropicKey) }
     }
 
     // MARK: - Skills picker (Phase C fold)
@@ -1428,10 +1431,11 @@ struct ChatView: View {
         registry.modelId()
     }
 
-    // Canonical cloud choices, plus whatever is currently configured (a custom
-    // id typed in Settings) so switching never hides the active model.
+    // The newest Claude of each family (ClaudeModelCatalog, read from the
+    // Models API), plus whatever is currently configured (a custom id typed in
+    // Settings) so switching never hides the active model.
     private var cloudModelOptions: [String] {
-        var opts = ["claude-fable-5", "claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5-20251001"]
+        var opts = modelCatalog.ids
         let current = state.config.model
         if !current.isEmpty && !opts.contains(current) { opts.insert(current, at: 0) }
         return opts
