@@ -467,6 +467,9 @@ final class DesignStudioEngine: ObservableObject {
                     "The subscription route could not start. Pick API key or Local model for now."
                 )
             }
+            // A Stop that landed before any runner existed (during the start
+            // of generate) had nothing to cancel, so honor it here.
+            if cancelRequested { return }
             try await delegate.runGeneration(projectId: projectId, brief: brief, config: config)
             flushArtifactsUpdate(projectId: projectId)
 

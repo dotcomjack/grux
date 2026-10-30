@@ -158,4 +158,16 @@ final class SubscriptionRouteTests: XCTestCase {
         XCTAssertEqual(result.note, "cancelled before start")
         XCTAssertLessThan(Date().timeIntervalSince(started), 5)
     }
+
+    /// Every run clears the previous run's Stop. Without the call, one Stop
+    /// would leave every later plan review in the session "skipped".
+    func testEveryRunClearsThePreviousStop() throws {
+        let engine = sourcesRoot.appendingPathComponent("Grux/DesignStudio/DesignStudioEngine.swift")
+        let text = try String(contentsOf: engine, encoding: .utf8)
+        let start = try XCTUnwrap(text.range(of: "func generate(projectId: UUID, brief: String, config: DesignRunConfig) async {"))
+        let end = try XCTUnwrap(text.range(of: "defer {", range: start.upperBound..<text.endIndex))
+        let opening = text[start.upperBound..<end.lowerBound]
+        XCTAssertTrue(opening.contains("await CritiqueGate.beginPlanReview()"),
+                      "generate() must clear the previous Stop before the run starts")
+    }
 }
