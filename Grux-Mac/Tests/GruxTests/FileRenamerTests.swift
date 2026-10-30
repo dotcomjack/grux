@@ -208,21 +208,24 @@ final class FileRenamerTests: XCTestCase {
         XCTAssertTrue(exists("IMG_0001.png") && exists("IMG_0002.png"))
     }
 
-    func testTheLedgerIsCappedAt200AndSurvivesARelaunch() throws {
+    func testTheLedgerIsCappedAt2000AndSurvivesARelaunch() throws {
         let book = ledger()
         var ids: [UUID] = []
-        for i in 0..<205 {
+        let count = FileRenameLedger.cap + 5
+        for i in 0..<count {
             let entry = FileRename(id: UUID(), folder: dir.path, oldName: "IMG_\(i).png", newName: "Acme \(i).png",
                                    at: Date(), undoneAt: nil)
             ids.append(entry.id)
-            book.append(entry)
+            // One write at the end: a write per entry rewrites a growing file
+            // two thousand times.
+            if i == count - 1 { book.append(entry) } else { book.appendInMemory(entry) }
         }
         XCTAssertEqual(book.entries.count, FileRenameLedger.cap)
-        XCTAssertEqual(FileRenameLedger.cap, 200)
+        XCTAssertEqual(FileRenameLedger.cap, 2_000, "room for a run over a full Downloads folder")
         XCTAssertEqual(book.entries.first?.id, ids[5], "the oldest were not the ones dropped")
         let reread = ledger()
         XCTAssertEqual(reread.entries.map(\.id), book.entries.map(\.id), "the ledger on disk is not the ledger in memory")
-        XCTAssertEqual(reread.entries.last?.newName, "Acme 204.png")
+        XCTAssertEqual(reread.entries.last?.newName, "Acme \(count - 1).png")
         XCTAssertEqual(reread.recent(10).count, 10)
         XCTAssertEqual(reread.recent(10).first?.id, ids[204], "recent is not newest first")
     }

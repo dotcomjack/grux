@@ -283,3 +283,11 @@ Six review rounds, each with four lenses and two skeptics per finding, changed t
 - The ledger write after a rename is not flushed at quit.
 - Unload edge cases around previews.
 - A status probe can read `noLocalModel` for a moment under heavy load (seen once on a MacBook at load average 24).
+
+## Added 2026-10-29: the files already here, and reference ids
+
+A dry run over a real Downloads folder (357 images and PDFs, through the preview trigger, nothing renamed) proposed names for 165, left 140 typed names and 42 files with no text alone, and showed two gaps.
+
+- **The files already here.** The watcher only names arrivals, so a folder full of `Screenshot ...` and `IMG_...` files stays as it was. "Name the files already here" (a Settings button while naming is on, and `fire-file-naming-backlog`) runs the same assessment, model and rename over the files already in the watched folders, each judged by its own folder's rules, or over a list of paths, each judged as the preview judges it. One file at a time, no notification per file. Every rename is ledgered under one batch id, and "Undo this run" (or `fire-file-naming-undo-batch`) puts the run back with the single Undo's checks. The ledger holds 2,000 renames, up from 200, so a run over a full folder stays undoable.
+- **Reference ids.** Twenty Amazon labels (`FBA197CZ70F3-1770238576079.pdf`) would all have become "FBA Shipping Labels" with a number, losing the shipment id. A word of the old name with 8 to 20 capital letters and digits, at least two of each, is now kept at the end of the new name. Lowercase or mixed case (a hash, a UUID piece, a random media name) is not, nor a camera's numbering (`DSCF1234`), nor a run of digits the secret guard refuses.
+- **Still open:** text the reader misread ends up in the name (about 6 of 165 in the dry run), and a name can carry a person's name read off the file.

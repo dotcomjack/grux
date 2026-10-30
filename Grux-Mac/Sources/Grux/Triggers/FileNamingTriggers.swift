@@ -11,6 +11,15 @@ import Foundation
 ///   pipeline on that file without renaming it and writes
 ///   `file-naming-preview.json`. It runs with the feature off too, which is
 ///   what lets the eval score a model before anyone turns naming on.
+/// - `fire-file-naming-backlog` (contents: absolute paths, one per line, or
+///   nothing for every file already in the watched folders) runs "Name the
+///   files already here" and writes `file-naming-backlog.json` once it has
+///   counted its files and when it ends. A refusal (a relative path, a run
+///   already going, an undo of a run still going) goes to
+///   `file-naming-backlog-refused.json`, leaving the run's file be.
+/// - `fire-file-naming-undo-batch` (contents: a run's batch id, or nothing
+///   for the newest run) undoes that run and writes the same file, with how
+///   many were put back under `restored`.
 ///
 /// The status carries counts, the route and the watched folders, NEVER a file
 /// name: a file's name is the person's content. The preview is the one place a
@@ -21,10 +30,14 @@ enum FileNamingTriggers {
     static let status = "fire-file-naming-status"
     static let undoLast = "fire-file-naming-undo-last"
     static let preview = "fire-file-naming-preview"
-    static let names = [status, undoLast, preview]
+    static let backlog = "fire-file-naming-backlog"
+    static let undoBatch = "fire-file-naming-undo-batch"
+    static let names = [status, undoLast, preview, backlog, undoBatch]
 
     nonisolated static let statusFile = "file-naming-status.json"
     static let previewFile = "file-naming-preview.json"
+    static let backlogFile = "file-naming-backlog.json"
+    static let backlogRefusedFile = "file-naming-backlog-refused.json"
 
     /// Re-resolves the local route before the status is written, the same
     /// thing Settings does when the section appears, so a model pulled since
@@ -72,10 +85,75 @@ enum FileNamingTriggers {
             let result = await service.preview(path: path)
             WakeLog.shared.log("\(preview): \(result.decision) \(result.reason) \(result.readMs + result.modelMs) ms")
             write(previewObject(result), to: dir.appendingPathComponent(previewFile))
+        case backlog:
+            let paths = contents.split(whereSeparator: \.isNewline)
+                .map { (String($0).trimmingCharacters(in: .whitespaces) as NSString).expandingTildeInPath }
+                .filter { !$0.isEmpty }
+            let refusedFile = dir.appendingPathComponent(backlogRefusedFile)
+            guard paths.allSatisfy({ $0.hasPrefix("/") }) else {
+                WakeLog.shared.log("\(backlog): refused, a line is not an absolute path")
+                write(["refused": "notAbsolutePath", "writtenAt": ISO8601DateFormatter().string(from: Date())],
+                      to: refusedFile)
+                return
+            }
+            let out = dir.appendingPathComponent(backlogFile)
+            // Refused before anything starts, so the refusal is the only
+            // thing written and a running run's file is left as it is.
+            guard service.backlog?.running != true else {
+                WakeLog.shared.log("\(backlog): refused, a run is already going")
+                write(["refused": "alreadyRunning", "writtenAt": ISO8601DateFormatter().string(from: Date())],
+                      to: refusedFile)
+                return
+            }
+            // A refusal from an earlier call is not about this run.
+            try? FileManager.default.removeItem(at: refusedFile)
+            // The start, once the run has counted its files, so a caller can
+            // tell a run that began, and how big it is.
+            guard let result = await service.nameExisting(paths: paths.isEmpty ? nil : paths,
+                                                          onCounted: { write(backlogObject($0), to: out) }) else {
+                return
+            }
+            WakeLog.shared.log("\(backlog): \(result.named) of \(result.total) named")
+            write(backlogObject(result), to: out)
+        case undoBatch:
+            guard let batch = UUID(uuidString: contents) ?? (contents.isEmpty ? service.lastBatch : nil) else {
+                WakeLog.shared.log("\(undoBatch): nothing to undo")
+                write(["restored": 0, "writtenAt": ISO8601DateFormatter().string(from: Date())],
+                      to: dir.appendingPathComponent(backlogFile))
+                return
+            }
+            if let running = service.backlog, running.running, running.batch == batch {
+                WakeLog.shared.log("\(undoBatch): refused, that run is still going")
+                write(["refused": "stillRunning", "writtenAt": ISO8601DateFormatter().string(from: Date())],
+                      to: dir.appendingPathComponent(backlogRefusedFile))
+                return
+            }
+            let restored = await service.undoBatch(batch)
+            WakeLog.shared.log("\(undoBatch): \(restored) restored")
+            var object: [String: Any] = service.backlog.flatMap { $0.batch == batch ? backlogObject($0) : nil }
+                ?? ["batch": batch.uuidString]
+            object["restored"] = restored
+            object["writtenAt"] = ISO8601DateFormatter().string(from: Date())
+            write(object, to: dir.appendingPathComponent(backlogFile))
         default:
             await refreshRoute()
             writeStatus(service.status, undo: nil, to: dir.appendingPathComponent(statusFile))
         }
+    }
+
+    /// A run as JSON keys: counts, never a file name.
+    static func backlogObject(_ b: FileNamingBacklog, now: Date = Date()) -> [String: Any] {
+        [
+            "batch": b.batch.uuidString,
+            "total": b.total,
+            "done": b.done,
+            "named": b.named,
+            "undone": b.undone,
+            "running": b.running,
+            "stopped": b.stopped,
+            "settingsLine": b.settingsLine,
+            "writtenAt": ISO8601DateFormatter().string(from: now),
+        ]
     }
 
     /// The status as JSON keys. Every key is listed here by hand, so adding one

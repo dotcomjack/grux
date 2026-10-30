@@ -259,4 +259,55 @@ final class FileNamePromptTests: XCTestCase {
         XCTAssertTrue(message.contains("Northwind Studio"))
         XCTAssertFalse(FileNamePrompt.system.isEmpty)
     }
+    // MARK: - Keeping a reference from the old name
+
+    /// Measured 2026-10-29: twenty Amazon labels would all have become "FBA
+    /// Shipping Labels", " 2", " 3", losing the id a person searches by.
+    func testAShipmentIdInTheOldNameIsKept() {
+        XCTAssertEqual(FileNamePrompt.keepingReference("FBA Shipping Labels", from: "FBA197CZ70F3-1770238576079"),
+                       "FBA Shipping Labels FBA197CZ70F3")
+        XCTAssertEqual(FileNamePrompt.keepingReference("Acme Order", from: "order_ORD7731KX42"),
+                       "Acme Order ORD7731KX42")
+    }
+
+    func testAHashAUUIDOrACameraNameIsNotAReference() {
+        for old in ["1ba73856-274b-4233-8e70-84926ec28cda", "94ff0ae7eed93b99 (1)", "GaB3xK9WkAA1zQy",
+                    "IMG_8001", "IMG_20260412_143022", "document (3)", "Screenshot 2026-04-05 at 8.57.12\u{202F}PM",
+                    "C0855-1693", "2025-1099K", "ABCDEFGHIJ", "DSCF1234", "DSC00123", "SCAN0042",
+                    "PXL20260412X", "X12345678"] {
+            XCTAssertNil(FileNamePrompt.reference(in: old), old)
+            XCTAssertEqual(FileNamePrompt.keepingReference("Walmart Order Tracking", from: old), "Walmart Order Tracking")
+        }
+    }
+
+    /// Only a camera's own numbering is left out: an id that happens to
+    /// start like one is kept (review 2026-10-29).
+    func testAnIdThatStartsLikeACameraNameIsKept() {
+        XCTAssertEqual(FileNamePrompt.reference(in: "SAM7731KX42"), "SAM7731KX42")
+        XCTAssertEqual(FileNamePrompt.reference(in: "VID2210AB9"), "VID2210AB9")
+    }
+
+    func testAReferenceAlreadyInTheNameIsNotAddedTwice() {
+        XCTAssertEqual(FileNamePrompt.keepingReference("Label FBA197CZ70F3", from: "FBA197CZ70F3-1770238576079"),
+                       "Label FBA197CZ70F3")
+    }
+
+    func testWordsMakeRoomForTheReferenceButNeverBelowTwo() {
+        let long = "Quarterly Northwind Studio Design Retainer Invoice Summary"
+        let kept = FileNamePrompt.keepingReference(long, from: "ORD7731KX42")
+        XCTAssertTrue(kept.hasSuffix(" ORD7731KX42"), kept)
+        XCTAssertLessThanOrEqual(kept.count, FileNamePrompt.maxCharacters)
+        XCTAssertGreaterThanOrEqual(kept.split(separator: " ").count, 3)
+        let eight = "One Two Three Four Five Six Seven Eight"
+        let capped = FileNamePrompt.keepingReference(eight, from: "ORD7731KX42")
+        XCTAssertLessThanOrEqual(capped.split(separator: " ").count, FileNamePrompt.maxWords, capped)
+        XCTAssertTrue(capped.hasSuffix(" ORD7731KX42"), capped)
+    }
+
+    /// A run of digits the secret guard refuses is not kept either: a kept
+    /// word also reaches the notification and the preview (review 2026-10-29).
+    func testADigitRunTheSecretGuardRefusesIsNotKept() {
+        XCTAssertNil(FileNamePrompt.reference(in: "INV2026001234"))
+        XCTAssertNil(FileNamePrompt.reference(in: "CARD4111111111111111"))
+    }
 }

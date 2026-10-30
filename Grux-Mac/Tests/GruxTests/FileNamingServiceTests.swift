@@ -1043,6 +1043,150 @@ final class FileNamingServiceTests: XCTestCase {
         XCTAssertNil(human.proposedName)
     }
 
+    // MARK: - The files already here
+
+    /// NAME THE FILES ALREADY HERE. The watcher never touches a file that was
+    /// there when it was turned on; the run names those, by the same rules,
+    /// leaves a typed name alone, and records one batch the whole run undoes.
+    func testARunNamesTheFilesAlreadyHereAndUndoesAsOne() async throws {
+        let (service, backend) = make(reply: invoiceName)
+        try drop("document (3).pdf")
+        try drop("IMG_0042.png")
+        try drop("Lease renewal 2027.pdf")
+        await arm(service)
+        await service.rescanNow()
+        let before = await backend.shortAnswers
+        XCTAssertEqual(before, 0, "control: the watcher named files that were already there")
+
+        let result = await service.nameExisting()
+        let run = try XCTUnwrap(result)
+        XCTAssertFalse(run.running)
+        XCTAssertEqual(run.total, 3)
+        XCTAssertEqual(run.done, 3)
+        XCTAssertEqual(run.named, 2)
+        XCTAssertTrue(exists("\(invoiceName).pdf"))
+        XCTAssertTrue(exists("\(invoiceName).png"))
+        XCTAssertTrue(exists("Lease renewal 2027.pdf"), "a typed name was renamed")
+        XCTAssertFalse(exists("document (3).pdf"))
+        XCTAssertEqual(Set(service.recent.prefix(2).compactMap(\.batch)), [run.batch])
+        XCTAssertEqual(service.status.named, 0, "the run counted as files named on arrival")
+        XCTAssertEqual(service.lastBatch, run.batch)
+
+        // Its renames are not new files to the watcher.
+        await service.rescanNow()
+        try await Task.sleep(for: .milliseconds(300))
+        await service.rescanNow()
+        let after = await backend.shortAnswers
+        XCTAssertEqual(after, 2, "the watcher read the run's renames as new files")
+        XCTAssertNil(service.status.skipped["humanName"], "the watcher judged the run's renames: \(service.status)")
+
+        let restored = await service.undoBatch(run.batch)
+        XCTAssertEqual(restored, 2)
+        XCTAssertTrue(exists("document (3).pdf") && exists("IMG_0042.png") && exists("Lease renewal 2027.pdf"))
+        XCTAssertEqual(service.backlog?.undone, 2)
+        let again = await service.undoBatch(run.batch)
+        XCTAssertEqual(again, 0, "an undone run undid something twice")
+    }
+
+    /// Through the whole pipeline, not the function alone: a label keeps its
+    /// shipment id (review 2026-10-29).
+    func testARunKeepsTheShipmentIdOfALabel() async throws {
+        let (service, _) = make(reply: "FBA Shipping Labels",
+                                text: "Amazon FBA\nShipping Labels\nShip to: fulfillment center")
+        try drop("FBA197CZ70F3-1770238576079.pdf")
+        let result = await service.nameExisting()
+        XCTAssertEqual(result?.named, 1)
+        XCTAssertTrue(exists("FBA Shipping Labels FBA197CZ70F3.pdf"),
+                      "the id was lost: \(service.recent.first?.newName ?? "nothing renamed")")
+    }
+
+    /// A RUN STOPS. Stop, or turning naming off, ends it after the file it is
+    /// on, and that file is not renamed from a read made before the stop.
+    func testARunStopsWhenAskedAndWhenNamingIsTurnedOff() async throws {
+        for viaDisarm in [false, true] {
+            let gate = Flag()
+            let (service, _) = make(reply: invoiceName, reader: { [gate] _, _ in
+                while !gate.value { try? await Task.sleep(for: .milliseconds(10)) }
+                return "Northwind Studio\nInvoice 2041\nOctober 2026\nDesign retainer for Acme Corp"
+            })
+            // Before arming, so the watcher reads them as files already here.
+            try drop("document (3).pdf")
+            try drop("document (4).pdf")
+            if viaDisarm { await arm(service) }
+            let run = Task { await service.nameExisting() }
+            let reading = await eventually { service.backlog?.running == true && service.backlog?.total == 2 }
+            XCTAssertTrue(reading)
+            if viaDisarm { service.apply(enabled: false) } else { service.stopRun() }
+            gate.value = true
+            let done = await run.value
+            XCTAssertEqual(done?.stopped, true, viaDisarm ? "turning naming off did not stop the run" : "Stop did not stop the run")
+            XCTAssertEqual(done?.named, 0, "a file was renamed after the stop")
+            XCTAssertTrue(exists("document (3).pdf") && exists("document (4).pdf"))
+            try? fm.removeItem(at: dir.appendingPathComponent("document (3).pdf"))
+            try? fm.removeItem(at: dir.appendingPathComponent("document (4).pdf"))
+        }
+    }
+
+    /// A single Undo of one of a run's renames counts toward the run, so
+    /// "Undo this run" is not offered once everything is back.
+    func testASingleUndoCountsTowardItsRun() async throws {
+        let (service, _) = make(reply: invoiceName)
+        try drop("document (3).pdf")
+        let result = await service.nameExisting()
+        let run = try XCTUnwrap(result)
+        let id = try XCTUnwrap(service.recent.first?.id)
+        let outcome = await service.undoInBackground(id: id)
+        XCTAssertEqual(outcome, .restored)
+        XCTAssertEqual(service.backlog?.undone, 1)
+        XCTAssertEqual(service.backlog?.named, run.named)
+    }
+
+    func testARunOverNamedPathsJudgesEachAsThePreviewDoes() async throws {
+        let (service, _) = make(reply: invoiceName)
+        try drop("document (3).pdf")
+        try drop("Lease renewal 2027.pdf")
+        let result = await service.nameExisting(paths: [
+            dir.appendingPathComponent("document (3).pdf").path,
+            dir.appendingPathComponent("Lease renewal 2027.pdf").path,
+            dir.appendingPathComponent("gone.pdf").path,
+        ])
+        let run = try XCTUnwrap(result)
+        XCTAssertEqual(run.total, 3)
+        XCTAssertEqual(run.named, 1)
+        XCTAssertTrue(exists("\(invoiceName).pdf"), "a run works with the feature off, like the preview")
+        XCTAssertTrue(exists("Lease renewal 2027.pdf"))
+    }
+
+    func testASecondRunWhileOneIsGoingStartsNothing() async throws {
+        let gate = Flag()
+        let (service, _) = make(reply: invoiceName, reader: { [gate] _, _ in
+            while !gate.value { try? await Task.sleep(for: .milliseconds(10)) }
+            return "Northwind Studio\nInvoice 2041\nOctober 2026\nDesign retainer for Acme Corp"
+        })
+        try drop("document (3).pdf")
+        let first = Task { await service.nameExisting() }
+        let started = await eventually { service.backlog?.running == true && service.backlog?.total == 1 }
+        XCTAssertTrue(started)
+        let second = await service.nameExisting()
+        XCTAssertNil(second, "a second run started while one was going")
+        gate.value = true
+        let done = await first.value
+        XCTAssertEqual(done?.named, 1)
+    }
+
+    func testAnUndoneRunLeavesAFileChangedSinceAlone() async throws {
+        let (service, _) = make(reply: invoiceName)
+        try drop("document (3).pdf")
+        let result = await service.nameExisting()
+        let run = try XCTUnwrap(result)
+        XCTAssertEqual(run.named, 1)
+        // Something else takes the old name in the meantime.
+        try drop("document (3).pdf", "a new download")
+        let restored = await service.undoBatch(run.batch)
+        XCTAssertEqual(restored, 0)
+        XCTAssertTrue(exists("\(invoiceName).pdf"), "an undo overwrote a file that took the old name")
+    }
+
     // MARK: - The preview's model
 
     /// A PREVIEW'S MODEL IS LET GO AFTER A PAUSE. The eval runs previews with

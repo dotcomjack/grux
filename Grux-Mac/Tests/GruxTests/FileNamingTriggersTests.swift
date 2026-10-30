@@ -49,7 +49,7 @@ final class FileNamingTriggersTests: XCTestCase {
     /// rename: the file is on disk under its new name and the ledger says so.
     /// The triggers are pointed at it, so they act on a rename that happened
     /// rather than on the suite's empty shared ledger.
-    private func seededService() throws -> (service: FileNamingService, folder: URL, entry: FileRename) {
+    private func seededService(batch: UUID? = nil) throws -> (service: FileNamingService, folder: URL, entry: FileRename) {
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent("file-naming-trigger-service-\(UUID().uuidString)")
         roots.append(root)
@@ -61,7 +61,7 @@ final class FileNamingTriggersTests: XCTestCase {
         let renamed = try FileRenamer(fileManager: fm).rename(original, to: newBase, expecting: stamp)
         let ledgerURL = root.appendingPathComponent("ledger/ledger.json")
         let entry = FileRename(id: UUID(), folder: folder.path, oldName: oldName, newName: renamed.lastPathComponent,
-                               at: Date(), undoneAt: nil, fileID: stamp.fileNumber)
+                               at: Date(), undoneAt: nil, fileID: stamp.fileNumber, batch: batch)
         FileRenameLedger(url: ledgerURL, fileManager: fm).append(entry)
         let service = FileNamingService(folders: [FileNamingFolder(url: folder, screenshots: false, downloads: true)],
                                         fileManager: fm, ledgerURL: ledgerURL)
@@ -265,10 +265,98 @@ final class FileNamingTriggersTests: XCTestCase {
         XCTAssertTrue(triggers.contains("FileNamingTriggers.register(in: dir)"),
                       "the file naming triggers are never registered")
         XCTAssertEqual(FileNamingTriggers.names,
-                       ["fire-file-naming-status", "fire-file-naming-undo-last", "fire-file-naming-preview"],
+                       ["fire-file-naming-status", "fire-file-naming-undo-last", "fire-file-naming-preview",
+                        "fire-file-naming-backlog", "fire-file-naming-undo-batch"],
                        "a trigger file name changed")
         XCTAssertEqual(FileNamingTriggers.statusFile, "file-naming-status.json")
         XCTAssertEqual(FileNamingTriggers.previewFile, "file-naming-preview.json")
+        XCTAssertEqual(FileNamingTriggers.backlogFile, "file-naming-backlog.json")
+        XCTAssertEqual(FileNamingTriggers.backlogRefusedFile, "file-naming-backlog-refused.json")
+    }
+
+    /// THE RUN'S UNDO UNDOES, by its batch id and, with no id, the newest run.
+    func test_undoBatchPutsTheRunBack() throws {
+        let batch = UUID()
+        let (service, folder, entry) = try seededService(batch: batch)
+        XCTAssertEqual(service.lastBatch, batch, "control: the seeded rename is not part of a run")
+        let fm = FileManager.default
+        let result = try fire(FileNamingTriggers.undoBatch, "", expecting: FileNamingTriggers.backlogFile)
+        XCTAssertEqual(result["restored"] as? Int, 1, "the run was not undone")
+        XCTAssertTrue(fm.fileExists(atPath: folder.appendingPathComponent(oldName).path), "the old name is not back")
+        XCTAssertFalse(fm.fileExists(atPath: folder.appendingPathComponent(entry.newName).path))
+        let again = try fire(FileNamingTriggers.undoBatch, batch.uuidString, expecting: FileNamingTriggers.backlogFile)
+        XCTAssertEqual(again["restored"] as? Int, 0, "a run was undone twice")
+    }
+
+    /// THE RUN TRIGGER RUNS: the file it writes at the end holds the counts of
+    /// a run that renamed a real file, and a second run while one is going is
+    /// refused in its own file, leaving the running one's file as it was.
+    func test_theRunTriggerNamesAndRefusesASecondRun() async throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("file-naming-trigger-run-\(UUID().uuidString)")
+        roots.append(root)
+        let folder = root.appendingPathComponent("watched")
+        let out = root.appendingPathComponent("out")
+        for made in [folder, out] { try fm.createDirectory(at: made, withIntermediateDirectories: true) }
+        let gate = RunGate()
+        let service = FileNamingService(
+            folders: [FileNamingFolder(url: folder, screenshots: false, downloads: true)],
+            backend: FixedNameBackend(reply: newBase),
+            model: "grux-local-test",
+            fileManager: fm,
+            ledgerURL: root.appendingPathComponent("ledger/ledger.json"),
+            textReader: { [gate] _, _ in
+                while !gate.open { try? await Task.sleep(for: .milliseconds(10)) }
+                return "Northwind Studio\nInvoice 2041\nOctober 2026"
+            },
+            quietInterval: 0,
+            completeness: { _, _ in true })
+        seeded.append(service)
+        FileNamingTriggers.service = { service }
+        let file = folder.appendingPathComponent(oldName)
+        try Data("%PDF-fixture bytes".utf8).write(to: file)
+
+        let first = Task { await FileNamingTriggers.fire(FileNamingTriggers.backlog, contents: file.path, dir: out) }
+        let started = out.appendingPathComponent(FileNamingTriggers.backlogFile)
+        let deadline = Date().addingTimeInterval(5)
+        while !fm.fileExists(atPath: started.path), Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        let begun = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: started)) as? [String: Any])
+        XCTAssertEqual(begun["running"] as? Bool, true)
+        XCTAssertEqual(begun["total"] as? Int, 1, "the start was written before the run counted its files")
+
+        await FileNamingTriggers.fire(FileNamingTriggers.backlog, contents: file.path, dir: out)
+        let refused = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: Data(contentsOf: out.appendingPathComponent(FileNamingTriggers.backlogRefusedFile))) as? [String: Any])
+        XCTAssertEqual(refused["refused"] as? String, "alreadyRunning")
+        let still = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: started)) as? [String: Any])
+        XCTAssertEqual(still["running"] as? Bool, true, "the refusal overwrote the running run's file")
+
+        gate.open = true
+        await first.value
+        let done = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: started)) as? [String: Any])
+        XCTAssertEqual(done["running"] as? Bool, false)
+        XCTAssertEqual(done["named"] as? Int, 1)
+        XCTAssertTrue(fm.fileExists(atPath: folder.appendingPathComponent("\(newBase).pdf").path))
+        let text = try String(contentsOf: started, encoding: .utf8)
+        XCTAssertFalse(text.contains(newBase) || text.contains(oldName), "the run file carries a file name")
+    }
+
+    /// A run takes absolute paths and nothing else, and names nothing when a
+    /// line is not one.
+    func test_aRunRefusesARelativePath() throws {
+        _ = try seededService()
+        let result = try fire(FileNamingTriggers.backlog, "/tmp/a.png\nrelative/Acme Corp invoice.png",
+                              expecting: FileNamingTriggers.backlogRefusedFile)
+        XCTAssertEqual(result["refused"] as? String, "notAbsolutePath")
+        XCTAssertNil(result["named"], "control: this is the refusal, not a run")
+    }
+
+    /// The run's file carries counts, never a file name.
+    func test_theRunFileHoldsCountsOnly() {
+        let run = FileNamingBacklog(batch: UUID(), total: 3, done: 3, named: 2, running: false)
+        XCTAssertEqual(Set(FileNamingTriggers.backlogObject(run).keys),
+                       ["batch", "total", "done", "named", "undone", "running", "stopped", "settingsLine", "writtenAt"])
+        XCTAssertFalse(run.settingsLine.contains("\u{2014}") || run.settingsLine.contains("\u{2013}"))
     }
 }
 
@@ -314,5 +402,15 @@ private actor FixedNameBackend: ModelBackend {
 
     func usageSnapshot() -> (input: Int, output: Int, cacheCreate: Int, cacheRead: Int) {
         (0, 0, 0, 0)
+    }
+}
+
+/// A switch the text reader reads from any thread.
+private final class RunGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored = false
+    var open: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return stored }
+        set { lock.lock(); stored = newValue; lock.unlock() }
     }
 }

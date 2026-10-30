@@ -118,7 +118,12 @@ struct FileRenamer {
 /// under test), never a folder a person browses (`NoSurpriseFoldersTests`).
 final class FileRenameLedger {
 
-    static let cap = 200
+    /// Room for a "Name the files already here" run over a full Downloads
+    /// folder, each rename still undoable. 200 was the cap before runs
+    /// existed: a run over a real Downloads folder named 165 files on its own
+    /// (measured 2026-10-29), and one over a bigger folder would have pushed
+    /// its first renames, and every earlier one, out of reach of Undo.
+    static let cap = 2_000
 
     static var defaultURL: URL {
         Persistence.supportDir

@@ -23,6 +23,10 @@ struct FileRename: Codable, Equatable, Identifiable {
     /// name later (review 2026-10-28). nil in entries written before this
     /// field existed, which decode as before and undo by name.
     var fileID: UInt64? = nil
+    /// The "Name the files already here" run this rename was part of, so
+    /// the whole run can be undone together. nil for a file named as it
+    /// arrived, and in entries written before runs existed.
+    var batch: UUID? = nil
 }
 
 /// What an undo did. Anything but `.restored` changed nothing on disk.
@@ -139,4 +143,28 @@ struct FileNamingPreview: Codable, Equatable {
     let readMs: Int
     let modelMs: Int
     let model: String?
+}
+
+/// A run over files that were already in the folders ("Name the files
+/// already here"), as it stands. Counts only, never a file name.
+struct FileNamingBacklog: Codable, Equatable {
+    let batch: UUID
+    var total: Int
+    var done: Int = 0
+    var named: Int = 0
+    var running: Bool = true
+    /// Renames of this run undone since.
+    var undone: Int = 0
+    /// Stopped before it reached the last file.
+    var stopped: Bool = false
+
+    /// One plain sentence for the Settings row.
+    var settingsLine: String {
+        let files = total == 1 ? "1 file" : "\(total) files"
+        if running { return "Naming the files already here: \(done) of \(files) read, \(named) named." }
+        let namedText = named == 1 ? "1 file named" : "\(named) files named"
+        let undoneText = undone > 0 ? ", \(undone) undone" : ""
+        if stopped { return "Stopped after \(done) of \(files): \(namedText)\(undoneText)." }
+        return "Done: \(files) read, \(namedText)\(undoneText). Files with names a person typed, and files with no text, kept theirs."
+    }
 }

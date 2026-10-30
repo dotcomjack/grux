@@ -1665,8 +1665,9 @@ enum AppTriggers {
         // as a click does, then workflows-status.json (Triggers/WorkflowTriggers.swift).
         WorkflowTriggers.register(in: dir)
         // fire-file-naming-status, fire-file-naming-undo-last,
-        // fire-file-naming-preview: Files that name themselves, checked and
-        // undone without a click (Triggers/FileNamingTriggers.swift).
+        // fire-file-naming-preview, fire-file-naming-backlog,
+        // fire-file-naming-undo-batch: Files that name themselves, checked,
+        // run and undone without a click (Triggers/FileNamingTriggers.swift).
         FileNamingTriggers.register(in: dir)
 
         // fire-jax-brief: Jax speaks an on-demand briefing now (Home "brief me"

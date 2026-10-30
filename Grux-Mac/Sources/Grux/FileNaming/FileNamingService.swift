@@ -41,6 +41,8 @@ final class FileNamingService: ObservableObject {
     @Published private(set) var status: FileNamingStatus = .idle
     /// Newest first, at most 10, from the ledger.
     @Published private(set) var recent: [FileRename] = []
+    /// The last "Name the files already here" run this launch, nil before one.
+    @Published private(set) var backlog: FileNamingBacklog?
     /// Set by the app at launch to post the "Renamed" notification.
     var onRenamed: (@MainActor (FileRename) -> Void)?
 
@@ -264,6 +266,8 @@ final class FileNamingService: ObservableObject {
     /// person put back with Undo and then dragged into Downloads is not new
     /// there (review 2026-10-28).
     private var known: Set<UInt64> = []
+    /// Set by `stopRun`; the run stops after the file it is on.
+    private var stopRequested = false
     /// Undos with their disk work in flight, so one is never run twice.
     private var undoing: Set<UUID> = []
     /// Bumped on every arm and disarm, so work started under an old arm
@@ -326,6 +330,7 @@ final class FileNamingService: ObservableObject {
     }
 
     private func disarm() {
+        stopRun()
         idleUnload?.cancel()
         idleUnload = nil
         if let route = lastNamingRoute { unloadIfNotChat(route) }
@@ -691,46 +696,16 @@ final class FileNamingService: ObservableObject {
             return
         }
 
-        // The checks that passed when it settled, again: the model call can
-        // run long after, behind a chat turn or other files, and a partner, a
-        // write or a stall can land in that gap (review 2026-10-28).
-        let folderURL = item.folder.url
-        let complete = completeness
-        let quiet = quietInterval
-        let recheck = await FileNamingIO.run { () -> (whole: Bool, quiet: Bool, names: [String]?) in
-            let quietNow = FileNamingEntry.read(url).map { Date().timeIntervalSince($0.modified) >= quiet } ?? false
-            let names = try? FileManager.default.contentsOfDirectory(atPath: folderURL.path)
-            return (complete(url, kind), quietNow, names)
-        }
+        let stale = await recheck(url, kind: kind, in: item.folder.url)
         guard generation == gen else { return }
-        guard let names = recheck.names, !FileNamingRules.hasPair(fileName, among: names) else {
-            skip(.unsupported)
-            log(proposal, outcome: "pair")
-            return
-        }
-        guard recheck.whole, recheck.quiet else {
-            skip(.changedMeanwhile)
-            log(proposal, outcome: "changedMeanwhile")
+        if let stale {
+            skip(stale)
+            log(proposal, outcome: stale == .unsupported ? "pair" : "changedMeanwhile")
             return
         }
         do {
-            let renamer = FileRenamer(fileManager: fileManager)
-            let renamed = try renamer.rename(url, to: base, expecting: item.fingerprint)
-            // A rename in the same folder keeps the file number, so it is
-            // already seen; said here so that never rests on how the move
-            // was made.
-            baselines[item.folder.url.path]?.seen.insert(item.fingerprint.fileNumber)
-            known.insert(item.fingerprint.fileNumber)
-            // The old name is free again: a later download that takes it is a
-            // new file, not this one written again.
-            baselines[item.folder.url.path]?.names.remove(fileName)
-            baselines[item.folder.url.path]?.names.insert(renamed.lastPathComponent)
-            let entry = FileRename(id: UUID(), folder: item.folder.url.path, oldName: fileName,
-                                   newName: renamed.lastPathComponent, at: Date(), undoneAt: nil,
-                                   fileID: item.fingerprint.fileNumber)
-            ledger.appendInMemory(entry)
-            writeLedger()
-            recent = ledger.recent(10)
+            let entry = try commitRename(url, in: item.folder.url.path, to: base,
+                                         expecting: item.fingerprint, batch: nil)
             status.named += 1
             status.lastNamedAt = entry.at
             log(proposal, outcome: "renamed")
@@ -748,6 +723,31 @@ final class FileNamingService: ObservableObject {
         status.skipped[reason.rawValue, default: 0] += 1
     }
 
+    /// The move and everything that remembers it, for a file named as it
+    /// arrived and for one named by a run over the files already there.
+    private func commitRename(_ url: URL, in folderPath: String, to base: String,
+                              expecting fingerprint: FileFingerprint, batch: UUID?) throws -> FileRename {
+        let fileName = url.lastPathComponent
+        let renamer = FileRenamer(fileManager: fileManager)
+        let renamed = try renamer.rename(url, to: base, expecting: fingerprint)
+        // A rename in the same folder keeps the file number, so it is
+        // already seen; said here so that never rests on how the move
+        // was made.
+        baselines[folderPath]?.seen.insert(fingerprint.fileNumber)
+        known.insert(fingerprint.fileNumber)
+        // The old name is free again: a later download that takes it is a
+        // new file, not this one written again.
+        baselines[folderPath]?.names.remove(fileName)
+        baselines[folderPath]?.names.insert(renamed.lastPathComponent)
+        let entry = FileRename(id: UUID(), folder: folderPath, oldName: fileName,
+                               newName: renamed.lastPathComponent, at: Date(), undoneAt: nil,
+                               fileID: fingerprint.fileNumber, batch: batch)
+        ledger.appendInMemory(entry)
+        writeLedger()
+        recent = ledger.recent(10)
+        return entry
+    }
+
     // MARK: - The pipeline
 
     private struct Proposal {
@@ -761,7 +761,8 @@ final class FileNamingService: ObservableObject {
 
     /// Route, read, ask, clean. Shared by the live path and the preview, so
     /// the eval measures exactly what renames files.
-    private func propose(url: URL, kind: FileNamingKind, forPreview: Bool = false) async -> Proposal {
+    private func propose(url: URL, kind: FileNamingKind, forPreview: Bool = false,
+                         forRun: Bool = false) async -> Proposal {
         let resolution = await routeSource()
         noteRoute(resolution)
         guard let route = resolution.route else {
@@ -783,7 +784,8 @@ final class FileNamingService: ObservableObject {
         while true {
             while AppState.shared.chatTurnInFlight {
                 try? await Task.sleep(nanoseconds: 200_000_000)
-                if Task.isCancelled {
+                // A run's Stop is heard here too, not only after the turn.
+                if Task.isCancelled || (forRun && stopRequested) {
                     return Proposal(name: nil, reason: FileNamingSkip.error.rawValue, readMs: readMs, modelMs: 0, model: route.model)
                 }
             }
@@ -835,7 +837,8 @@ final class FileNamingService: ObservableObject {
             return Proposal(name: nil, reason: failure.rawValue, readMs: readMs, modelMs: modelMs, model: route.model)
         }
         let currentBase = url.deletingPathExtension().lastPathComponent
-        guard let name = FileNamePrompt.clean(reply, sourceText: text, fileExtension: url.pathExtension),
+        guard let cleaned = FileNamePrompt.clean(reply, sourceText: text, fileExtension: url.pathExtension),
+              case let name = FileNamePrompt.keepingReference(cleaned, from: currentBase),
               name.lowercased() != currentBase.lowercased() else {
             return Proposal(name: nil, reason: FileNamingSkip.modelDeclined.rawValue,
                             readMs: readMs, modelMs: modelMs, model: route.model)
@@ -851,33 +854,16 @@ final class FileNamingService: ObservableObject {
         // A preview right after another keeps the model it is about to use.
         previewUnload?.cancel()
         previewUnload = nil
-        let url = URL(fileURLWithPath: path)
         func leave(_ reason: String) -> FileNamingPreview {
             FileNamingPreview(path: path, decision: "leave", reason: reason, proposedName: nil,
                               readMs: 0, modelMs: 0, model: nil)
         }
-        let folderURL = url.deletingLastPathComponent()
-        let fileName = url.lastPathComponent
-        let lister = self.lister
-        // Every read of the file and its folder off the main actor: the path
-        // can be anywhere, Documents included.
-        let probe = await FileNamingIO.run { () -> (regular: Bool, capture: Bool, others: [String]) in
-            let regular = FileFingerprint.of(url, fileManager: .default) != nil
-            let others = (lister(folderURL) ?? []).map(\.name).filter { $0 != fileName }
-            return (regular, regular && FileNamingRules.isScreenCapture(url), others)
-        }
-        guard probe.regular else { return leave(FileNamingSkip.unsupported.rawValue) }
-        let folder = FileNamingFolder(url: folderURL, screenshots: true, downloads: true)
+        let url: URL
         let kind: FileNamingKind
-        switch FileNamingRules.candidacy(fileName: fileName, in: folder, isScreenCapture: { probe.capture }) {
-        case .ignore: return leave(FileNamingSkip.unsupported.rawValue)
-        case .skip(let reason): return leave(reason.rawValue)
-        case .candidate(let k): kind = k
+        switch await assess(path: path, folder: nil) {
+        case .leave(let reason): return leave(reason)
+        case .candidate(let u, let k, _): url = u; kind = k
         }
-        if FileNamingRules.hasPair(fileName, among: probe.others) { return leave(FileNamingSkip.unsupported.rawValue) }
-        let complete = completeness
-        let whole = await FileNamingIO.run { complete(url, kind) }
-        guard whole else { return leave(FileNamingSkip.unsupported.rawValue) }
         let p = await propose(url: url, kind: kind, forPreview: true)
         if let route = lastPreviewRoute {
             lastPreviewRoute = nil
@@ -886,6 +872,173 @@ final class FileNamingService: ObservableObject {
         return FileNamingPreview(path: path, decision: p.name == nil ? "leave" : "rename", reason: p.reason,
                                  proposedName: p.name, readMs: p.readMs, modelMs: p.modelMs, model: p.model)
     }
+
+    private enum Assessment {
+        case leave(String)
+        case candidate(URL, FileNamingKind, FileFingerprint)
+    }
+
+    /// Every rule but "appeared after arming", on one file: its candidacy, a
+    /// partner file, and whole content. `folder` gives the rules of a watched
+    /// folder; nil treats the file's own folder as both a screenshot folder
+    /// and Downloads, which is what a person who names the file asks for.
+    /// `names` is the folder's listing when the caller already holds it; the
+    /// folder is listed only for a file that is a candidate, so a run over a
+    /// folder is not one listing per file (review 2026-10-29). Every read of
+    /// the file and its folder off the main actor: the path can be anywhere,
+    /// Documents included.
+    private func assess(path: String, folder given: FileNamingFolder?, names: [String]? = nil) async -> Assessment {
+        let url = URL(fileURLWithPath: path)
+        let folderURL = url.deletingLastPathComponent()
+        let fileName = url.lastPathComponent
+        let probe = await FileNamingIO.run { () -> (fingerprint: FileFingerprint?, capture: Bool) in
+            let fingerprint = FileFingerprint.of(url, fileManager: .default)
+            return (fingerprint, fingerprint != nil && FileNamingRules.isScreenCapture(url))
+        }
+        guard let fingerprint = probe.fingerprint else { return .leave(FileNamingSkip.unsupported.rawValue) }
+        let folder = given ?? FileNamingFolder(url: folderURL, screenshots: true, downloads: true)
+        let kind: FileNamingKind
+        switch FileNamingRules.candidacy(fileName: fileName, in: folder, isScreenCapture: { probe.capture }) {
+        case .ignore: return .leave(FileNamingSkip.unsupported.rawValue)
+        case .skip(let reason): return .leave(reason.rawValue)
+        case .candidate(let k): kind = k
+        }
+        let lister = self.lister
+        let complete = completeness
+        let checked = await FileNamingIO.run { () -> (others: [String], whole: Bool) in
+            let listed = names ?? (lister(folderURL) ?? []).map(\.name)
+            return (listed.filter { $0 != fileName }, complete(url, kind))
+        }
+        if FileNamingRules.hasPair(fileName, among: checked.others) { return .leave(FileNamingSkip.unsupported.rawValue) }
+        guard checked.whole else { return .leave(FileNamingSkip.unsupported.rawValue) }
+        return .candidate(url, kind, fingerprint)
+    }
+
+    /// The checks that passed before the model call, again: the call can run
+    /// long after, behind a chat turn or other files, and a partner, a write
+    /// or a stall can land in that gap (review 2026-10-28). nil when the file
+    /// can still be renamed.
+    private func recheck(_ url: URL, kind: FileNamingKind, in folderURL: URL) async -> FileNamingSkip? {
+        let complete = completeness
+        let quiet = quietInterval
+        let fileName = url.lastPathComponent
+        let now = await FileNamingIO.run { () -> (whole: Bool, quiet: Bool, names: [String]?) in
+            let quietNow = FileNamingEntry.read(url).map { Date().timeIntervalSince($0.modified) >= quiet } ?? false
+            let names = try? FileManager.default.contentsOfDirectory(atPath: folderURL.path)
+            return (complete(url, kind), quietNow, names)
+        }
+        guard let names = now.names, !FileNamingRules.hasPair(fileName, among: names) else { return .unsupported }
+        guard now.whole, now.quiet else { return .changedMeanwhile }
+        return nil
+    }
+
+    // MARK: - The files already there
+
+    /// "Name the files already here". The watcher names only files that
+    /// arrive after it is turned on, so a folder full of `Screenshot ...` and
+    /// `IMG_...` files stays as it was. This names those, one at a time,
+    /// through the same rules, model and checks as a new file, and records
+    /// every rename in the ledger under one batch, so the whole run can be
+    /// undone with `undoBatch`.
+    ///
+    /// `paths` names the files (the trigger); each is judged as the preview
+    /// judges it. nil takes every file in the watched folders, each judged by
+    /// its own folder's rules, so a typed name or a file with no text is left
+    /// alone exactly as it would be on arrival. Works with the feature off,
+    /// like the preview. One run at a time; a second call while one runs
+    /// returns nil and starts nothing. No notification per file: a run can
+    /// name a hundred, and the Settings row reports it.
+    @discardableResult
+    func nameExisting(paths: [String]? = nil,
+                      onCounted: ((FileNamingBacklog) -> Void)? = nil) async -> FileNamingBacklog? {
+        guard backlog?.running != true else { return nil }
+        let batch = UUID()
+        stopRequested = false
+        backlog = FileNamingBacklog(batch: batch, total: 0)
+        let items: [(path: String, folder: FileNamingFolder?, names: [String]?)]
+        if let paths {
+            items = paths.map { ($0, nil, nil) }
+        } else {
+            let source = folderSource
+            let lister = self.lister
+            items = await FileNamingIO.run {
+                source().flatMap { folder -> [(path: String, folder: FileNamingFolder?, names: [String]?)] in
+                    let names = (lister(folder.url) ?? []).map(\.name)
+                    return names.map { (folder.url.appendingPathComponent($0).path, folder, names) }
+                }
+            }
+        }
+        backlog?.total = items.count
+        if let counted = backlog { onCounted?(counted) }
+        for item in items {
+            if Task.isCancelled || stopRequested { break }
+            // A file the watcher already has in hand is its to name.
+            if queuedPaths.contains(item.path) || arrivals[item.path] != nil {
+                backlog?.done += 1
+                continue
+            }
+            if case let .candidate(url, kind, fingerprint) = await assess(path: item.path, folder: item.folder,
+                                                                          names: item.names) {
+                let p = await propose(url: url, kind: kind, forRun: true)
+                if stopRequested { break }
+                if let base = p.name {
+                    let folderURL = item.folder?.url ?? url.deletingLastPathComponent()
+                    if let stale = await recheck(url, kind: kind, in: folderURL) {
+                        log(p, outcome: stale == .unsupported ? "pair" : "changedMeanwhile")
+                    } else if stopRequested {
+                        break
+                    } else {
+                        do {
+                            _ = try commitRename(url, in: folderURL.path, to: base, expecting: fingerprint, batch: batch)
+                            backlog?.named += 1
+                            log(p, outcome: "renamed")
+                        } catch {
+                            log(p, outcome: "changedMeanwhile")
+                        }
+                    }
+                } else {
+                    log(p, outcome: "left")
+                }
+            }
+            backlog?.done += 1
+        }
+        backlog?.running = false
+        backlog?.stopped = stopRequested && (backlog.map { $0.done < $0.total } ?? false)
+        stopRequested = false
+        WakeLog.shared.log("autoname: run done, \(backlog?.named ?? 0) of \(items.count) named")
+        unloadIfIdle()
+        return backlog
+    }
+
+    /// Stops a run after the file it is on. Turning naming off does this too,
+    /// because with it off Grux never opens the folders.
+    func stopRun() {
+        if backlog?.running == true { stopRequested = true }
+    }
+
+    /// Undoes every rename of one run that is not undone yet, newest first,
+    /// each with the same checks as a single Undo. Returns how many were put
+    /// back; one that cannot be (moved, changed, its old name taken since) is
+    /// left as it is.
+    @discardableResult
+    func undoBatch(_ batch: UUID) async -> Int {
+        let ids = ledger.entries.filter { $0.batch == batch && $0.undoneAt == nil }.map(\.id).reversed()
+        var restored = 0
+        for id in ids {
+            if await undoInBackground(id: id) == .restored { restored += 1 }
+        }
+        return restored
+    }
+
+    /// A run's undone count from the ledger, so a single Undo of one of its
+    /// renames counts too (review 2026-10-29).
+    private func refreshBacklogUndone() {
+        guard let batch = backlog?.batch else { return }
+        backlog?.undone = ledger.entries.filter { $0.batch == batch && $0.undoneAt != nil }.count
+    }
+
+    /// The newest run's batch in the ledger, for an undo after a relaunch.
+    var lastBatch: UUID? { ledger.entries.last(where: { $0.batch != nil })?.batch }
 
     // MARK: - The naming model
 
@@ -1025,6 +1178,7 @@ final class FileNamingService: ObservableObject {
             status.undone += 1
         }
         recent = ledger.recent(10)
+        refreshBacklogUndone()
         WakeLog.shared.log("autoname: undo \(Self.outcomeName(outcome))")
     }
 

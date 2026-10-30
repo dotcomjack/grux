@@ -138,6 +138,56 @@ enum FileNamePrompt {
         return name
     }
 
+    /// `name` with the reference the old name carried, when it carried one.
+    /// Measured 2026-10-29 on a real Downloads folder: twenty Amazon labels
+    /// named `FBA197CZ70F3-1770238576079.pdf` and the like would all have
+    /// become "FBA Shipping Labels", " 2", " 3", losing the shipment id a
+    /// person searches by. Now "FBA Shipping Labels FBA197CZ70F3".
+    ///
+    /// A reference is one word of the old name, 8 to 20 capital letters and
+    /// digits, with at least two letters and at least two digits: an order,
+    /// shipment or invoice id. Lowercase or mixed case is left out, which is
+    /// how a hash, a UUID piece or a random media name looks, with nothing to
+    /// search by (`1ba73856`, `94ff0ae7eed93b99`, `GaB3xK9WkAA1zQy`). The
+    /// first one wins. It skips the
+    /// secret guard on purpose: it was already in the file's name, so keeping
+    /// it shows nothing new. Words come off the end of `name` to make room,
+    /// never below 2.
+    static func keepingReference(_ name: String, from oldBase: String) -> String {
+        guard let reference = reference(in: oldBase),
+              !name.localizedCaseInsensitiveContains(reference) else { return name }
+        var words = name.split(separator: " ").map(String.init)
+        while words.count > 2 && (words.count + 1 > maxWords
+                                  || (words.joined(separator: " ") + " " + reference).count > maxCharacters) {
+            words.removeLast()
+        }
+        let kept = words.joined(separator: " ") + " " + reference
+        return kept.count <= maxCharacters ? kept : name
+    }
+
+    /// The first reference-looking word of a file's old base name, or nil.
+    /// A camera's or scanner's own numbering (`DSCF1234`, `PXL20260412`) is
+    /// not one, and neither is a run of digits the secret guard would refuse:
+    /// a kept word also reaches the notification and the preview.
+    static func reference(in oldBase: String) -> String? {
+        for word in oldBase.split(whereSeparator: { !($0.isASCII && ($0.isLetter || $0.isNumber)) }) {
+            let w = String(word)
+            guard (8...20).contains(w.count),
+                  w.filter(\.isLetter).count >= 2,
+                  w.allSatisfy({ $0.isNumber || $0.isUppercase }),
+                  w.filter(\.isNumber).count >= 2,
+                  w.range(of: cameraNumbering, options: .regularExpression) == nil,
+                  !secretDigits.contains(where: { w.range(of: $0, options: .regularExpression) != nil })
+            else { continue }
+            return w
+        }
+        return nil
+    }
+
+    /// How cameras, phones and scanners number their files: a maker's prefix
+    /// and digits, nothing else, so `SAM7731KX42` is still an id.
+    static let cameraNumbering = #"^(IMG|DSCF?|DSCN|CIMG|PXL|MVI|VID|GOPR|GH0|GX0|DJI|SCAN|SAM|P1)[0-9]+[A-Z]?$"#
+
     /// The two digit rules of the secret guard: 8 or more digits joined by
     /// any separators, and 6 or more joined by none, or by separators with
     /// no space in them.
