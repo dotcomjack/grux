@@ -318,6 +318,7 @@ final class ProposalSynthesizerTests: XCTestCase {
     private func gitFixture(file: StaticString = #filePath, line: UInt = #line) throws -> GitFixture {
         let fm = FileManager.default
         let base = fm.temporaryDirectory.appendingPathComponent("synth-git-\(UUID().uuidString)")
+        addTeardownBlock { try? FileManager.default.removeItem(at: base) }
         let f = GitFixture(base: base, origin: base.appendingPathComponent("origin"),
                            checkout: base.appendingPathComponent("checkout"), into: base.appendingPathComponent("copy"))
         try fm.createDirectory(at: f.origin.appendingPathComponent("Grux-Mac"), withIntermediateDirectories: true)
@@ -326,8 +327,9 @@ final class ProposalSynthesizerTests: XCTestCase {
         try git(f.origin, ["init", "-q", "-b", "main"], file: file, line: line)
         try git(f.origin, ["add", "."], file: file, line: line)
         try git(f.origin, ["commit", "-q", "--no-gpg-sign", "--no-verify", "-m", "one"], file: file, line: line)
-        XCTAssertTrue(ProposalSynthesizer.runTool("/usr/bin/git", ["clone", "-q", f.origin.path, f.checkout.path], timeout: 30).ok,
-                      "clone failed", file: file, line: line)
+        guard ProposalSynthesizer.runTool("/usr/bin/git", ["clone", "-q", f.origin.path, f.checkout.path], timeout: 30).ok else {
+            throw NSError(domain: "ProposalSynthesizerTests", code: 1, userInfo: [NSLocalizedDescriptionKey: "git clone failed"])
+        }
         try "// local edit".write(to: f.checkout.appendingPathComponent("Grux-Mac/Package.swift"), atomically: true, encoding: .utf8)
         return f
     }
@@ -335,7 +337,10 @@ final class ProposalSynthesizerTests: XCTestCase {
     private func git(_ dir: URL, _ args: [String], file: StaticString = #filePath, line: UInt = #line) throws {
         let ok = ProposalSynthesizer.runTool("/usr/bin/git",
                                              ["-C", dir.path, "-c", "user.email=t@t", "-c", "user.name=t"] + args, timeout: 30).ok
-        XCTAssertTrue(ok, "git \(args.joined(separator: " ")) failed", file: file, line: line)
+        guard ok else {
+            throw NSError(domain: "ProposalSynthesizerTests", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "git \(args.joined(separator: " ")) failed"])
+        }
     }
 
     private func copied(_ f: GitFixture) throws -> (file: String, note: String) {
@@ -348,7 +353,6 @@ final class ProposalSynthesizerTests: XCTestCase {
     /// a local edit does not.
     func testTheCopyIsTheNewestMainNotTheCheckout() throws {
         let f = try gitFixture()
-        defer { try? FileManager.default.removeItem(at: f.base) }
         try "// two".write(to: f.origin.appendingPathComponent("Grux-Mac/Package.swift"), atomically: true, encoding: .utf8)
         try git(f.origin, ["commit", "-q", "--no-gpg-sign", "--no-verify", "-am", "two"])
 
@@ -363,7 +367,6 @@ final class ProposalSynthesizerTests: XCTestCase {
     /// project), the copy falls back to the checkout's own HEAD.
     func testARemoteWithoutTheCodeFallsBackToHead() throws {
         let f = try gitFixture()
-        defer { try? FileManager.default.removeItem(at: f.base) }
         try git(f.origin, ["rm", "-q", "-r", "Grux-Mac"])
         try "x".write(to: f.origin.appendingPathComponent("README"), atomically: true, encoding: .utf8)
         try git(f.origin, ["add", "README"])
@@ -378,7 +381,6 @@ final class ProposalSynthesizerTests: XCTestCase {
     /// A checkout whose fetch fails still yields a copy, and says it is stale.
     func testAFailedFetchIsNamed() throws {
         let f = try gitFixture()
-        defer { try? FileManager.default.removeItem(at: f.base) }
         try git(f.checkout, ["remote", "set-url", "origin", f.base.appendingPathComponent("gone").path])
 
         XCTAssertTrue(ProposalSynthesizer.gitSnapshot(of: f.checkout, into: f.into))

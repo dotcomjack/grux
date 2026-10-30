@@ -406,6 +406,9 @@ enum ProposalSynthesizer {
             let branch = runTool(git, ["-C", checkout.path, "rev-parse", "--abbrev-ref", ref], timeout: 10, capture: true).output
             label = branch.isEmpty ? "the remote's default branch" : branch
         } else {
+            // A first copy that failed part way may have left files only the
+            // remote's tree has; the fallback starts from an empty folder.
+            try? FileManager.default.removeItem(at: into.appendingPathComponent("Grux-Mac"))
             ref = "HEAD"
             guard copy(ref) else { return false }
             label = "the checkout's own HEAD"
