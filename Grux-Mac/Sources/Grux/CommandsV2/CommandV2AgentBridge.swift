@@ -37,7 +37,7 @@ enum CommandV2AgentBridge {
     static func runSingleAgent(
         prompt: String,
         cwd: String,
-        model: String = "claude-sonnet-4-6",
+        model: String = SubscriptionModels.routine,
         ttlSeconds: Int = 1800,
         runId: UUID
     ) async -> AgentResult {
@@ -79,7 +79,7 @@ enum CommandV2AgentBridge {
     static func runSwarm(
         prompts: [String],
         cwd: String,
-        model: String = "claude-sonnet-4-6",
+        model: String = SubscriptionModels.routine,
         ttlSeconds: Int = 1800,
         runId: UUID,
         title: String

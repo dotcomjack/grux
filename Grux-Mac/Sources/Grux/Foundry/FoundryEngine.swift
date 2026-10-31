@@ -345,6 +345,32 @@ final class FoundryEngine: ObservableObject {
                 )
             }
         }
+
+        // A proposal can also sit in .building or .verifying with no handle,
+        // no escalated job and no build in this process: nothing is running for
+        // it and nothing ever will. Measured 2026-10-30: 13 proposals had sat in
+        // .building since 2026-06-12, each card reading "building" for months.
+        let stranded = Self.strandedProposalIDs(
+            ProposalStore.shared.proposals,
+            tracked: Set(handles.keys).union(escalatedJobs.values).union(building)
+        )
+        for id in stranded {
+            if let updated = ProposalStore.shared.transition(id: id, to: .rejected) {
+                FoundryViewBridge.mirror(
+                    action: .rejected,
+                    proposal: updated,
+                    detail: "Build interrupted with no record of where it ran. Re-file to retry."
+                )
+            }
+        }
+    }
+
+    /// The in-flight proposals nothing is tracking: .building or .verifying,
+    /// and absent from every handle, escalated job and live build.
+    nonisolated static func strandedProposalIDs(_ proposals: [UpgradeProposal], tracked: Set<UUID>) -> [UUID] {
+        proposals
+            .filter { ($0.status == .building || $0.status == .verifying) && !tracked.contains($0.id) }
+            .map(\.id)
     }
 
     private func rejectStrandedBuild(proposal: UpgradeProposal, detail: String) async {

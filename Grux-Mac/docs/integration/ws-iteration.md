@@ -31,7 +31,8 @@ Public entry point (call on the MainActor):
 let verdict: QualityVerdict = await CritiqueGate.run(
     html: currentArtifactHTML,                 // the generated artifact text
     brandSlug: project.brandSlug,              // DesignProject.brandSlug (may be nil)
-    designSystemMarkdown: designSystemMarkdown  // loaded from project.designSystemFile
+    designSystemMarkdown: designSystemMarkdown, // loaded from project.designSystemFile
+    route: config.route                         // .subscriptionCLI reviews on the plan
 )
 ```
 
@@ -39,13 +40,11 @@ If studio-core wants a DI seam rather than calling the enum directly, wrap it:
 
 ```swift
 protocol DesignCritiquing {
-    func critique(html: String, brandSlug: String?, designSystemMarkdown: String?) async -> QualityVerdict
+    func critique(html: String, brandSlug: String?, route: ExecutionRoute) async -> String?
 }
-struct LiveDesignCritique: DesignCritiquing {
-    func critique(html: String, brandSlug: String?, designSystemMarkdown: String?) async -> QualityVerdict {
-        await CritiqueGate.run(html: html, brandSlug: brandSlug, designSystemMarkdown: designSystemMarkdown)
-    }
-}
+// The live critic is StudioCritic in DesignStudioIntegration.swift. It calls
+// CritiqueGate.run(html:brandSlug:designSystemMarkdown:route:), which reviews on
+// the API key, or on the Claude plan when the route is .subscriptionCLI.
 ```
 
 Gate publish/export on `.pass` exactly the way `FeatureReviewEngine.implementToMain`

@@ -203,7 +203,7 @@ final class CostMeterTests: XCTestCase {
         XCTAssertLessThan(bigger, 1.0)
     }
 
-    func test_routeComparison_foldsCritiqueCostIntoEveryRoute() {
+    func test_routeComparison_foldsCritiqueCostIntoTheMeteredRoutes() {
         let review = 0.05  // a real API review cost (key present)
         let routes = CostMeter.routeComparison(inputTokens: 8000, maxOutputTokens: 2000,
                                                modelId: "claude-opus-4-8", critiqueUSD: review)
@@ -211,14 +211,14 @@ final class CostMeterTests: XCTestCase {
         // API: generation PLUS review, still exactly one "estimated".
         XCTAssertGreaterThan(api.estimatedUSD ?? 0, review)
         XCTAssertEqual(occurrences(of: "estimated", in: api.label), 1, "api: \(api.label)")
-        // The formerly-"$0 free" routes now surface the real review dollars.
-        XCTAssertEqual(sub.estimatedUSD ?? -1, review, accuracy: 1e-9)
+        // The local route surfaces the real review dollars rather than $0.
         XCTAssertEqual(local.estimatedUSD ?? -1, review, accuracy: 1e-9)
-        XCTAssertTrue(sub.label.contains("review"), "subscription: \(sub.label)")
         XCTAssertTrue(local.label.contains("review"), "local: \(local.label)")
-        // Single-occurrence invariant holds on the review-bearing labels too.
-        XCTAssertEqual(occurrences(of: "estimated", in: sub.label), 1, "subscription: \(sub.label)")
         XCTAssertEqual(occurrences(of: "estimated", in: local.label), 1, "local: \(local.label)")
+        // The subscription route reviews on the plan, so no review dollars.
+        XCTAssertEqual(sub.estimatedUSD ?? -1, 0, accuracy: 1e-9)
+        XCTAssertFalse(sub.label.contains("review"), "subscription: \(sub.label)")
+        XCTAssertEqual(occurrences(of: "estimated", in: sub.label), 0, "subscription: \(sub.label)")
     }
 
     func test_routeComparison_localLabelHonestAboutCustomEndpoint() {

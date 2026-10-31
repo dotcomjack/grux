@@ -76,7 +76,7 @@ private struct StudioDesignSystemProvider: DesignSystemProviding {
 // MARK: - Critique seam (WS-E)
 
 private struct StudioCritic: DesignCritiquing {
-    func critique(html: String, brandSlug: String?) async -> String? {
+    func critique(html: String, brandSlug: String?, route: ExecutionRoute) async -> String? {
         let (systemMarkdown, keyMissing): (String?, Bool) = await MainActor.run {
             let md: String? = {
                 guard let slug = brandSlug, !slug.isEmpty else { return nil }
@@ -85,16 +85,18 @@ private struct StudioCritic: DesignCritiquing {
             return (md, AppState.shared.anthropicKey.isEmpty)
         }
 
-        // The gate needs an API key. Without one it fails closed, so say the
-        // review was skipped rather than going silent (which reads as "passed").
-        if keyMissing {
+        // Off the plan the gate needs an API key. Without one it fails closed, so
+        // say the review was skipped rather than going silent (which reads as
+        // "passed"). On the plan it needs no key at all.
+        if keyMissing && route != .subscriptionCLI {
             return "(critique skipped: no API key)"
         }
 
         let verdict = await CritiqueGate.run(
             html: html,
             brandSlug: brandSlug,
-            designSystemMarkdown: systemMarkdown
+            designSystemMarkdown: systemMarkdown,
+            route: route
         )
         switch verdict.status {
         case .pass:
@@ -145,10 +147,10 @@ private struct StudioRunEstimator: DesignRunEstimating {
             (AppState.shared.config.model, AnthropicKeyPresence.current())
         }
         let modelId = context.modelId ?? defaultModel
-        // The post-generation critique spends real Anthropic API dollars on every
-        // route when a key is present (it is skipped without one), so fold its
-        // estimated cost into the comparison rather than letting the free routes
-        // read $0 while the review is billed.
+        // Off the plan the post-generation critique spends real Anthropic API
+        // dollars when a key is present (it is skipped without one), so fold its
+        // estimated cost into the API and local routes rather than letting them
+        // read $0 while the review is billed. The plan route reviews on the plan.
         let critiqueUSD = CostMeter.critiqueEstimatedUSD(
             generatedOutputTokens: context.maxOutputTokens,
             hasAnthropicKey: hasKey
@@ -185,12 +187,17 @@ private final class StudioAgentDelegate: DesignAgentDelegating {
     // the sink so its events are not silently dropped (the runner holds it weakly).
     private var currentRunner: AgentBridgeRunner?
     private var currentSink: StudioAgentEventSink?
+    // A Stop that lands while the run is still finding the CLI, before any
+    // runner exists to cancel. Checked once the runner is in place.
+    private var stopRequested = false
 
     func cancelActiveRun() async {
+        stopRequested = true
         await currentRunner?.cancel()
     }
 
     func runGeneration(projectId: UUID, brief: String, config: DesignRunConfig) async throws {
+        stopRequested = false
         guard let siteURL = DesignProjectStore.shared.siteRootURL(id: projectId) else {
             throw DesignStudioError.noProject
         }
@@ -238,6 +245,11 @@ private final class StudioAgentDelegate: DesignAgentDelegating {
         let runner = AgentBridgeRunner(adapter: adapter, invocation: invocation, observer: sink)
         currentSink = sink
         currentRunner = runner
+        if stopRequested {
+            currentRunner = nil
+            currentSink = nil
+            throw CancellationError()
+        }
         defer {
             currentRunner = nil
             currentSink = nil

@@ -91,7 +91,7 @@ vars on `DesignStudioEngine`:
 
 ```swift
 DesignStudioEngine.designSystemProvider = MyDesignSystemProvider()   // DesignSystemProviding: activeSystemMarkdown(brandSlug:) -> String?
-DesignStudioEngine.critic              = MyDesignCritic()            // DesignCritiquing: critique(html:brandSlug:) async -> String?
+DesignStudioEngine.critic              = MyDesignCritic()            // DesignCritiquing: critique(html:brandSlug:route:) async -> String?
 DesignStudioEngine.estimator           = MyRunEstimator()           // DesignRunEstimating: estimate(for: DesignEstimateContext) -> DesignRunEstimate?
 DesignStudioEngine.agentDelegate       = MyAgentBridge()            // DesignAgentDelegating: runGeneration(projectId:brief:config:) async throws  (subscriptionCLI route)
 ```

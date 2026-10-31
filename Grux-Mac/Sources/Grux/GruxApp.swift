@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import UserNotifications
 import Combine
+import GruxAgentCore
 
 @main
 struct GruxApp: App {
@@ -348,7 +349,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // ~/Documents: at launch that is what left a wiped Mac with no window
         // at all. Keeping it out of the launch function keeps that rule flat.
         if args.contains("--studio-smoke") {
-            runStudioSmoke()
+            runStudioSmoke(onPlan: args.contains("--route=subscription"))
             return
         }
 
@@ -806,6 +807,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // tokens on the first night of any install.
         if AppState.shared.config.foundryEnabled {
             FoundryEngine.shared.activate()
+        } else {
+            // Off, the loop never starts, but a card left in "building" by an
+            // earlier run still needs clearing, and that repair spends nothing.
+            // Measured 2026-10-30: with self-upgrade off, 13 cards had read
+            // "building" since June because only activate() ran the sweep.
+            Task { @MainActor in await FoundryEngine.shared.reconcileStaleHandles() }
         }
 
         // Backstop the swarm-worker confinement: catch any UNTRACKED file an
@@ -1190,15 +1197,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// The `--studio-smoke` developer path: one real generation, a verdict
-    /// file, then exit. Never reached without the flag.
-    private func runStudioSmoke() {
+    /// file, then exit. Never reached without the flag. With
+    /// `--route=subscription` it runs on the Claude plan instead of the API
+    /// key, review included, and the verdict also needs a real review line:
+    /// that is the only way to check the plan route end to end with no clicks.
+    private func runStudioSmoke(onPlan: Bool = false) {
             WindowFacade.setActivationPolicy(.accessory)
             Bootstrap.ensureConfig()
             Task { @MainActor in
                 AppState.shared.load()
                 let store = DesignProjectStore.shared
                 let project = store.create(title: "Studio Smoke", tags: ["smoke"])
-                let config = DesignRunConfig(route: .api, modelId: "claude-haiku-4-5-20251001")
+                // The plan route needs the agent delegate and the critic, which
+                // launch wires much later than this early exit.
+                if onPlan { DesignStudioIntegration.wireSeams() }
+                let config = onPlan
+                    ? DesignRunConfig(route: .subscriptionCLI, modelId: SubscriptionModels.routine)
+                    : DesignRunConfig(route: .api, modelId: "claude-haiku-4-5-20251001")
                 await DesignStudioEngine.shared.generate(
                     projectId: project.id,
                     brief: "A single dark page with one centered hero headline reading GRUX STUDIO LIVE in bold white type on a near black background, one violet accent underline below it, nothing else.",
@@ -1209,8 +1224,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let indexHTML = store.siteIndexURL(id: project.id)
                     .flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
                 let heroFound = indexHTML.contains("GRUX STUDIO LIVE")
-                let verdict = (err == nil && !files.isEmpty && heroFound) ? "PASS" : "FAIL"
-                let out = "studio-smoke VERDICT: \(verdict)\nproject: \(project.slug)\nfiles: \(files.joined(separator: ", "))\nheroFound: \(heroFound)\nerror: \(err ?? "none")\n"
+                let critique = store.transcript(id: project.id).last { $0.text.hasPrefix("Critique:") }?.text
+                let reviewed = !onPlan || critique != nil
+                let verdict = (err == nil && !files.isEmpty && heroFound && reviewed) ? "PASS" : "FAIL"
+                let out = "studio-smoke VERDICT: \(verdict)\nroute: \(config.route.rawValue)\nproject: \(project.slug)\nfiles: \(files.joined(separator: ", "))\nheroFound: \(heroFound)\ncritique: \(critique ?? "none")\nerror: \(err ?? "none")\n"
                 let dir = Persistence.gruxDir
                 try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
                 try? out.write(to: dir.appendingPathComponent("studio-smoke-result.txt"), atomically: true, encoding: .utf8)
