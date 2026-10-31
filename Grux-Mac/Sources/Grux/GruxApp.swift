@@ -210,6 +210,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
+        #if DEBUG
+        // Hidden dev mode, debug builds only: `--trained-tools-contract <dir>`
+        // writes the Grux Local training contract, its table and two real
+        // request bodies (TrainedTools) from this build's own tools, and
+        // `--trained-tools-check` exits 1 naming any trained tool whose
+        // definition changed. Exit 2 is a usage or write failure. Run it
+        // under a clean HOME: the samples carry this install's state.
+        if let flag = CommandLine.arguments.firstIndex(where: { $0.hasPrefix("--trained-tools-") }) {
+            let args = CommandLine.arguments
+            let tools = ChatService.allTools()
+            func fail(_ why: String) -> Never {
+                FileHandle.standardError.write(Data("\(args[flag]): \(why)\n".utf8))
+                exit(2)
+            }
+            switch args[flag] {
+            case "--trained-tools-contract":
+                guard flag + 1 < args.count else { fail("needs a directory") }
+                let dir = URL(fileURLWithPath: args[flag + 1], isDirectory: true)
+                do {
+                    try TrainedTools.contractData(tools).write(to: dir.appendingPathComponent("trained-tools-v3.json"))
+                    try Data(TrainedTools.tableSource(tools).utf8).write(to: dir.appendingPathComponent("TrainedToolsV3.swift"))
+                    let samples = try JSONSerialization.data(withJSONObject: TrainedTools.samples(),
+                                                             options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+                    try samples.write(to: dir.appendingPathComponent("trained-tools-v3-samples.json"))
+                } catch { fail(error.localizedDescription) }
+                exit(0)
+            case "--trained-tools-check":
+                let drifted = TrainedTools.drifted(tools)
+                FileHandle.standardError.write(Data("drifted: \(drifted.joined(separator: ", "))\n".utf8))
+                exit(drifted.isEmpty ? 0 : 1)
+            default:
+                fail("unknown flag")
+            }
+        }
+        #endif
         // A write into a pipe whose reader died (crashed MCP server, exited
         // shell child) raises SIGPIPE, which by default terminates the whole
         // app. Ignore it process-wide so those writes surface as catchable

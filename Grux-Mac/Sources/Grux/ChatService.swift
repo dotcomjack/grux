@@ -515,8 +515,8 @@ final class ChatService {
                     systemBlocks: systemBlocks,
                     messages: messages,
                     tools: tools,
-                    maxTokens: 2000,
-                    temperature: presetApp?.temperatureOverride ?? 0.5,
+                    maxTokens: Self.chatMaxTokens,
+                    temperature: presetApp?.temperatureOverride ?? Self.chatTemperature,
                     spanName: "chat.reply",
                     feature: "chat"
                 )
@@ -741,6 +741,11 @@ final class ChatService {
         }
     }
 
+    /// What a chat reply asks for, every route (the Grux Local contract
+    /// records both, TrainedTools.contract).
+    static let chatMaxTokens = 2000
+    static let chatTemperature = 0.5
+
     // Everything a chat turn will put on the wire, resolved once on the
     // MainActor before the streaming task. The first six fields are the cost
     // surface (what the CostMeter and the count_tokens estimator read); the
@@ -840,6 +845,10 @@ final class ChatService {
         }
         let routing = ModelRegistry.shared.resolvedRouting(
             provider: presetApp?.providerOverride, modelOverride: presetApp?.modelIdOverride)
+        // A Grux Local v3 turn sends the tools it was trained on as their
+        // one-line signatures (TrainedTools), after ranking and fitting, which
+        // read the full descriptions.
+        if lean { tools = TrainedTools.forModel(routing.modelId, tools) }
         return PendingTurnContext(
             systemBlocks: systemBlocks,
             messages: messages,
@@ -914,7 +923,11 @@ final class ChatService {
         // text from the cached blocks exactly this way.
         let system = systemBlocks.filter { $0["cache_control"] != nil }.compactMap { $0["text"] as? String }
             .filter { !$0.isEmpty }.joined(separator: "\n\n")
-        return (system, stable)
+        // The tools as the turn sends them, signatures included, or the warm
+        // prefix and the turn differ inside the first tool.
+        let model = ModelRegistry.shared.resolvedRouting(
+            provider: presetApp?.providerOverride, modelOverride: presetApp?.modelIdOverride).modelId
+        return (system, TrainedTools.forModel(model, stable))
     }
 
     /// Reads a local turn's stable prefix into Ollama's cache before anybody

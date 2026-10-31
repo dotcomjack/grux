@@ -107,7 +107,7 @@ final class CookbookDefaultTests: XCTestCase {
             Cookbook.defaultModelID(for: studioSixtyFourGB,
                                     userHasChosen: false,
                                     current: GruxConfig.defaultLocalModel),
-            "gruxai.com/grux/grux-local:4b",
+            "gruxai.com/grux/grux-local:9b",
             "a 48 GB budget was handed a weaker model than the best that fits it")
     }
 

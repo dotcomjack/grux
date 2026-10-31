@@ -100,7 +100,7 @@ enum Cookbook {
     // models" found it. That is the argument for the button in one sentence.
     static let s1 = "S1 2026-10-22"
 
-    // GRUX LOCAL (2026-10-23), Grux's own trained model, the two tags gruxai.com
+    // GRUX LOCAL (2026-10-23), Grux's own trained model, the three tags gruxai.com
     // serves to `ollama pull` with no Ollama account (card and files:
     // github.com/dotcomjack/grux-local). Its quality is the S2 sweep's score on
     // the same S1 jobs and weights, on a GPU with `"think": false`; its footprints
@@ -204,6 +204,20 @@ enum Cookbook {
             strengths: Cookbook.gruxLocalStrengths,
             supportsTools: true,
             measuredQuality: 0.975, qualitySource: Cookbook.s2,
+            minimumOllama: "0.19.0"),
+        CookbookModel(
+            id: "gruxai.com/grux/grux-local:9b", displayName: "Grux Local", parameterLabel: "9B",
+            // Grux 3.2: the 9B, made for 24 GB Macs and up, so the 32 GB class
+            // and up lead with it. Disk is the gruxai.com manifest's layers
+            // (7,152,645,636 bytes, digest 357e4bd4 as grux-local results/v1.json
+            // names it), memory v1.json's measured fresh load (7.25 GB at num_ctx
+            // 16384 on the 16 GB test Mac), quality the S2 score of this model's own run
+            // (m3-9b, 2026-10-23, S1 jobs and weights, GPU, think false: 270 of
+            // 273, weighted 0.988), and `requires` 0.19.0 from its registry config.
+            diskGB: 7.2, estimatedMemoryGB: 7.25, contextTokens: 262_144,
+            strengths: Cookbook.gruxLocalStrengths,
+            supportsTools: true,
+            measuredQuality: 0.988, qualitySource: Cookbook.s2,
             minimumOllama: "0.19.0"),
         CookbookModel(
             id: "qwen3.5:9b", displayName: "Qwen 3.5", parameterLabel: "9B",

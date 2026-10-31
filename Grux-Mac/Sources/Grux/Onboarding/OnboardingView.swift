@@ -291,7 +291,13 @@ struct ModelKeyStep: View {
             // than a variation on it.
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
-                    Button("Use a local model instead") { useLocalModel() }
+                    // NAMES GRUX LOCAL before anything downloads: the button
+                    // says which model and how big, and only this press fetches
+                    // it (ModelGate.localButton).
+                    Button(ModelGate.localButton(recommendedLocal,
+                                                 installed: recommendedLocal.map { ollama.isInstalled($0.id) } ?? false)) {
+                        useLocalModel(fetchRecommended: true)
+                    }
                         .buttonStyle(.plain)
                         .font(GruxTheme.Font.caption)
                         .foregroundStyle(GruxTheme.accentPrimaryLight)
@@ -311,6 +317,12 @@ struct ModelKeyStep: View {
                     .font(GruxTheme.Font.caption)
                     .foregroundStyle(GruxTheme.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
+                if let recommendedLocal {
+                    Text(ModelGate.gruxLocalLine(recommendedLocal))
+                        .font(GruxTheme.Font.caption)
+                        .foregroundStyle(GruxTheme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 Link(ModelGate.ollamaLink, destination: ModelGate.ollamaURL)
                     .font(GruxTheme.Font.caption)
                     .gruxLink()
@@ -476,6 +488,12 @@ struct ModelKeyStep: View {
         }
     }
 
+    /// The Grux Local this Mac's headline is, or nil when the headline is not
+    /// one (a Mac too small or an Ollama too old for any of them).
+    private var recommendedLocal: CookbookModel? {
+        ModelGate.recommendedLocal(Cookbook.headline(for: HardwareProfile.detect()))
+    }
+
     /// What the spinner is actually doing right now.
     private var pullLabel: String {
         guard let pulling else { return "Looking for a local model" }
@@ -510,7 +528,10 @@ struct ModelKeyStep: View {
     /// turn, because reachability is not model availability. Closing it needs
     /// discovery to report the tag count as a first-class outcome, which is a
     /// larger change than this one and is not made here.
-    private func useLocalModel() {
+    /// `fetchRecommended` is the Grux Local button: it fetches that model when
+    /// it is not here yet, even beside another model, and points chat at it.
+    /// The pinned "use the model on this Mac" passes false.
+    private func useLocalModel(fetchRecommended: Bool = false) {
         localError = nil
         probingLocal = true
         Task {
@@ -555,10 +576,13 @@ struct ModelKeyStep: View {
             _ = await OllamaManager.shared.isHealthy()
             // What the speed check settled on, when this run downloaded a model.
             var settledPick: CookbookModel?
+            // The Grux Local the person pressed for, read after the version above.
+            let wanted = fetchRecommended ? recommendedLocal : nil
             // USABLE, not merely present. A server holding only the superseded
             // model has nothing Grux can drive, so it takes the fetch path.
-            if GruxConfig.usableLocalModels(OllamaManager.shared.installedTags).isEmpty {
-                guard let pick = Cookbook.headline(for: HardwareProfile.detect()) else {
+            if GruxConfig.usableLocalModels(OllamaManager.shared.installedTags).isEmpty
+                || wanted.map({ !OllamaManager.shared.isInstalled($0.id) }) ?? false {
+                guard let pick = wanted ?? Cookbook.headline(for: HardwareProfile.detect()) else {
                     localError = "There is a local server at \(localHost) but no model on it, "
                         + "and this Mac does not have the memory for any of the ones Grux "
                         + "knows how to fetch. Paste a key instead."
@@ -584,7 +608,8 @@ struct ModelKeyStep: View {
                 let ended = await OllamaManager.shared.pullToEnd(pick.id)
                 pulling = nil
                 await OllamaManager.shared.refreshInstalled()
-                guard !GruxConfig.usableLocalModels(OllamaManager.shared.installedTags).isEmpty else {
+                guard wanted.map({ OllamaManager.shared.isInstalled($0.id) })
+                        ?? !GruxConfig.usableLocalModels(OllamaManager.shared.installedTags).isEmpty else {
                     localError = ConnectModelCopy.downloadFailed(pick, ended)
                     return
                 }
@@ -606,7 +631,13 @@ struct ModelKeyStep: View {
             // Both fields, because they are one idea to a reader and two to the
             // code: chat reads `offlineLLMModel` through the registry, and the
             // background local path reads `localLLMModel`.
-            if let adopt = GruxConfig.installedModelToAdopt(
+            // The model the person pressed for (or the faster one the speed
+            // check kept instead), when it is here, over whatever else is.
+            if let chosen = wanted.map({ settledPick ?? $0 }), OllamaManager.shared.isInstalled(chosen.id) {
+                AppState.shared.config.offlineLLMModel = chosen.id
+                AppState.shared.config.localLLMModel = chosen.id
+                AppState.shared.saveConfig()
+            } else if let adopt = GruxConfig.installedModelToAdopt(
                 configured: AppState.shared.config.offlineLLMModel,
                 installed: OllamaManager.shared.installedTags,
                 headline: settledPick?.id ?? Cookbook.headline(for: HardwareProfile.detect())?.id) {

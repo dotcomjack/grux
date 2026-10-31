@@ -35,20 +35,23 @@ final class CookbookMeasuredQualityTests: XCTestCase {
     /// served by gruxai.com to `ollama pull`.
     private let gruxLocal4B = "gruxai.com/grux/grux-local:4b"
     private let gruxLocal2B = "gruxai.com/grux/grux-local:2b"
+    private let gruxLocal9B = "gruxai.com/grux/grux-local:9b"
 
     /// The GPU figures are the ones the other Cookbook suites use (about 75
     /// percent of RAM), plus the 11.84 GB one real 16 GB Mac reads from Metal.
     /// Since Grux Local joined the catalog it is the headline on every tier: the
-    /// 4B scored 0.975 on Grux's jobs, above every larger model, and the 2B
-    /// (0.939) is the best that rates Great on an 8 GB budget.
+    /// 9B (0.988, Grux 3.2) where it rates Great, from 24 GB; the 4B (0.975)
+    /// on 16 GB, where the 9B is only Good; and the 2B (0.939), the best that
+    /// rates Great on an 8 GB budget.
     func test_theHeadlinePerMemoryTier_isTheBestMeasuredModelThatFits() {
         let expected: [(HardwareProfile, String, String)] = [
             (mac(ramGB: 8, gpuGB: 5.5), gruxLocal2B, "8 GB"),
             (mac(ramGB: 16, gpuGB: 11), gruxLocal4B, "16 GB"),
             (mac(ramGB: 16, gpuGB: 11.84), gruxLocal4B, "16 GB at a measured 11.84 GB Metal budget"),
-            (mac(ramGB: 32, gpuGB: 24), gruxLocal4B, "32 GB"),
-            (mac(ramGB: 64, gpuGB: 48), gruxLocal4B, "64 GB"),
-            (mac(ramGB: 128, gpuGB: 96), gruxLocal4B, "128 GB"),
+            (mac(ramGB: 24, gpuGB: 16), gruxLocal9B, "24 GB"),
+            (mac(ramGB: 32, gpuGB: 24), gruxLocal9B, "32 GB"),
+            (mac(ramGB: 64, gpuGB: 48), gruxLocal9B, "64 GB"),
+            (mac(ramGB: 128, gpuGB: 96), gruxLocal9B, "128 GB"),
         ]
         for (machine, id, tier) in expected {
             XCTAssertEqual(Cookbook.headline(for: machine)?.id, id, "the \(tier) headline")
@@ -140,7 +143,7 @@ final class CookbookMeasuredQualityTests: XCTestCase {
             "gemma4:26b": 0.945, "qwen3-coder:30b": 0.829, "qwen3.5:35b": 0.840,
             "llama3.3:70b": 0.668, "gpt-oss:120b": 0.856,
         ]
-        let s2: [String: Double] = [gruxLocal4B: 0.975, gruxLocal2B: 0.939]
+        let s2: [String: Double] = [gruxLocal4B: 0.975, gruxLocal2B: 0.939, gruxLocal9B: 0.988]
         XCTAssertEqual(Set(Cookbook.catalog.map(\.id)), Set(s1.keys).union(s2.keys))
         for m in Cookbook.catalog where s1[m.id] != nil {
             XCTAssertEqual(m.measuredQuality, s1[m.id], "\(m.id)")
@@ -166,6 +169,11 @@ final class CookbookMeasuredQualityTests: XCTestCase {
         XCTAssertTrue(big.supportsTools && small.supportsTools)
         let pitch = "Trained on Grux's own jobs, and to ignore instructions hidden in pasted text"
         XCTAssertEqual([big.strengths, small.strengths], [pitch, pitch])
+        let nine = entry(gruxLocal9B)
+        XCTAssertEqual([nine.displayName, nine.parameterLabel, nine.strengths], ["Grux Local", "9B", pitch])
+        XCTAssertEqual([nine.diskGB, nine.estimatedMemoryGB], [7.2, 7.25])
+        XCTAssertEqual(nine.contextTokens, 262_144)
+        XCTAssertTrue(nine.supportsTools)
     }
 
     /// Read from Ollama at a 16K window, one request at a time.

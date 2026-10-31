@@ -518,7 +518,7 @@ actor OpenAICompatBackend: ModelBackend {
     }
 
     // ClaudeTool -> OpenAI {type:"function", function:{name, description, parameters}}.
-    private func openAITools(_ tools: [ClaudeTool]) -> [[String: Any]] {
+    static func openAITools(_ tools: [ClaudeTool]) -> [[String: Any]] {
         tools.map { t in
             [
                 "type": "function",
@@ -529,6 +529,23 @@ actor OpenAICompatBackend: ModelBackend {
                 ]
             ]
         }
+    }
+
+    /// The OpenAI body a streamed chat turn sends, before Ollama's shape
+    /// (`ollamaChatBody`). One builder, so the Grux Local training samples
+    /// (TrainedTools.samples) are this turn's own bytes.
+    static func streamedChatBody(model: String, maxTokens: Int, temperature: Double,
+                                 messages: [[String: Any]], tools: [ClaudeTool]) -> [String: Any] {
+        var body: [String: Any] = [
+            "model": model,
+            "max_tokens": maxTokens,
+            "temperature": temperature,
+            "messages": messages,
+            "stream": true,
+            "stream_options": ["include_usage": true]
+        ]
+        if !tools.isEmpty { body["tools"] = openAITools(tools) }
+        return body
     }
 
     // MARK: - complete (non-stream, plain text)
@@ -818,17 +835,8 @@ actor OpenAICompatBackend: ModelBackend {
                         if let sys = systemMessageFromBlocks(systemBlocks) { oaMessages.append(sys) }
                         oaMessages.append(contentsOf: Self.openAIChatMessages(messages))
                     }
-                    var body: [String: Any] = [
-                        "model": model,
-                        "max_tokens": maxTokens,
-                        "temperature": temperature,
-                        "messages": oaMessages,
-                        "stream": true,
-                        "stream_options": ["include_usage": true]
-                    ]
-                    if !tools.isEmpty {
-                        body["tools"] = openAITools(tools)
-                    }
+                    let body = Self.streamedChatBody(model: model, maxTokens: maxTokens, temperature: temperature,
+                                                     messages: oaMessages, tools: tools)
                     let (req, native) = try await request(for: body, stream: true, surface: "chat", apiKey: apiKey)
 
                     // ONE AT A TIME. There is one GPU, and six concurrent
@@ -1005,7 +1013,7 @@ actor OpenAICompatBackend: ModelBackend {
             "temperature": temperature,
             "messages": oaMessages
         ]
-        if !tools.isEmpty { body["tools"] = openAITools(tools) }
+        if !tools.isEmpty { body["tools"] = Self.openAITools(tools) }
         let (req, native) = try await request(for: body, stream: false, surface: "chat", apiKey: apiKey)
 
         let (reply, resp) = try await session.data(for: req)

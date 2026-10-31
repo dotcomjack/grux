@@ -41,6 +41,7 @@ final class CookbookOllamaVersionTests: XCTestCase {
             "qwen3-vl:4b": "0.30.0",
             "qwen3.5:4b": "0.30.0",
             "gruxai.com/grux/grux-local:4b": "0.19.0",
+            "gruxai.com/grux/grux-local:9b": "0.19.0",
             "qwen3.5:9b": "0.30.0",
             "gemma4:12b": "0.30.9",
             "mistral-small3.2:24b": nil,
