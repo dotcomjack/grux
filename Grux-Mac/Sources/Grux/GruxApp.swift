@@ -206,6 +206,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
+        // Hidden dev mode: `--trained-tools-contract <dir>` writes the Grux
+        // Local training contract and its table (TrainedTools) from this
+        // build's own tools, and `--trained-tools-check` exits 1 naming any
+        // trained tool whose definition changed. Before anything else starts.
+        if let flag = CommandLine.arguments.firstIndex(where: { $0.hasPrefix("--trained-tools-") }) {
+            let args = CommandLine.arguments
+            let tools = ChatService.allTools()
+            if args[flag] == "--trained-tools-contract", flag + 1 < args.count {
+                let dir = URL(fileURLWithPath: args[flag + 1], isDirectory: true)
+                try? TrainedTools.contractData(tools).write(to: dir.appendingPathComponent("trained-tools-v3.json"))
+                try? Data(TrainedTools.tableSource(tools).utf8).write(to: dir.appendingPathComponent("TrainedToolsV3.swift"))
+                exit(0)
+            }
+            let drifted = TrainedTools.drifted(tools)
+            FileHandle.standardError.write(Data("drifted: \(drifted.joined(separator: ", "))\n".utf8))
+            exit(drifted.isEmpty ? 0 : 1)
+        }
         // A write into a pipe whose reader died (crashed MCP server, exited
         // shell child) raises SIGPIPE, which by default terminates the whole
         // app. Ignore it process-wide so those writes surface as catchable

@@ -226,7 +226,7 @@ final class OnboardingLocalPathTests: XCTestCase {
     /// Settings.
     func testTheGateOffersTheLocalPathOnScreen() throws {
         let src = try onboardingViewSource()
-        XCTAssertTrue(src.contains("Use a local model instead"),
+        XCTAssertTrue(src.contains("Button(ModelGate.localButton(") && ModelGate.localButton(nil) == "Use a local model instead",
                       "the gate no longer offers the local path where a first-run user can see it")
     }
 

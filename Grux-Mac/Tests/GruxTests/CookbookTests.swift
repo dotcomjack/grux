@@ -148,12 +148,16 @@ final class CookbookTests: XCTestCase {
         XCTAssertNotEqual(Cookbook.fit(of: m, in: p), .tooBig)
     }
 
+    /// The headline on a big machine is the largest Grux Local (Grux 3.2), and
+    /// the list under it still reaches for the machine's real capacity.
     func test_headline_bigMachine_reachesForRealCapacity() {
         // Mac Studio class: 96 GB GPU budget.
         let p = makeProfile(ramGB: 128, gpuGB: 96)
         let m = try! XCTUnwrap(Cookbook.headline(for: p))
-        XCTAssertGreaterThan(m.estimatedMemoryGB, 20,
-            "a 96 GB budget was offered \(m.id) at \(m.estimatedMemoryGB) GB, which wastes the machine")
+        XCTAssertEqual(m.id, "gruxai.com/grux/grux-local:9b")
+        let best = try! XCTUnwrap(Cookbook.recommended(for: p).first)
+        XCTAssertGreaterThan(best.estimatedMemoryGB, 20,
+            "a 96 GB budget was offered \(best.id) at \(best.estimatedMemoryGB) GB, which wastes the machine")
         XCTAssertNotEqual(Cookbook.fit(of: m, in: p), .tooBig)
     }
 

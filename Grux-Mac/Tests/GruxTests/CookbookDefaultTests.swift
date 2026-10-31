@@ -205,7 +205,7 @@ final class CookbookDefaultTests: XCTestCase {
                        + "that should be celebrated here")
 
         let pick = try! XCTUnwrap(Cookbook.headline(for: airEightGB))
-        XCTAssertEqual(pick.id, "llama3.2:3b")
+        XCTAssertEqual(pick.id, "gruxai.com/grux/grux-local:2b", "the 8 GB tier's headline is Grux Local 2B")
         XCTAssertEqual(Cookbook.fit(of: pick, in: airEightGB), .good)
         XCTAssertLessThanOrEqual(pick.estimatedMemoryGB, airEightGB.modelBudgetGB,
                                  "\(pick.id) needs \(pick.estimatedMemoryGB) GB")
@@ -223,8 +223,10 @@ final class CookbookDefaultTests: XCTestCase {
         let tied = Cookbook.catalog.filter { $0.estimatedMemoryGB == 6.0 }.map(\.id).sorted()
         XCTAssertEqual(tied.count, 2, "the tie this test is about is gone: \(tied)")
 
+        // The score order, which decides the headline whenever no Grux Local
+        // fits at Good or better.
         let picks = (0..<25).map { _ in
-            Cookbook.headline(for: laptopSixteenGB)?.id
+            Cookbook.recommended(for: laptopSixteenGB).first?.id
         }
         XCTAssertEqual(Set(picks.compactMap { $0 }).count, 1, "the headline moved between calls")
         XCTAssertEqual(picks.first ?? nil, tied.first)
@@ -397,7 +399,7 @@ final class CookbookDefaultTests: XCTestCase {
         let stored = Cookbook.defaultModelID(for: laptopSixteenGB,
                                              userHasChosen: false,
                                              current: GruxConfig.defaultLocalModel)
-        XCTAssertEqual(stored, "qwen3-vl:4b")
+        XCTAssertEqual(stored, "gruxai.com/grux/grux-local:4b")
 
         var shown: [String] = []
         for headroom in MachineLoad.Headroom.allCases {
@@ -416,7 +418,7 @@ final class CookbookDefaultTests: XCTestCase {
 
         // THE DIVERGENCE IS THE FEATURE, not something to reconcile later. On a
         // 16 GB laptop at its limit the pane names llama3.2:3b while config.json
-        // still holds qwen3-vl:4b, and the config file is right to hold its
+        // still holds Grux Local 4B, and the config file is right to hold its
         // ground. Asserted out loud so a later change that "helpfully" re-syncs
         // the two has to delete this line rather than slip past a green suite.
         let underLoad = try! XCTUnwrap(
@@ -997,5 +999,57 @@ final class CookbookDefaultTests: XCTestCase {
                                as: UTF8.self)
         XCTAssertTrue(reencoded.contains("\"isAppleSilicon\""),
                       "re-encoded profile still omits the key")
+    }
+}
+
+/// Grux 3.2: the headline is the Grux Local made for this Mac's memory, and it
+/// steps down a size, then to the score order, as the machine gets busier.
+final class GruxLocalHeadlineTests: XCTestCase {
+    private func mac(ramGB: Double, gpuGB: Double) -> HardwareProfile {
+        HardwareProfile(chipName: "Apple M4", physicalMemoryBytes: UInt64(ramGB * 1_073_741_824),
+                        gpuWorkingSetBytes: UInt64(gpuGB * 1_073_741_824), cpuCoreCount: 10,
+                        hasUnifiedMemory: true, isAppleSilicon: true)
+    }
+
+    func test_eachTierLeadsWithItsGruxLocal() {
+        let cases: [(Double, Double, String)] = [
+            (8, 5.5, "gruxai.com/grux/grux-local:2b"), (16, 11, "gruxai.com/grux/grux-local:4b"),
+            (24, 16, "gruxai.com/grux/grux-local:9b"), (32, 21, "gruxai.com/grux/grux-local:9b"),
+            (64, 48, "gruxai.com/grux/grux-local:9b"), (128, 96, "gruxai.com/grux/grux-local:9b"),
+        ]
+        for (ram, gpu, id) in cases {
+            let m = mac(ramGB: ram, gpuGB: gpu)
+            XCTAssertEqual(Cookbook.headline(for: m)?.id, id, "\(Int(ram)) GB")
+            XCTAssertEqual(Cookbook.listing(for: m, headroom: .full).headline?.id, id, "\(Int(ram)) GB pane")
+            XCTAssertEqual(Cookbook.defaultModelID(for: m, userHasChosen: false, current: GruxConfig.defaultLocalModel),
+                           id, "\(Int(ram)) GB default")
+        }
+    }
+
+    func test_aBusyMacStepsDownThenFallsBack() {
+        let m = mac(ramGB: 16, gpuGB: 11)
+        XCTAssertEqual(Cookbook.headline(for: m, headroom: .reduced)?.id, "gruxai.com/grux/grux-local:2b")
+        XCTAssertEqual(Cookbook.headline(for: m, headroom: .minimal)?.id, "llama3.2:3b")
+    }
+
+    func test_theCardsQuoteOnlyScopedPublishedNumbers() {
+        for m in Cookbook.gruxLocal {
+            XCTAssertTrue(m.id.hasPrefix("gruxai.com/grux/grux-local:"), m.id)
+            XCTAssertTrue(m.strengths.contains("of 464 held-out Grux tasks"), m.id)
+            XCTAssertTrue(m.strengths.contains("(Mac mini, Apple M4, 16 GB, 2026-10-23)"), m.id)
+            XCTAssertFalse(m.strengths.contains("\u{2014}") || m.strengths.contains("\u{2013}"), m.id)
+            XCTAssertEqual(EndpointValidator.toolUseHint(forModel: m.id), nil, m.id)
+        }
+        XCTAssertEqual(Cookbook.gruxLocal.map(\.parameterLabel), ["2B", "4B", "9B"])
+    }
+
+    @MainActor
+    func test_firstRunNamesGruxLocalAndItsDownloadBeforeThePress() {
+        let pick = Cookbook.gruxLocal[1]
+        XCTAssertEqual(ModelGate.recommendedLocal(pick), pick)
+        XCTAssertNil(ModelGate.recommendedLocal(Cookbook.catalog.first { $0.id == "llama3.2:3b" }))
+        XCTAssertEqual(ModelGate.localButton(pick), "Use Grux Local 4B, recommended for this Mac (4.3 GB download)")
+        XCTAssertEqual(ModelGate.localButton(pick, installed: true), "Use Grux Local 4B, recommended for this Mac")
+        XCTAssertTrue(ModelGate.gruxLocalLine(pick).contains("Nothing downloads until you press the button"))
     }
 }

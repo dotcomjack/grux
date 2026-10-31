@@ -793,6 +793,10 @@ final class ChatService {
         }
         let routing = ModelRegistry.shared.resolvedRouting(
             provider: presetApp?.providerOverride, modelOverride: presetApp?.modelIdOverride)
+        // A Grux Local v3 turn sends the tools it was trained on as their
+        // one-line signatures (TrainedTools), after ranking and fitting, which
+        // read the full descriptions.
+        if lean { tools = TrainedTools.forModel(routing.modelId, tools) }
         return PendingTurnContext(
             systemBlocks: systemBlocks,
             messages: messages,
@@ -863,7 +867,11 @@ final class ChatService {
         // text from the cached blocks exactly this way.
         let system = systemBlocks.filter { $0["cache_control"] != nil }.compactMap { $0["text"] as? String }
             .filter { !$0.isEmpty }.joined(separator: "\n\n")
-        return (system, stable)
+        // The tools as the turn sends them, signatures included, or the warm
+        // prefix and the turn differ inside the first tool.
+        let model = ModelRegistry.shared.resolvedRouting(
+            provider: presetApp?.providerOverride, modelOverride: presetApp?.modelIdOverride).modelId
+        return (system, TrainedTools.forModel(model, stable))
     }
 
     /// Reads a local turn's stable prefix into Ollama's cache before anybody

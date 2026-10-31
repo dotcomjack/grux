@@ -242,7 +242,8 @@ final class FirstRunQuestionPathTests: XCTestCase {
         // written and never placed in the body is not a path.
         let drawn = try body(of: "var body: some View {", in: gate, member: true)
         XCTAssertTrue(drawn.contains("SecureField(\"sk-ant-...\""), "no Anthropic key field")
-        XCTAssertTrue(drawn.contains("Button(\"Use a local model instead\")"), "no local model path")
+        XCTAssertTrue(drawn.contains("Button(ModelGate.localButton("), "no local model path")
+        XCTAssertEqual(ModelGate.localButton(nil), "Use a local model instead")
         XCTAssertTrue(drawn.contains("openRouterPath"), "the OpenRouter path is defined and never drawn")
         XCTAssertTrue(gate.contains("Button(ModelPaths.openRouterButton)"), "no OpenRouter button")
         XCTAssertTrue(drawn.contains("Button(\"Keep the key I have\")"), "a re-run loses the way to keep its key")

@@ -64,7 +64,7 @@ enum Cookbook {
     // shipped qwen3.6 and no mistral-small3.2, because the library page is ordered
     // by popularity and qwen3.8 sits past the fortieth entry. "Check for newer
     // models" found it. That is the argument for the button in one sentence.
-    static let catalog: [CookbookModel] = [
+    static let catalog: [CookbookModel] = gruxLocal + [
         // THE MODEL THE APP ALREADY SHIPPED AS ITS DEFAULT, and the reason this
         // entry exists at all. `GruxConfig.defaultLocalModel` has read
         // "llama3.2:3b" since qwen3:8b was measured returning empty content, and
@@ -177,6 +177,71 @@ enum Cookbook {
             strengths: "Frontier class locally, 96 GB and up only",
             supportsTools: true),
     ]
+
+    // GRUX LOCAL, the models trained for Grux, one per memory tier, and the
+    // headline pick on the tier they were made for (`headline`).
+    //
+    // PROVENANCE, every figure from the published model or its measured
+    // results, never from memory:
+    //   id               v1.json in dotcomjack/grux-local, `tags.<size>.name`
+    //   diskGB           the sum of the layer sizes in the gruxai.com manifest,
+    //                    read 2026-10-31 (2,622,018,289, 4,346,858,395 and
+    //                    7,152,645,636 bytes), whose digests are v1.json's
+    //                    manifest_digest; `ollama list` prints the same 2.6,
+    //                    4.3 and 7.2 GB
+    //   contextTokens    `ollama show grux-local:2b`, "context length 262144",
+    //                    Ollama 0.40.8 on a Mac mini (Apple M4, 16 GB)
+    //   supportsTools    the same `ollama show`, "tools" under Capabilities
+    //   strengths        v1.json's grux_local block for that tag: held-out
+    //                    passes of 464 and chat p95, each with its machine
+    //                    and date, in the form results/check.py accepts
+    //   estimatedMemoryGB the table's own 1.5x disk rule, as above. v1.json's
+    //                    loaded_gb (2.65, 4.44 and 7.25 GB fresh at num_ctx
+    //                    16384) is lower, and Ollama reported far more after a
+    //                    full held-out run (11.37 GB for the 2B), so the rule
+    //                    stands rather than either single reading.
+    static let gruxLocal: [CookbookModel] = [
+        CookbookModel(
+            id: "gruxai.com/grux/grux-local:2b", displayName: "Grux Local", parameterLabel: "2B",
+            diskGB: 2.6, estimatedMemoryGB: 3.9, contextTokens: 262_144,
+            strengths: "Trained for Grux, made for 8 GB Macs: 435 of 464 held-out Grux tasks, "
+                + "95% of chat replies within 1.6 s (Mac mini, Apple M4, 16 GB, 2026-10-23)",
+            supportsTools: true),
+        CookbookModel(
+            id: "gruxai.com/grux/grux-local:4b", displayName: "Grux Local", parameterLabel: "4B",
+            diskGB: 4.3, estimatedMemoryGB: 6.5, contextTokens: 262_144,
+            strengths: "Trained for Grux, made for 16 GB Macs and up: 454 of 464 held-out Grux tasks, "
+                + "95% of chat replies within 3.4 s (Mac mini, Apple M4, 16 GB, 2026-10-23)",
+            supportsTools: true),
+        CookbookModel(
+            id: "gruxai.com/grux/grux-local:9b", displayName: "Grux Local", parameterLabel: "9B",
+            diskGB: 7.2, estimatedMemoryGB: 10.8, contextTokens: 262_144,
+            strengths: "Trained for Grux, made for 24 GB Macs and up: 458 of 464 held-out Grux tasks, "
+                + "95% of chat replies within 3.8 s (Mac mini, Apple M4, 16 GB, 2026-10-23)",
+            supportsTools: true),
+    ]
+
+    /// The Grux Local for a memory tier: 2B on 8 GB, 4B on 16 GB, 9B from the
+    /// 32 GB class up (which starts at 24 GB, MemoryTier).
+    static func gruxLocal(for tier: MemoryTier) -> CookbookModel {
+        switch tier {
+        case .ram8: return gruxLocal[0]
+        case .ram16: return gruxLocal[1]
+        case .ram32, .ram64, .ram128: return gruxLocal[2]
+        }
+    }
+
+    /// The Grux Local to lead with on this Mac at this headroom: the tier's
+    /// own, or the next smaller one, whichever first fits at Good or better.
+    /// Nil when none does, and the score order decides as before.
+    static func gruxLocalPick(for profile: HardwareProfile,
+                              headroom: MachineLoad.Headroom) -> CookbookModel? {
+        let top = gruxLocal(for: profile.memoryTier)
+        return gruxLocal.filter { $0.estimatedMemoryGB <= top.estimatedMemoryGB }.reversed().first {
+            let f = fit(of: $0, in: profile, headroom: headroom)
+            return f == .great || f == .good
+        }
+    }
 
     // MARK: - Fit scoring
 
@@ -294,14 +359,15 @@ enum Cookbook {
     }
 
     // The single headline pick for this machine, nil only on absurdly small
-    // budgets (every catalog entry too big).
+    // budgets (every catalog entry too big). The tier's Grux Local when it fits
+    // at Good or better (`gruxLocalPick`), otherwise the best score.
     static func headline(for profile: HardwareProfile) -> CookbookModel? {
-        recommended(for: profile).first
+        headline(for: profile, headroom: .full)
     }
 
     static func headline(for profile: HardwareProfile,
                          headroom: MachineLoad.Headroom) -> CookbookModel? {
-        recommended(for: profile, headroom: headroom).first
+        gruxLocalPick(for: profile, headroom: headroom) ?? recommended(for: profile, headroom: headroom).first
     }
 
     // MARK: - The pane, scored once
@@ -360,7 +426,7 @@ enum Cookbook {
         return Listing(budget: profile.modelBudget(headroom: headroom),
                        fitting: fitting,
                        tooBig: catalog.filter { ratings[$0.id] == .tooBig },
-                       headline: fitting.first,
+                       headline: headline(for: profile, headroom: headroom),
                        ratings: ratings)
     }
 

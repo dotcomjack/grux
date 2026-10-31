@@ -1669,6 +1669,9 @@ enum AppTriggers {
         // fire-file-naming-undo-batch: Files that name themselves, checked,
         // run and undone without a click (Triggers/FileNamingTriggers.swift).
         FileNamingTriggers.register(in: dir)
+        // fire-cookbook-pull: the Cookbook row's PULL for one catalog model,
+        // then cookbook-pull.json (Triggers/CookbookTriggers.swift).
+        CookbookTriggers.register(in: dir)
 
         // fire-jax-brief: Jax speaks an on-demand briefing now (Home "brief me"
         // / CLI hook). Does not touch the scheduled-slot dedupe.

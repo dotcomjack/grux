@@ -166,7 +166,7 @@ struct ModelUpdateReport: Equatable {
                       localServerRunning: Bool,
                       installedTags: [String]) -> ModelUpdateReport {
         let runnable = Cookbook.recommended(for: profile)
-        let headline = runnable.first
+        let headline = Cookbook.headline(for: profile)
         return ModelUpdateReport(
             headline: headline,
             runnable: runnable,

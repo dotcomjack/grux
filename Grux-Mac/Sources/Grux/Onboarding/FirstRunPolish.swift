@@ -62,6 +62,27 @@ enum ModelGate {
     static let localLine = "Runs on this Mac. No key, no account, and nothing leaves the machine. "
         + "With Ollama running, Grux fetches the best model this Mac can run."
     static let ollamaLink = "Get Ollama, free, at ollama.com"
+
+    /// The headline when it is a Grux Local, the one first run recommends.
+    static func recommendedLocal(_ headline: CookbookModel?) -> CookbookModel? {
+        headline.flatMap { pick in Cookbook.gruxLocal.contains(pick) ? pick : nil }
+    }
+
+    /// The local button. It names Grux Local and its download, so the one
+    /// press that fetches it is a choice made knowing what it costs.
+    static func localButton(_ recommended: CookbookModel?, installed: Bool = false) -> String {
+        guard let m = recommended else { return "Use a local model instead" }
+        let what = "Use \(m.displayName) \(m.parameterLabel), recommended for this Mac"
+        return installed ? what : what + String(format: " (%.1f GB download)", m.diskGB)
+    }
+
+    /// Under the button: what Grux Local is, and that nothing downloads until
+    /// the button is pressed.
+    static func gruxLocalLine(_ m: CookbookModel) -> String {
+        "\(m.displayName) is a model trained for Grux, and \(m.parameterLabel) is the size for this Mac's memory. "
+            + "Nothing downloads until you press the button; it is then fetched through Ollama "
+            + "from gruxai.com and runs only here."
+    }
     static let ollamaURL = URL(string: "https://ollama.com")!
 
     /// The way past this step with no key and no local model. On a clean Mac
