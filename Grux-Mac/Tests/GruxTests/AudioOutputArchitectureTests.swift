@@ -37,16 +37,30 @@ final class AudioOutputArchitectureTests: XCTestCase {
     /// aloud unless it writes to a file with `-o`.
     private static let sayCommand = #"["'](/usr/bin/)?say(\s|["'])"#
 
+    private static let notificationSound = #"\.sound\b"#
+
+    /// Every pattern compiled once. `range(of:options: .regularExpression)` compiled
+    /// each pattern again for every source line it was asked about, and that was 11.7
+    /// of this class's 16 s (measured 2026-10-29, T1).
+    private static let compiled: [String: NSRegularExpression] = Dictionary(
+        uniqueKeysWithValues: (facadeOnly + [notificationSound, sayCommand] + backends.map(\.api))
+            .map { ($0, try! NSRegularExpression(pattern: $0)) })
+
+    static func matches(_ pattern: String, _ s: String) -> Bool {
+        let re = compiled[pattern] ?? (try! NSRegularExpression(pattern: pattern))
+        return re.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)) != nil
+    }
+
     /// The problems one line of code has, as the scan reports them.
     static func offenses(_ code: String) -> [String] {
-        var out = facadeOnly.filter { code.range(of: $0, options: .regularExpression) != nil }
+        var out = facadeOnly.filter { matches($0, code) }
         // A notification's sound, or a foreground presentation that plays one,
         // unless the facade chose it. Asking permission to post with sound plays nothing.
-        if code.range(of: #"\.sound\b"#, options: .regularExpression) != nil,
+        if matches(notificationSound, code),
            !code.contains("requestAuthorization"), !code.contains("AudioOutput.") {
             out.append("sets a notification sound")
         }
-        if code.range(of: sayCommand, options: .regularExpression) != nil, !code.contains("\"-o\"") {
+        if matches(sayCommand, code), !code.contains("\"-o\"") {
             out.append("runs say without -o (plays aloud)")
         }
         return out
@@ -84,10 +98,6 @@ final class AudioOutputArchitectureTests: XCTestCase {
         return out
     }
 
-    private func matches(_ pattern: String, _ s: String) -> Bool {
-        s.range(of: pattern, options: .regularExpression) != nil
-    }
-
     func test_soundAPIsAppearOnlyInTheFacade() throws {
         var offenders: [String] = []
         for (file, n, code) in try codeLines() where file != Self.facade {
@@ -120,7 +130,7 @@ final class AudioOutputArchitectureTests: XCTestCase {
         var offenders: [String] = []
         let lines = try codeLines()
         for b in Self.backends {
-            for (file, n, code) in lines where !b.files.contains(file) && file != Self.facade && matches(b.api, code) {
+            for (file, n, code) in lines where !b.files.contains(file) && file != Self.facade && Self.matches(b.api, code) {
                 offenders.append("\(file):\(n) uses /\(b.api)/, which belongs to \(b.files.sorted())")
             }
         }

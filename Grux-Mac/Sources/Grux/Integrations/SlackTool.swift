@@ -22,8 +22,8 @@ enum SlackTool {
                 Send a plain-text message to a Slack channel. Use when the user \
                 says things like 'slack the team', 'post in #general', 'send \
                 a slack to marketing', or 'tell the standup channel X'. Resolves \
-                channel name or ID. Requires their Slack connection set up in \
-                Settings → Integrations. Returns ok/<ts> on success, error \
+                channel name or ID. Requires their Slack connection set up on \
+                the Integrations page. Returns ok/<ts> on success, error \
                 string on failure (channel not found, missing scope, etc).
                 """,
                 inputSchema: [

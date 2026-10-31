@@ -217,7 +217,7 @@ final class MeetingCaptureService: ObservableObject {
         // "start meeting" (e.g. MeetingAppDetector auto-offer on cold boot)
         // can't slip past the TCC warm-up and silently fail on .notDetermined.
         guard await MicController.ensureAuthorized() else {
-            lastError = "Microphone denied. Open Settings → Privacy → Microphone and enable Grux."
+            lastError = "Microphone denied. Open System Settings, Privacy & Security, Microphone and enable Grux."
             AmbientListener.shared.resumeFromMeeting()
             return nil
         }

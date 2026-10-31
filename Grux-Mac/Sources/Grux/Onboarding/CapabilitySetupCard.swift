@@ -118,6 +118,11 @@ struct CapabilitySetupCard: View {
     // this always meant.
     private var state: AppState { AppState.shared }
 
+    /// Observed so the card lists the sign-in the moment an agent run finds it
+    /// expired and drops it once a sign-in lands. A singleton, not the
+    /// environment, for the reason `state` above gives.
+    @ObservedObject private var claudeSignIn = ClaudeSignInState.shared
+
     private var missing: [SetupRequirement] {
         FeatureRegistry.missing(forTab: featureKey)
     }
@@ -129,12 +134,22 @@ struct CapabilitySetupCard: View {
                                       groups: FeatureRegistry.row(forTab: featureKey)?.anyOf ?? [])
     }
 
-    /// Blocking items of this feature that are already done. Mail with no
-    /// account has none, and "Everything else is ready" over an empty mailbox
-    /// claimed a readiness nothing had earned (audit 2026-10-13, item 5).
-    private var readyBesides: Int {
-        guard let row = FeatureRegistry.row(forTab: featureKey) else { return 0 }
-        return max(0, row.requires.count + row.steps.count - missing.count)
+    /// Every blocking item of this feature. "Everything else is ready" counts
+    /// what is done among these: Mail with no account has nothing done, and
+    /// the line over an empty mailbox claimed a readiness nothing had earned
+    /// (audit 2026-10-13, item 5).
+    private var blocking: [SetupRequirement] {
+        guard let row = FeatureRegistry.row(forTab: featureKey) else { return [] }
+        return row.requires + row.steps
+    }
+
+    private var listsSignIn: Bool {
+        Self.listsAgentSignIn(blocking: blocking, missing: missing, signInExpired: claudeSignIn.expired)
+    }
+
+    private var cardCopy: (headline: String, subtitle: String) {
+        Self.copy(featureLabel: featureLabel, blocking: blocking, listedEntries: entries.count,
+                  missing: missing, signInExpired: claudeSignIn.expired)
     }
 
     /// The line under the headline, counting what the card lists. It says the
@@ -142,6 +157,32 @@ struct CapabilitySetupCard: View {
     static func subtitle(missing: Int, readyBesides: Int) -> String {
         let count = missing == 1 ? "One item is missing." : "\(missing) items are missing."
         return readyBesides > 0 ? count + " Everything else is ready." : count
+    }
+
+    /// D70: the card stands in for a feature that needs the agent, the agent
+    /// tool is installed (so it is not listed already), and the last agent run
+    /// found the Claude sign-in expired. The tool step alone counts as done
+    /// when the binary is on disk, so without this the card called the agent
+    /// ready while no agent could run.
+    static func listsAgentSignIn(blocking: [SetupRequirement], missing: [SetupRequirement],
+                                 signInExpired: Bool) -> Bool {
+        signInExpired && blocking.contains(.stepAgentCliInstalled) && !missing.contains(.stepAgentCliInstalled)
+    }
+
+    static let agentSignInLabel = "Claude sign-in expired"
+    static let agentSignInRemediation = "Agents cannot run until you sign in again. Sign in opens Claude's login in Terminal, and it finishes in your browser."
+    static let agentSignInButton = "Sign in"
+
+    /// The headline and the line under it, counting the sign-in as an item
+    /// when it is listed and never as ready.
+    static func copy(featureLabel: String, blocking: [SetupRequirement], listedEntries: Int,
+                     missing: [SetupRequirement], signInExpired: Bool) -> (headline: String, subtitle: String) {
+        let signIn = listsAgentSignIn(blocking: blocking, missing: missing, signInExpired: signInExpired)
+        let listed = listedEntries + (signIn ? 1 : 0)
+        let ready = max(0, blocking.count - missing.count - (signIn ? 1 : 0))
+        let headline = listed == 1 ? "\(featureLabel) needs one more thing"
+                                   : "\(featureLabel) needs \(listed) more things"
+        return (headline, subtitle(missing: listed, readyBesides: ready))
     }
 
     private var featureLabel: String {
@@ -159,6 +200,7 @@ struct CapabilitySetupCard: View {
                     groupRow(needed: needed, requirements: requirements)
                 }
             }
+            if listsSignIn { signInRow }
             footer
         }
         .padding(GruxSpacing.xl)
@@ -187,12 +229,10 @@ struct CapabilitySetupCard: View {
             // counting the raw list put "Chat needs 2 more things" directly
             // above a group headed "Any 1 of these", which is the card
             // contradicting itself in the space of three lines.
-            Text(entries.count == 1
-                 ? "\(featureLabel) needs one more thing"
-                 : "\(featureLabel) needs \(entries.count) more things")
+            Text(cardCopy.headline)
                 .font(.system(size: 17, weight: .bold))
                 .foregroundStyle(GruxTheme.textPrimary)
-            Text(Self.subtitle(missing: entries.count, readyBesides: readyBesides))
+            Text(cardCopy.subtitle)
                 .font(GruxTheme.Font.body)
                 .foregroundStyle(GruxTheme.textSecondary)
         }
@@ -299,6 +339,46 @@ struct CapabilitySetupCard: View {
             Button(title) { open(requirement) }
                 .font(.system(size: 12, weight: .semibold))
         }
+    }
+
+    /// The expired sign-in, boxed like every other item, with the same button
+    /// the Now row and a failed job on Agents offer.
+    private var signInRow: some View {
+        boxed {
+            VStack(alignment: .leading, spacing: 6) {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: GruxSpacing.s) {
+                        signInLabel.lineLimit(1)
+                        Spacer(minLength: GruxSpacing.s)
+                        signInButton
+                    }
+                    VStack(alignment: .leading, spacing: GruxSpacing.xs) {
+                        signInLabel
+                        signInButton
+                    }
+                }
+                Text(Self.agentSignInRemediation)
+                    .font(GruxTheme.Font.caption)
+                    .foregroundStyle(GruxTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var signInLabel: some View {
+        HStack(spacing: GruxSpacing.s) {
+            Image(systemName: "person.crop.circle.badge.exclamationmark")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(GruxTheme.accentPrimary)
+            Text(Self.agentSignInLabel)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(GruxTheme.textPrimary)
+        }
+    }
+
+    private var signInButton: some View {
+        Button(Self.agentSignInButton) { ClaudeSignInState.shared.startSignIn() }
+            .font(.system(size: 12, weight: .semibold))
     }
 
     private var footer: some View {

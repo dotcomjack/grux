@@ -131,6 +131,22 @@ enum ExecutionRoute: String, Codable, CaseIterable, Sendable {
     }
 }
 
+extension ExecutionRoute {
+    /// D59: the route Design Studio starts on, until the person picks one. It
+    /// used to be the API route always, so a Mac with no Anthropic key and a
+    /// running local model opened on a route that could only fail with "No API
+    /// key is set". A key keeps the API route; with no key, a local model that
+    /// can serve right now (`ModelRegistry.localUsable`) is the route; with
+    /// neither, the API route stays, and its run says to add a key. The
+    /// subscription route is never the default: whether Claude Code is signed
+    /// in is not known until a run tries it.
+    static func startingRoute(hasAnthropicKey: Bool, localModelUsable: Bool) -> ExecutionRoute {
+        if hasAnthropicKey { return .api }
+        if localModelUsable { return .localModel }
+        return .api
+    }
+}
+
 struct DesignRunConfig: Codable, Hashable, Sendable {
     var route: ExecutionRoute
     var modelId: String?

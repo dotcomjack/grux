@@ -118,15 +118,15 @@ actor DeepResearchEngine {
         let modelId = routing.modelId
         let synthModelId = synthRouting.modelId
         guard enabled else {
-            await fail(jobId, "Web research is disabled. Enable it in Settings, Upgrades.")
+            await fail(jobId, "Web research is disabled. Turn it on in Settings, Data & Security, Data & Capabilities, Real-time web research.")
             return
         }
         guard !braveKey.isEmpty else {
-            await fail(jobId, "Brave Search API key not set. Add it under Settings, Upgrades.")
+            await fail(jobId, "Brave Search API key not set. Add it in Settings, Data & Security, Data & Capabilities, Real-time web research.")
             return
         }
         guard !modelKey.isEmpty else {
-            await fail(jobId, "No API key set for the active model provider. Add one under Settings, Model & API.")
+            await fail(jobId, "No API key set for the active model provider. Add one in Settings, Models.")
             return
         }
 

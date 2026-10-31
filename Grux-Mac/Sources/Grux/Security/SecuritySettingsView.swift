@@ -100,7 +100,9 @@ struct SecuritySettingsView: View {
                 }
             }
             HStack {
-                TextField("host, e.g. example.com", text: newHost)
+                // The grouped Form shows a field's title as its row label, so the title
+                // names the setting and the example sits in the field as a hint (D89).
+                TextField("Host", text: newHost, prompt: Text("example.com"))
                     .textFieldStyle(.roundedBorder)
                 Button("Add") {
                     let host = newHost.wrappedValue

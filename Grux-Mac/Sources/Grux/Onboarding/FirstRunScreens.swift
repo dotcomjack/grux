@@ -780,8 +780,9 @@ enum Setup {
     static let needsModelLead = "Still needs a model:"
     static let needsModelNote = "Connect one any time from \u{201C}Connect a model\u{201D} in the panel, or Settings, then Models."
     static let decisionsKeyTitle = "A Decisions key"
-    static let decisionsKeyWhy = "Grux decides on this Mac for free, so this is optional. A Decisions key (Jev, from "
-        + "TypeSafe) makes those calls faster and surer: a busy day of 265 decisions measured $0.02. "
+    static let decisionsKeyWhy = "Grux decides on this Mac for free, matching what you say word for word, so this is "
+        + "optional. A Decisions key (Jev, from TypeSafe) also judges what you meant when you put it another way: a busy "
+        + "day of 265 decisions measured $0.02. "
         + "It lives in Integrations if you add it later, and Tuning shows what it spends."
 
     static func left(_ n: Int) -> String { n == 1 ? "1 left" : "\(n) left" }

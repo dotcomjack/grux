@@ -1,5 +1,6 @@
 import XCTest
 import CoreAudio
+import AVFoundation
 @testable import Grux
 
 final class ListeningMicPolicyTests: XCTestCase {
@@ -136,5 +137,40 @@ final class BuiltInMicButtonTests: XCTestCase {
         for repeated in ["Your music and video keep full quality", "Background listening never does", "can lose its microphone"] {
             XCTAssertFalse(footer?.contains(repeated) ?? true, "the caption above already says: \(repeated)")
         }
+    }
+
+    /// D58 (sense pass 4): on this Mini, which has an input device (eqMac Export, 2 input
+    /// channels by system_profiler), Settings, Voice said "No input devices detected" while
+    /// Ambient offered Allow listening. Grux reads no input device until macOS grants the
+    /// microphone (reading one raises the prompt), so the empty list meant "not allowed yet",
+    /// and the line blamed a microphone that is there. The line now names the real reason
+    /// for each answer macOS can give, and says no microphone is connected only when Grux
+    /// was allowed to look and found none.
+    func testAnEmptyMicListSaysWhyItIsEmpty() {
+        let notAsked = SettingsView.micListEmptyNote(status: .notDetermined)
+        let denied = SettingsView.micListEmptyNote(status: .denied)
+        let restricted = SettingsView.micListEmptyNote(status: .restricted)
+        let allowed = SettingsView.micListEmptyNote(status: .authorized)
+        for line in [notAsked, denied, restricted] {
+            XCTAssertFalse(line.contains("No input devices"), "Grux did not look, so it cannot say there are none: \(line)")
+            XCTAssertFalse(line.contains("Connect a microphone"), "a Mac with a microphone is told to connect one: \(line)")
+        }
+        XCTAssertTrue(notAsked.contains("Allow listening"), notAsked)
+        XCTAssertFalse(notAsked.contains("System Settings"), "nothing is off in System Settings before macOS has asked: \(notAsked)")
+        XCTAssertTrue(denied.contains("Privacy and Security, Microphone"), denied)
+        XCTAssertTrue(denied.contains("Refresh"), denied)
+        XCTAssertFalse(restricted.contains("Privacy and Security"), "a restricted Mac has no switch there to turn on: \(restricted)")
+        XCTAssertTrue(allowed.contains("No microphone is connected"), allowed)
+        XCTAssertTrue(allowed.contains("Refresh"), allowed)
+        XCTAssertEqual(Set([notAsked, denied, restricted, allowed]).count, 4, "each answer gets its own line")
+    }
+
+    func testTheVoicePaneDrawsTheReasonFromTheLiveAnswer() throws {
+        let src = try String(contentsOf: URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/Grux/SettingsView.swift"), encoding: .utf8)
+        XCTAssertFalse(src.contains("Text(\"No input devices detected"), "the empty list still blames a missing microphone")
+        XCTAssertTrue(src.contains("Text(Self.micListEmptyNote(status: MicController.authorizationStatus()))"),
+                      "the empty list is not drawn from macOS's answer")
     }
 }

@@ -26,8 +26,8 @@ enum NotionError: Error, LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .missingToken:    return "No Notion token. Paste your Internal Integration secret in Settings → Integrations."
-        case .missingDatabase: return "No Notion database ID. Paste one in Settings → Integrations after sharing a page with the integration."
+        case .missingToken:    return "No Notion token. Paste your Internal Integration secret on the Integrations page (in the sidebar)."
+        case .missingDatabase: return "No Notion database ID. Paste one on the Integrations page (in the sidebar) after sharing a page with the integration."
         case .http(let code, let body): return "Notion HTTP \(code): \(body.prefix(200))"
         case .decoding(let msg): return "Notion decode: \(msg)"
         }

@@ -48,14 +48,13 @@ struct TelemetrySignalSource: FoundrySignalSource {
     //   {"ts":"...","tool":"fs_read","path":"...","resolved":"...",
     //    "outcome":"ok|denied|...","bytes":N,"reason":"..."}
     // staleAfter guards a dead-source case: if the newest line is older than
-    // this window, the audit writer has gone silent (no fs_read / fs_list calls
-    // in a long while). Rather than mine month-old denials as if they were
-    // fresh, or silently emit nothing (which hides the dead source forever),
-    // we emit one low-severity meta-signal so the Foundry notices the gap.
+    // this window, nobody has called fs_read / fs_list in a long while. That is
+    // a quiet tool, not a problem to build code for (D84: proposal 3B7902DA was
+    // "fs-audit: log silent for 7d"), so it files nothing, and month-old
+    // denials behind it are not mined as if they were fresh.
     // staleAfter defaults to .infinity (and asOf to .distantPast) so the
-    // staleness guard never fires unless a caller opts in by passing both.
-    // This keeps the existing 2-arg test callers compiling and behaving as
-    // before; production harvestFSAudit passes real values to enable the guard.
+    // staleness guard never fires unless a caller opts in by passing both;
+    // production harvestFSAudit passes real values.
     // Exposed for tests.
     static func signalsFromFSAudit(_ raw: String, since: Date, asOf: Date = .distantPast, staleAfter: TimeInterval = .infinity) -> [FoundrySignal] {
         let iso = ISO8601DateFormatter()
@@ -87,21 +86,12 @@ struct TelemetrySignalSource: FoundrySignalSource {
             ))
         }
 
-        // Dead-source guard. If we have a timestamped newest line and it is
-        // older than the staleness window, the source is silent. Report that
-        // (low severity, code-health) and do NOT emit the stale denials as if
-        // they were current. A file with lines but no parseable timestamps, or
-        // an empty/missing file, falls through to the normal path below.
+        // Dead-source guard. A timestamped newest line older than the
+        // staleness window means the source is silent: file nothing. A file
+        // with lines but no parseable timestamps, or an empty or missing file,
+        // falls through to the normal path below.
         if let newest, asOf.timeIntervalSince(newest) > staleAfter {
-            let days = Int((asOf.timeIntervalSince(newest) / 86400).rounded())
-            return [FoundrySignal(
-                source: "telemetry",
-                severity: .low,
-                summary: "fs-audit: log silent for \(days)d (last entry \(iso.string(from: newest))), no fresh filesystem-tool activity to harvest",
-                evidence: "Newest fs-audit.log line predates the \(Int(staleAfter / 86400))d freshness window. The audit writer is wired but no fs_read / fs_list calls have run, so this source has no current signal. Treat the source as silent, not the system as healthy.",
-                suggestedLane: .codeHealth,
-                suggestedDomain: "telemetry"
-            )]
+            return []
         }
 
         // Not stale (or no parseable timestamps to judge freshness): fall

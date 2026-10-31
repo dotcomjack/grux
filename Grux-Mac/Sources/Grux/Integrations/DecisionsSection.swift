@@ -6,9 +6,16 @@ import AppKit
 /// paste a key, Save and Test makes one real call, Disconnect removes it.
 struct DecisionsSection: View {
     struct Copy { let title: String; let body: String }
-    static let copy = Copy(
-        title: "Decisions",
-        body: "Jev by TypeSafe makes Grux's small decisions in about half a second with a confidence attached. Optional. Without it Grux decides on device, and adding a key changes nothing else.")
+    /// The speed is the one Settings, Usage measured, never a promise (D87): it said "in about
+    /// half a second" beside a measured 216 ms. No Jev decision today, no number.
+    static func copy(jevTypicalMs: Int?) -> Copy {
+        let speed = jevTypicalMs.map { ", in a typical \($0) ms today" } ?? ""
+        return Copy(
+            title: "Decisions",
+            body: "Jev by TypeSafe makes Grux's small decisions with a confidence attached\(speed). Optional. Without it Grux decides on device, and adding a key changes nothing else.")
+    }
+
+    @ObservedObject private var usage = DecisionUsageModel.shared
 
     @State private var key: String = ""
     @State private var reveal: Bool = false
@@ -22,13 +29,13 @@ struct DecisionsSection: View {
                 Image(systemName: "bolt.fill")
                     .font(.title2).foregroundStyle(GruxTheme.accentPrimary)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(Self.copy.title).font(.headline)
+                    Text(Self.copy(jevTypicalMs: usage.snapshot.jevTypicalMs).title).font(.headline)
                     Text(connected ? "Connected" : "Not connected")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
 
-            Text(Self.copy.body)
+            Text(Self.copy(jevTypicalMs: usage.snapshot.jevTypicalMs).body)
                 .font(.callout).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 

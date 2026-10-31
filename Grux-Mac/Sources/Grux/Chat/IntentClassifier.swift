@@ -168,6 +168,38 @@ enum ChatIntentClassifier {
         )
     }
 
+    // MARK: - "Grux, upgrade yourself" (D86)
+
+    /// True when the whole message is the explicit ask to run a self-upgrade
+    /// cycle. A local model offered `foundry_upgrade_cycle` for exactly these
+    /// words called no tool (qwen3.5:4b, live 2026-10-30), so the ask takes the
+    /// tool's own path before any model, as an exact Commands V2 trigger does.
+    ///
+    /// Whole sentence only, from a closed list: a question, a negation, talk
+    /// about it, or the ask inside a longer message goes to the model as before.
+    /// A miss costs one model turn; a false match would start a cycle that
+    /// spends, so the match fails toward the model.
+    static func isUpgradeYourselfAsk(_ text: String) -> Bool {
+        var s = text.lowercased()
+            .replacingOccurrences(of: "-", with: " ")
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespaces)
+        guard !s.contains("?") else { return false }
+        while let last = s.last, ".!".contains(last) { s.removeLast() }
+        for pattern in [#"^(?:(?:hey|ok|okay) ?,? )?grux ?[,:]? ?"#, #"^please ?,? "#,
+                        #" ?, ?grux$| grux$"#, #" ?, ?please$| please$"#] {
+            s = s.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
+        }
+        return upgradeYourselfAsks.contains(s.trimmingCharacters(in: .whitespaces))
+    }
+
+    static let upgradeYourselfAsks: Set<String> = [
+        "upgrade yourself", "upgrade yourself now",
+        "run an upgrade cycle", "start an upgrade cycle",
+        "run a self upgrade cycle", "start a self upgrade cycle",
+        "run a self upgrade", "start a self upgrade",
+    ]
+
     // MARK: - Voice-first PIM routes (Foundry batch 2)
 
     // Deterministic fast-path route for PIM utterances: "put X on my

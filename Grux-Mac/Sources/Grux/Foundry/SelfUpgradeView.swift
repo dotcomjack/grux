@@ -30,6 +30,9 @@ struct SelfUpgradeView: View {
 
     @State private var pane: Pane = .proposals
     @State private var copiedID: String?
+    // Bumped whenever the breaker trips or clears (the button, the trigger) so the
+    // pause banner reads the new state at once.
+    @State private var pauseChanges = 0
     // Two filesystem facts the card's direction depends on: is the claude
     // CLI on this Mac (read once per appearance), and does this install know
     // where its source is (kept live while the pane is visible, so a
@@ -107,23 +110,27 @@ struct SelfUpgradeView: View {
                 .font(GruxType.caption)
                 .foregroundStyle(GruxTheme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
-            // Redrawn each minute so "within a minute" and "today" stay true.
+            // Redrawn each minute so "within a minute" and "today" stay true, and a
+            // crash-loop pause shows with no reload.
             TimelineView(.periodic(from: .now, by: 60)) { context in
-                Text(FoundrySchedule.timesLine(
-                    enabled: appState.config.foundryEnabled,
-                    schedule: appState.config.foundrySchedule,
-                    lastRanAt: timeline.entries.filter { $0.kind == .cycle }.map(\.date).max(),
-                    lastNightlyAt: governor.lastNightlyAt,
-                    lastDeepAt: governor.lastDeepAt,
-                    lastOpportunisticAt: governor.lastOpportunisticAt,
-                    paused: GruxUpdater.shared.isAutoLandPaused(),
-                    ticking: governor.isTicking,
-                    running: { if case .running = governor.phase { return true }; return false }(),
-                    limitClearsAt: governor.sessionLimitClearsAt(now: context.date),
-                    now: context.date))
-                    .font(GruxType.caption)
-                    .foregroundStyle(GruxTheme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: GruxSpacing.xs) {
+                    pauseBanner(now: context.date)
+                    Text(FoundrySchedule.timesLine(
+                        enabled: appState.config.foundryEnabled,
+                        schedule: appState.config.foundrySchedule,
+                        lastRanAt: timeline.entries.filter { $0.kind == .cycle }.map(\.date).max(),
+                        lastNightlyAt: governor.lastNightlyAt,
+                        lastDeepAt: governor.lastDeepAt,
+                        lastOpportunisticAt: governor.lastOpportunisticAt,
+                        paused: GruxUpdater.shared.isAutoLandPaused(),
+                        ticking: governor.isTicking,
+                        running: { if case .running = governor.phase { return true }; return false }(),
+                        limitClearsAt: governor.sessionLimitClearsAt(now: context.date),
+                        now: context.date))
+                        .font(GruxType.caption)
+                        .foregroundStyle(GruxTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             HStack(spacing: GruxSpacing.m) {
                 scheduleToggle("Nightly, 2 to 6 AM", \.nightly)
@@ -135,6 +142,28 @@ struct SelfUpgradeView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, GruxSpacing.m)
         .padding(.bottom, GruxSpacing.s)
+        .onReceive(NotificationCenter.default.publisher(for: GruxUpdater.autoLandPauseChanged)) { _ in pauseChanges += 1 }
+    }
+
+    // The crash-loop breaker holds every pass and every install until a person
+    // clears it: say when and why, and offer the clear right here (D43). The
+    // fire-foundry-resume trigger makes the same call.
+    @ViewBuilder
+    private func pauseBanner(now: Date) -> some View {
+        let _ = pauseChanges
+        if let pause = GruxUpdater.shared.autoLandPause() {
+            HStack(alignment: .firstTextBaseline, spacing: GruxSpacing.s) {
+                Text(FoundrySchedule.pauseLine(pause, now: now))
+                    .font(GruxType.caption)
+                    .foregroundStyle(GruxTheme.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: GruxSpacing.s)
+                Button("Resume self-upgrade") {
+                    GruxUpdater.shared.clearAutoLandPause()
+                }
+                .font(GruxType.caption)
+            }
+        }
     }
 
     // MARK: - Test baseline (F4)

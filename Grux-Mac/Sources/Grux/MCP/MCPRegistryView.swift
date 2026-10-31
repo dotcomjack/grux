@@ -87,8 +87,13 @@ struct MCPServersSection: View {
             .controlSize(.mini)
 
             Button {
-                manager.stopServer(id: server.id)
-                store.remove(id: server.id)
+                DestructiveConfirm.shared.ask(
+                    question: "Remove the server \(DestructiveConfirm.quoted(server.name, or: "with no name"))?",
+                    detail: "Grux stops it and deletes its stored secrets. To use it again, add it and its secrets again.",
+                    confirmLabel: "Remove server") {
+                    manager.stopServer(id: server.id)
+                    store.remove(id: server.id)
+                }
             } label: {
                 Image(systemName: "trash")
             }
@@ -127,13 +132,13 @@ struct MCPServersSection: View {
 
     private var addForm: some View {
         VStack(alignment: .leading, spacing: 6) {
-            TextField("Name (e.g. GitHub)", text: $newName)
+            TextField("Name", text: $newName, prompt: Text("GitHub"))
                 .textFieldStyle(.roundedBorder)
-            TextField("Command (e.g. npx, uvx, /usr/local/bin/server)", text: $newCommand)
+            TextField("Command", text: $newCommand, prompt: Text("npx, uvx or /usr/local/bin/server"))
                 .textFieldStyle(.roundedBorder)
-            TextField("Args (space separated, e.g. -y @modelcontextprotocol/server-github)", text: $newArgs)
+            TextField("Args, space separated", text: $newArgs, prompt: Text("-y @modelcontextprotocol/server-github"))
                 .textFieldStyle(.roundedBorder)
-            TextField("Env (KEY=value, comma or newline separated, optional)", text: $newEnv)
+            TextField("Env, optional", text: $newEnv, prompt: Text("KEY=value, OTHER=value"))
                 .textFieldStyle(.roundedBorder)
 
             if let addError {

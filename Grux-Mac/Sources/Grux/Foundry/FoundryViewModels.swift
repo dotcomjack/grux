@@ -241,14 +241,21 @@ final class FoundryDashboardModel: ObservableObject {
         return card.readyPrompt
     }
 
-    func reject(id: String) {
+    /// "Reason: <words>. " for a turn-down that gave one (the D83 door), else nothing.
+    private static func reasonLine(_ reason: String?) -> String {
+        var words = (reason ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        while words.hasSuffix(".") { words.removeLast() }
+        return words.isEmpty ? "" : "Reason: \(words). "
+    }
+
+    func reject(id: String, reason: String? = nil) {
         guard let idx = proposals.firstIndex(where: { $0.id == id }), proposals[idx].status == .pending else { return }
         proposals[idx].status = .rejected
         let card = proposals[idx]
         timeline.append(FoundryTimelineEntry(
             kind: .rejected,
             title: "Rejected: \(card.title)",
-            detail: "Two rejections on a (lane x domain) pair demote its tier.",
+            detail: Self.reasonLine(reason) + "Two rejections on a (lane x domain) pair demote its tier.",
             lane: card.lane,
             domain: card.domain
         ))

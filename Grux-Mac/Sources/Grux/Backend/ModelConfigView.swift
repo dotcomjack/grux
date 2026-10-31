@@ -225,9 +225,9 @@ struct ModelConfigSection: View {
                 endpointRow(ep)
             }
 
-            TextField("Name (e.g. OpenRouter)", text: $newName)
+            TextField("Name", text: $newName, prompt: Text("OpenRouter"))
                 .textFieldStyle(.roundedBorder)
-            TextField("Base URL (e.g. https://openrouter.ai/api/v1)", text: $newBaseURL)
+            TextField("Base URL", text: $newBaseURL, prompt: Text("https://openrouter.ai/api/v1"))
                 .textFieldStyle(.roundedBorder)
             HStack {
                 if showNewKey {
@@ -268,10 +268,11 @@ struct ModelConfigSection: View {
                 // The model this endpoint serves. Blank means the local model
                 // name, which is right for a second Ollama and wrong for a
                 // hosted router, so hosted endpoints name theirs here.
-                TextField("Model (e.g. deepseek/deepseek-v4-flash-0731)",
+                TextField("Model",
                           text: Binding(
                             get: { ep.modelId ?? "" },
-                            set: { endpointStore.setModelId($0, for: ep.id) }))
+                            set: { endpointStore.setModelId($0, for: ep.id) }),
+                          prompt: Text("deepseek/deepseek-v4-flash-0731"))
                     .textFieldStyle(.roundedBorder)
                     .font(.caption)
                     .frame(maxWidth: 360)
@@ -291,8 +292,15 @@ struct ModelConfigSection: View {
                 // leaving the dead id stored means the row above goes on naming a
                 // provider the user just deleted, which is the same class of
                 // invisible state this row was added to end.
-                if isActive { modelRegistry.clearActiveProvider() }
-                endpointStore.remove(id: ep.id)
+                DestructiveConfirm.shared.ask(
+                    question: "Remove the endpoint \(DestructiveConfirm.quoted(ep.name, or: "with no name"))?",
+                    detail: isActive
+                        ? "Chat stops using it and goes back to the default model. To use it again, add its address again."
+                        : "To use it again, add its address again.",
+                    confirmLabel: "Remove endpoint") {
+                    if isActive { modelRegistry.clearActiveProvider() }
+                    endpointStore.remove(id: ep.id)
+                }
             } label: {
                 Image(systemName: "trash")
                     .font(.system(size: 11))

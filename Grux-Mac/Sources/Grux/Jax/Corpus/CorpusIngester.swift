@@ -68,9 +68,9 @@ enum CorpusPermission: String, Codable, Sendable {
         switch self {
         case .ready:              return "Ready"
         case .needsFullDiskAccess:
-            return "Needs Full Disk Access. Open Settings, Privacy and Security, Full Disk Access, and enable Grux."
+            return "Needs Full Disk Access. Open System Settings, Privacy and Security, Full Disk Access, and enable Grux."
         case .needsAutomation:
-            return "Needs Automation access for Notes. Open Settings, Privacy and Security, Automation, and enable Grux."
+            return "Needs Automation access for Notes. Open System Settings, Privacy and Security, Automation, and enable Grux."
         case .needsAccount:
             // Named one specific personal address, which is wrong on anyone
             // else's machine and put a private email on a visible surface.

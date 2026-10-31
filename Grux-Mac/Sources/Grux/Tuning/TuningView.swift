@@ -125,7 +125,7 @@ enum TuningCopy {
     static let asks = ListeningSection.copy.body
 
     static func decisionsKey(saved: Bool, capped: Bool) -> String {
-        guard saved else { return "Decisions: on this Mac. A Decisions key makes them faster and surer." }
+        guard saved else { return "Decisions: on this Mac, word for word. A Decisions key also judges what you meant." }
         return capped ? "Decisions: on this Mac until midnight; today's cap is reached." : "Decisions: Jev, with your key."
     }
 }

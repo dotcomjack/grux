@@ -71,7 +71,8 @@ final class FoundryBuildDoorTests: XCTestCase {
 
     func testASettledProposalIsNotBuiltAgain() {
         guard case .refuse(let why) = resolve("49DD242B") else { return XCTFail("rebuilt a landed proposal") }
-        XCTAssertTrue(why.contains("Landed"), why)
+        // The status reads as a word in the sentence, not a badge (W19-P3 item 7).
+        XCTAssertTrue(why.contains("is landed, with no build"), why)
     }
 
     func testNothingBuildsWhileTheTestBaselineIsBeingMeasured() {

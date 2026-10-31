@@ -144,7 +144,7 @@ enum AgentTools {
                 maxParallelWorkers: maxPar
             )
             return """
-            ok: started job_id=\(job.id) template=\(template.rawValue) workers=\(job.workers.count) budget=$\(String(format: "%.2f", budget))
+            ok: started job_id=\(job.id) template=\(template.rawValue) workers=\(job.workers.count) budget=\(AgentsView.money(budget))
             root_dir: \(rootDir)
             track: open the Agents tab in Grux, or call agent_status with this job_id.
             """
@@ -157,7 +157,7 @@ enum AgentTools {
             let lines = jobs.map { j -> String in
                 let workersDone = j.workers.filter { $0.status == .done }.count
                 let workersFailed = j.workers.filter { $0.status == .failed }.count
-                return "- \(j.id.prefix(8)) [\(j.status.rawValue)] \(j.title) - \(workersDone)/\(j.workers.count) done\(workersFailed > 0 ? ", \(workersFailed) failed" : "") - $\(String(format: "%.4f", j.spentUSD))"
+                return "- \(j.id.prefix(8)) [\(j.status.rawValue)] \(j.title) - \(workersDone)/\(j.workers.count) done\(workersFailed > 0 ? ", \(workersFailed) failed" : "") - \(AgentsView.money(j.spentUSD))"
             }
             return lines.joined(separator: "\n")
 
@@ -172,11 +172,11 @@ enum AgentTools {
             lines.append("job: \(j.id)")
             lines.append("title: \(j.title)")
             lines.append("status: \(j.status.rawValue)")
-            lines.append("budget: $\(String(format: "%.4f", j.spentUSD)) / $\(String(format: "%.2f", j.budgetUSD))")
+            lines.append("budget: \(AgentsView.spentOfBudget(j.spentUSD, j.budgetUSD))")
             if let err = j.errorMessage { lines.append("error: \(err)") }
             lines.append("workers (\(j.workers.count)):")
             for w in j.workers {
-                var line = "  - \(w.label) [\(w.role.rawValue)] → \(w.status.rawValue) ($\(String(format: "%.4f", w.spentUSD)))"
+                var line = "  - \(w.label) [\(w.role.rawValue)] → \(w.status.rawValue) (\(AgentsView.money(w.spentUSD)))"
                 if let e = w.errorMessage { line += " (\(e))" }
                 lines.append(line)
                 if let result = w.lastResultText, !result.isEmpty {

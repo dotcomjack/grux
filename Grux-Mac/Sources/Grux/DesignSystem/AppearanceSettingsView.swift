@@ -74,7 +74,7 @@ struct AppearanceSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(GruxTheme.warnAmber)
             }
-            Text("Rotates the iridescent accent around the hue wheel. Choices that drop chip text or accent-on-base contrast below WCAG AA are previewed but refused, so the HUD never ships unreadable.")
+            Text("Rotates the iridescent accent around the hue wheel. Choices that drop chip text under 3:1, or accent text and rims below WCAG AA, are previewed but refused, so the HUD never ships unreadable.")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
@@ -112,15 +112,16 @@ struct AppearanceSettingsView: View {
     }
 
     private var contrastVerdict: some View {
-        let worst = draftAudit.worst
         return HStack(spacing: 4) {
-            Image(systemName: draftAudit.passes ? "checkmark.seal.fill" : "xmark.seal.fill")
+            // Green only when every pair meets WCAG AA; amber when Grux takes the
+            // accent but a pair is below AA (D94); rose when it is refused.
+            Image(systemName: draftAudit.meetsAA ? "checkmark.seal.fill"
+                  : draftAudit.passes ? "exclamationmark.triangle.fill" : "xmark.seal.fill")
                 .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(draftAudit.passes ? GruxTheme.successMint : GruxTheme.destructiveRose)
-            if let worst {
-                Text(draftAudit.passes
-                     ? String(format: "WCAG AA pass, worst pair %.1f:1", worst.ratio)
-                     : String(format: "Fails WCAG AA: %@ at %.1f:1 (needs %.1f:1)", worst.name, worst.ratio, worst.required))
+                .foregroundStyle(draftAudit.meetsAA ? GruxTheme.successMint
+                                 : draftAudit.passes ? GruxTheme.warnAmber : GruxTheme.destructiveRose)
+            if let line = draftAudit.verdictLine {
+                Text(line)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

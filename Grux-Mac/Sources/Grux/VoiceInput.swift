@@ -244,7 +244,7 @@ final class VoiceInput: ObservableObject {
         // cdhash-rebind regressions (prompt reappears despite prior grant)
         // are logged in wake.log and not silently reprompted at every edge.
         guard await MicController.ensureAuthorized() else {
-            error = "Microphone denied. Open Settings → Privacy → Microphone and enable Grux, then tap the mic again."
+            error = "Microphone denied. Open System Settings, Privacy & Security, Microphone and enable Grux, then tap the mic again."
             needsMicSettings = true
             return
         }
@@ -372,7 +372,7 @@ final class VoiceInput: ObservableObject {
             NSLog("[Grux] audio engine start failed: %@ / code %d", ns.domain, ns.code)
             let status = AVCaptureDevice.authorizationStatus(for: .audio)
             if status == .denied || status == .restricted || status == .notDetermined {
-                self.error = "Microphone access needed. Open Settings → Privacy → Microphone and enable Grux."
+                self.error = "Microphone access needed. Open System Settings, Privacy & Security, Microphone and enable Grux."
                 self.needsMicSettings = true
             } else {
                 self.error = "Audio engine failed: \(error.localizedDescription)"

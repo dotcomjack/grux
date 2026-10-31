@@ -314,8 +314,14 @@ struct CompareView: View {
                             .font(GruxType.microCaps)
                             .foregroundStyle(GruxTheme.textTertiary)
                         Button {
-                            if currentId == rec.id { currentId = nil }
-                            store.delete(recordId: rec.id)
+                            DestructiveConfirm.shared.ask(
+                                question: "Delete the comparison \(DestructiveConfirm.quoted(rec.prompt, or: "with no prompt"))?",
+                                detail: "Its prompt and every model's answer are removed. This cannot be undone.",
+                                confirmLabel: "Delete comparison"
+                            ) {
+                                if currentId == rec.id { currentId = nil }
+                                store.delete(recordId: rec.id)
+                            }
                         } label: {
                             Image(systemName: "xmark")
                                 .font(.system(size: 9, weight: .bold))

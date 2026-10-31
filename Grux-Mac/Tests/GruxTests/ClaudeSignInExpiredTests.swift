@@ -157,6 +157,23 @@ final class ClaudeSignInExpiredTests: XCTestCase {
         XCTAssertFalse(job.failedOnSignIn)
     }
 
+    // A worker that failed on the sign-in, was retried and then finished
+    // keeps its old interruption; another worker failing later for its own
+    // reason is not the sign-in.
+    func test_failedOnSignIn_ignoresAWorkerThatFinishedAfterARetry() {
+        var retried = SwarmWorkerSpec(role: .generic, label: "a", goal: "g", cwd: "/tmp",
+                                      model: "m", budgetUSD: 1)
+        retried.status = .done
+        retried.interruption = WorkerInterruption(kind: .signInExpired)
+        var other = SwarmWorkerSpec(role: .generic, label: "b", goal: "g", cwd: "/tmp",
+                                    model: "m", budgetUSD: 1)
+        other.status = .failed
+        other.errorMessage = "build failed"
+        let job = AgentJob(title: "t", goal: "g", status: .failed,
+                           workers: [retried, other], rootDir: "/tmp")
+        XCTAssertFalse(job.failedOnSignIn)
+    }
+
     // MARK: The app state and Now
 
     func test_state_followsTheLastVerdict() {
@@ -165,6 +182,50 @@ final class ClaudeSignInExpiredTests: XCTestCase {
         XCTAssertTrue(s.expired)
         s.record(expired: false)
         XCTAssertFalse(s.expired)
+    }
+
+    // D75: chat, Agents and Self-Upgrade send the person to "Claude sign-in,
+    // at the top of Now". Held in memory only, the row was gone after any
+    // relaunch while those lines still pointed at it (sense pass 6).
+    func test_state_expiredSurvivesARelaunch() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("d75-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = dir.appendingPathComponent("claude-sign-in.json")
+
+        XCTAssertFalse(ClaudeSignInState(store: store).expired, "nothing recorded yet: no row")
+        ClaudeSignInState(store: store).record(expired: true)
+        XCTAssertTrue(ClaudeSignInState(store: store).expired, "a relaunch keeps the row the chat line names")
+        ClaudeSignInState(store: store).record(expired: false)
+        XCTAssertFalse(ClaudeSignInState(store: store).expired, "a run that worked clears it for the next launch too")
+    }
+
+    func test_state_startSignInThatLandsClearsTheStoredRow() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("d75-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = dir.appendingPathComponent("claude-sign-in.json")
+        let s = ClaudeSignInState(store: store)
+        s.record(expired: true)
+        let done = expectation(description: "sign-in flow ran")
+        s.startSignIn(using: { done.fulfill(); return true })
+        await fulfillment(of: [done], timeout: 2)
+        for _ in 0..<50 where s.expired { await Task.yield() }
+        XCTAssertFalse(ClaudeSignInState(store: store).expired, "a sign-in that landed is remembered too")
+    }
+
+    func test_state_anUnreadableStoreReadsAsNoRow() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("d75-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = dir.appendingPathComponent("claude-sign-in.json")
+        try Data("not json".utf8).write(to: store)
+        XCTAssertFalse(ClaudeSignInState(store: store).expired)
+    }
+
+    func test_shared_storesUnderTheSupportFolder() {
+        XCTAssertEqual(ClaudeSignInState.sharedStore.deletingLastPathComponent().standardizedFileURL,
+                       Persistence.supportDir.standardizedFileURL)
     }
 
     func test_startSignIn_runsTheExistingFlowAndClearsOnSuccess() async {

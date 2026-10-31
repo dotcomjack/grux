@@ -44,4 +44,29 @@ final class DesignStudioEstimateLineTests: XCTestCase {
         let body = String(src[start.upperBound...].prefix(600))
         XCTAssertTrue(body.contains(".fixedSize(horizontal: false, vertical: true)"), "the estimate line is cut, not wrapped")
     }
+
+    /// D59 follow-on: once the line can start on Local model, the API route is
+    /// an alternative, and its label is only an amount ("$0.0418 estimated"),
+    /// so "Other routes: $0.0418 estimated; ..." named no route. Every segment
+    /// names its route, for the labels CostMeter really writes, with and
+    /// without a review cost, whichever route is chosen.
+    func test_everyOtherRouteNamesItself() {
+        let names: [ExecutionRoute: String] = [.api: "API key", .subscriptionCLI: "subscription", .localModel: "local"]
+        for critique in [0.0, 0.01] {
+            let routes = CostMeter.routeComparison(inputTokens: 8000, maxOutputTokens: 2000,
+                                                   modelId: "claude-sonnet-5-5", critiqueUSD: critique)
+            for chosen in routes {
+                let others = routes.filter { $0.route != chosen.route }
+                let line = DesignStudioView.estimateText(DesignRunEstimate(
+                    inputTokens: 8000, maxOutputTokens: 2000, primary: chosen, alternatives: others))
+                let tail = try? XCTUnwrap(line.components(separatedBy: ". Other routes: ").last)
+                let segments = (tail ?? "").components(separatedBy: "; ")
+                XCTAssertEqual(segments.count, others.count, line)
+                for (segment, other) in zip(segments, others) {
+                    XCTAssertTrue(segment.contains(names[other.route]!),
+                                  "\"\(segment)\" does not name \(other.route.displayName) (chosen \(chosen.route), review \(critique))")
+                }
+            }
+        }
+    }
 }

@@ -33,7 +33,7 @@ struct CapabilityGate<Content: View>: View {
         // Recomputed on every render on purpose. Permissions are live system
         // reads, so pasting a key or granting a permission in another window
         // clears the card without a relaunch.
-        let needsSetup = FeatureRegistry.state(forTab: tabKey) == .needsSetup
+        let needsSetup = Self.showsSetupCard(forTab: tabKey)
 
         ZStack(alignment: .top) {
             if !needsSetup || showsFeatureBehind {
@@ -65,6 +65,20 @@ struct CapabilityGate<Content: View>: View {
                     .transition(.opacity)
             }
         }
+    }
+}
+
+extension CapabilityGate {
+    /// Whether an opened pane draws the setup card over itself.
+    ///
+    /// NOT `FeatureRegistry.state(forTab:)`. That answers `.notChosen` for a
+    /// feature left out of the onboarding selection before it reads a single
+    /// capability, so a pane opened anyway (Recent, search, a link) drew no
+    /// card: Meetings offered Start with the microphone and screen recording
+    /// both refused (D57, 2026-10-30). The selection decides what the sidebar
+    /// lists; a pane somebody opened still says what it needs.
+    static func showsSetupCard(forTab tabKey: String) -> Bool {
+        !FeatureRegistry.missing(forTab: tabKey).isEmpty
     }
 }
 

@@ -169,7 +169,10 @@ struct NotesView: View {
                     .help(note.pinned ? "Unpin" : "Pin to top")
 
                     Button {
-                        deleteNote(note.id)
+                        DestructiveConfirm.shared.ask(
+                            question: "Delete the note \(DestructiveConfirm.quoted(note.title, or: "with no title"))?",
+                            detail: "Its text is deleted. Grux cannot bring it back.",
+                            confirmLabel: "Delete note") { deleteNote(note.id) }
                     } label: {
                         Image(systemName: "trash")
                             .font(.system(size: 12))

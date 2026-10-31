@@ -26,9 +26,9 @@ enum WebResearch {
         var errorDescription: String? {
             switch self {
             case .missingBraveKey:
-                return "Brave Search API key not set. Add it under Settings → Upgrades."
+                return "Brave Search API key not set. Add it in Settings, Data & Security, Data & Capabilities, Real-time web research."
             case .missingAnthropicKey:
-                return "Anthropic API key not set. Add it under Settings → Model & API."
+                return "Anthropic API key not set. Add it in Settings, Models."
             case .http(let code, let body):
                 return "Web search HTTP \(code): \(body.prefix(160))"
             case .empty:
@@ -64,11 +64,11 @@ enum WebResearch {
             return "error: web research unavailable in offline mode."
         }
         guard state.config.webResearchEnabled else {
-            return "error: web research is disabled. Enable it in Settings → Upgrades."
+            return "error: web research is disabled. Turn it on in Settings, Data & Security, Data & Capabilities, Real-time web research."
         }
         let braveKey = state.braveKey
         guard !braveKey.isEmpty else {
-            return "error: Brave Search API key not set. Add it under Settings → Upgrades. (Brave's free plan covers ~1,000 searches/month.)"
+            return "error: Brave Search API key not set. Add it in Settings, Data & Security, Data & Capabilities, Real-time web research. (Brave's free plan covers ~1,000 searches/month.)"
         }
         // ROUTED, AND THE ROUTE PICKS THE MODEL. The summarizer built its own
         // ClaudeClient and gated on AppState.anthropicKey, so web research

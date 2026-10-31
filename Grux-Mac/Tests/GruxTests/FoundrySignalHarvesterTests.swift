@@ -113,6 +113,107 @@ final class FoundrySignalHarvesterTests: XCTestCase {
         XCTAssertTrue(signals[0].evidence.contains("worker 2 exited 1"))
     }
 
+    /// Self-Upgrade's own build jobs are not problems a person hit: a build
+    /// that failed (an expired sign-in, a red suite) became proposal 427D17A0
+    /// "Swarm job failed: 'foundry: fs-audit: ...'", which builds and fails
+    /// again (sense pass 5, D67). Every state, error steps included.
+    func testSwarmSkipsSelfUpgradesOwnJobsInEveryState() {
+        let errors = (0..<9).map { AgentStep(kind: .error, text: "e\($0)") }
+        for status in [AgentJob.Status.failed, .cancelled, .waiting, .paused, .running, .queued, .done] {
+            var job = AgentJob(title: RDWorker.escalationTitlePrefix + "fs-audit: 36 gated outcomes", goal: "g",
+                               status: status, rootDir: "/tmp", errorMessage: "workers failed: architect")
+            job.startedBy = .selfUpgrade
+            job.pausedReason = .authLimitHit
+            job.lastHeartbeatAt = Date(timeIntervalSinceNow: -3600)
+            XCTAssertEqual(SwarmSignalSource.signals(for: job, steps: errors), [], "\(status) self-upgrade job filed a signal")
+        }
+    }
+
+    /// One stored before `startedBy` existed is known by its title, the same
+    /// rule chat uses (`AgentService.reportsEndToChat`); a person's job whose
+    /// title happens to start the same way, made after, still counts.
+    func testSwarmSkipsAnOlderSelfUpgradeJobByTitleOnly() {
+        let before = AgentService.startedByIntroduced.addingTimeInterval(-1)
+        let older = AgentJob(title: RDWorker.escalationTitlePrefix + "x", goal: "g", status: .failed,
+                             createdAt: before, rootDir: "/tmp", errorMessage: "boom")
+        XCTAssertEqual(SwarmSignalSource.signals(for: older, steps: []), [])
+        let persons = AgentJob(title: RDWorker.escalationTitlePrefix + "x", goal: "g", status: .failed,
+                               createdAt: AgentService.startedByIntroduced, rootDir: "/tmp", errorMessage: "boom")
+        XCTAssertEqual(SwarmSignalSource.signals(for: persons, steps: []).count, 1)
+        let olderPersons = AgentJob(title: "Ship the thing", goal: "g", status: .failed,
+                                    createdAt: before, rootDir: "/tmp", errorMessage: "boom")
+        XCTAssertEqual(SwarmSignalSource.signals(for: olderPersons, steps: []).count, 1)
+    }
+
+    /// A job that failed because Claude's sign-in expired is fixed by signing
+    /// in, which Now and Agents already say. Filed here it became proposal
+    /// 37A54595 "Swarm job failed: 'Reply with the single word hi...' (and 8
+    /// more like it)", 90 of 100, about $3 of building (sense pass 6, D76).
+    /// Known by the worker's verdict, or by the job's own words for a job
+    /// stored before workers carried one; error steps included.
+    func testSwarmSkipsAJobThatFailedOnTheSignIn() {
+        let errors = (0..<9).map { AgentStep(kind: .error, text: "Failed to authenticate \($0)") }
+        var worker = SwarmWorkerSpec(role: .generic, label: "solo", goal: "g", cwd: "/tmp", model: "m", budgetUSD: 1)
+        worker.status = .failed
+        worker.interruption = WorkerInterruption(kind: .signInExpired)
+        let byVerdict = AgentJob(title: "Reply with the single word hi", goal: "g", status: .failed,
+                                 workers: [worker], rootDir: "/tmp", errorMessage: "workers failed: solo")
+        XCTAssertEqual(SwarmSignalSource.signals(for: byVerdict, steps: errors), [], "verdict")
+        for words in ["workers failed: solo (Failed to authenticate: OAuth session expired and could not be refreshed)",
+                      "Failed to authenticate. API Error: 401",
+                      "OAuth token has expired. Please run /login"] {
+            let byWords = AgentJob(title: "Reply with the single word hi", goal: "g", status: .failed,
+                                   rootDir: "/tmp", errorMessage: words)
+            XCTAssertEqual(SwarmSignalSource.signals(for: byWords, steps: errors), [], words)
+        }
+        // Any other failure still files, and so does a worker that was
+        // interrupted by the sign-in, signed in again, and then failed for
+        // its own reasons.
+        var retried = worker
+        retried.interruption = WorkerInterruption(kind: .signInExpired)
+        retried.status = .done
+        var other = worker
+        other.interruption = nil
+        let otherFailure = AgentJob(title: "Ship the thing", goal: "g", status: .failed,
+                                    workers: [retried, other], rootDir: "/tmp", errorMessage: "workers failed: solo (exit 1)")
+        XCTAssertEqual(SwarmSignalSource.signals(for: otherFailure, steps: []).count, 1)
+    }
+
+    /// W19-P3 item 5: one worker failing on the sign-in hid a sibling that
+    /// failed for its own reasons, by the verdict and by the job's words alike.
+    /// Signing in fixes only the first; the second still files.
+    func testASiblingsOwnFailureFilesBesideASignInFailure() {
+        var signedOut = SwarmWorkerSpec(role: .generic, label: "a", goal: "g", cwd: "/tmp", model: "m", budgetUSD: 1)
+        signedOut.status = .failed
+        signedOut.interruption = WorkerInterruption(kind: .signInExpired)
+        var broken = SwarmWorkerSpec(role: .generic, label: "b", goal: "g", cwd: "/tmp", model: "m", budgetUSD: 1)
+        broken.status = .failed
+        for words in ["workers failed: a (Failed to authenticate: OAuth session expired), b (exit 1)",
+                      "workers failed: a, b"] {
+            for order in [[signedOut, broken], [broken, signedOut]] {
+                let job = AgentJob(title: "Ship the thing", goal: "g", status: .failed,
+                                   workers: order, rootDir: "/tmp", errorMessage: words)
+                let filed = SwarmSignalSource.signals(for: job, steps: [])
+                XCTAssertEqual(filed.count, 1, "\(words) \(order.map(\.label))")
+                XCTAssertTrue(filed.first?.summary.contains("Swarm job failed") == true, words)
+            }
+        }
+        // Every failed worker failed on the sign-in: still nothing to build,
+        // whatever the others did.
+        var finished = broken
+        finished.status = .done
+        let onlySignIn = AgentJob(title: "Ship the thing", goal: "g", status: .failed,
+                                  workers: [signedOut, finished, signedOut], rootDir: "/tmp",
+                                  errorMessage: "workers failed: a, a")
+        XCTAssertEqual(SwarmSignalSource.signals(for: onlySignIn, steps: []), [])
+        // Wave 20 round 1: no worker carries a verdict, so the job's own words
+        // judge it, as before (D76).
+        let noVerdict = AgentJob(title: "Ship the thing", goal: "g", status: .failed, workers: [broken],
+                                 rootDir: "/tmp",
+                                 errorMessage: "workers failed: b (Failed to authenticate: OAuth session expired and could not be refreshed)")
+        XCTAssertEqual(SwarmSignalSource.signals(for: noVerdict, steps: []), [])
+    }
+
     func testSwarmAuthLimitInterruptionBecomesCostSignal() {
         var job = AgentJob(title: "Long refactor", goal: "g", status: .waiting, rootDir: "/tmp")
         job.pausedReason = .authLimitHit
@@ -325,6 +426,40 @@ final class FoundrySignalHarvesterTests: XCTestCase {
         """
         let signals = TelemetrySignalSource.signalsFromFSAudit(raw, since: Date(timeIntervalSinceNow: -3600))
         XCTAssertTrue(signals.isEmpty)
+    }
+
+    // D84: a quiet fs-audit log means nobody used the filesystem tools. That is
+    // not a problem to build code for, so it files nothing (proposal 3B7902DA
+    // was "fs-audit: log silent for 7d"). On, one second under and one second
+    // over the freshness window.
+    func testTelemetryFSAuditSilentLogFilesNothing() {
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let asOf = Date(timeIntervalSince1970: 1_800_000_000)
+        let window: TimeInterval = 7 * 24 * 3600
+        func audit(ageSeconds: TimeInterval, outcome: String) -> String {
+            let ts = iso.string(from: asOf.addingTimeInterval(-ageSeconds))
+            return """
+            {"bytes":0,"outcome":"\(outcome)","path":"/etc/hosts","reason":"outside sandbox","resolved":"/etc/hosts","tool":"fs_read","ts":"\(ts)"}
+            """
+        }
+        func harvest(_ raw: String) -> [FoundrySignal] {
+            TelemetrySignalSource.signalsFromFSAudit(raw, since: asOf.addingTimeInterval(-window), asOf: asOf, staleAfter: window)
+        }
+        for outcome in ["ok", "denied"] {
+            XCTAssertEqual(harvest(audit(ageSeconds: window + 1, outcome: outcome)), [],
+                           "a log silent one second past the window files nothing (\(outcome))")
+            XCTAssertEqual(harvest(audit(ageSeconds: 30 * 24 * 3600, outcome: outcome)), [],
+                           "a log silent for a month files nothing (\(outcome))")
+            XCTAssertEqual(harvest(audit(ageSeconds: window + 1, outcome: outcome)
+                                   + "\n" + audit(ageSeconds: 90 * 24 * 3600, outcome: "denied")), [],
+                           "older denials behind a silent log stay unmined (\(outcome))")
+        }
+        XCTAssertEqual(harvest(audit(ageSeconds: window, outcome: "ok")), [], "one ok call exactly on the window files nothing")
+        XCTAssertEqual(harvest(audit(ageSeconds: window - 1, outcome: "denied")).count, 1,
+                       "a denial one second inside the window still files")
+        XCTAssertEqual(harvest(audit(ageSeconds: window, outcome: "denied")).count, 1,
+                       "a denial exactly on the window edge still files")
     }
 
     func testTelemetryErrorLogScan() {

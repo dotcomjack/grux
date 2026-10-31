@@ -587,7 +587,7 @@ public actor SwarmWorker {
             }
         }
 
-        proc.waitUntilExit()
+        await proc.waitForExit()
         let exitCode = proc.terminationStatus
 
         // Retroactively classify which TTL fired (if any). Three cases the

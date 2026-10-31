@@ -54,6 +54,8 @@ enum ToolReplyCopy {
             return eventCreated(body: body, input: input)
         case "documents_list":
             return documents(result: result, query: (input["query"] as? String) ?? "")
+        case "foundry_upgrade_cycle":
+            return foundryCycle(body)
         default:
             return readable(body)
         }
@@ -136,6 +138,7 @@ enum ToolReplyCopy {
         case "update_note": return "the change to your note\(named)"
         case "create_event": return "your event\(named)"
         case "create_contact": return "the new contact"
+        case "foundry_upgrade_cycle": return "the self-upgrade cycle"
         case "compose_email": return (input["to"] as? String).map { "your email to \($0)" } ?? "your email"
         case "shell_run", "shell_run_confirmed", "shell_start":
             return (input["command"] as? String).map { "the command `\($0)`" } ?? "the command"
@@ -217,6 +220,33 @@ enum ToolReplyCopy {
     }
 
     // MARK: - Pieces
+
+    /// The self-upgrade cycle's result (`FoundryEngine.triggerManualCycle` and
+    /// `manualCycleRefusal`, behind `foundry: `), in the words of its pane.
+    private static func foundryCycle(_ body: String) -> String {
+        let r = body.hasPrefix("foundry:") ? strip(prefix: "foundry:", from: body) : body
+        if r.hasPrefix("not started: self-upgrade is off") {
+            return "Self-upgrade is off, so I did not start anything. Turn it on in Self-Upgrade or Settings, then ask again."
+        }
+        if r.hasPrefix("started:") {
+            let accepted = r.range(of: #"\+ (\d+) accepted"#, options: .regularExpression)
+                .flatMap { Int(r[$0].filter(\.isNumber)) } ?? 0
+            let builds = accepted == 0
+                ? "nothing is built until you accept it"
+                : "it builds the \(accepted) proposal\(accepted == 1 ? "" : "s") you already accepted"
+            return "Started a self-upgrade cycle. What it finds lands in Self-Upgrade, and \(builds)."
+        }
+        if r.hasPrefix("already running"),
+           let spend = r.range(of: #"current spend (.+)$"#, options: .regularExpression) {
+            let label = strip(prefix: "current spend", from: String(r[spend]))
+            return sentence("A self-upgrade cycle is already running. Estimated spend so far: \(label)")
+        }
+        if r.hasPrefix("yielded:") {
+            return sentence("I could not start a self-upgrade cycle right now: \(strip(prefix: "yielded:", from: r))")
+        }
+        if r.hasPrefix("could not start") { return "I could not start a self-upgrade cycle right now." }
+        return readable(r)
+    }
 
     private static func pending(tool: String, input: [String: Any]) -> String {
         switch tool {

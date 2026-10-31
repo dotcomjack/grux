@@ -97,9 +97,13 @@ public struct AgentJob: Codable, Identifiable, Sendable {
 
     public var isTerminal: Bool { status.isTerminal }
 
-    /// A failed job whose worker stopped on an expired Claude sign-in.
+    /// A failed job whose failed worker stopped on an expired Claude sign-in.
+    /// Only failed workers count: one retried after a sign-in and then
+    /// finished still carries its old interruption.
     public var failedOnSignIn: Bool {
-        status == .failed && workers.contains { $0.interruption?.kind == .signInExpired }
+        status == .failed && workers.contains {
+            $0.status == .failed && $0.interruption?.kind == .signInExpired
+        }
     }
 }
 

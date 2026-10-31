@@ -3100,6 +3100,9 @@ private struct CreativeStudioDetailSheet: View {
     @State private var shownImagePath: String? = nil
     @State private var newTag: String = ""
     @State private var fbNote: String = ""
+    /// The trash pill asks through this sheet's own dialog (wave 24: it deleted the
+    /// render, its images and its clip on one click; a sheet is its own window).
+    @State private var confirmingDelete = false
 
     // Always read the live bundle from the engine so approvals and a freshly
     // animated clip appear in place without reopening the sheet.
@@ -3124,6 +3127,19 @@ private struct CreativeStudioDetailSheet: View {
                 .frame(minWidth: 720, minHeight: 580)
                 .background(GruxTheme.base)
             }
+        }
+        .confirmationDialog(
+            "Delete the render \(DestructiveConfirm.quoted(bundle?.utterance ?? "", or: "with no prompt"))?",
+            isPresented: $confirmingDelete,
+            titleVisibility: .visible
+        ) {
+            Button("Delete render", role: .destructive) {
+                if let b = bundle { engine.delete(b) }
+                onDismiss()
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Its images, any clip and its saved details are removed from this Mac. This cannot be undone.")
         }
     }
 
@@ -3331,7 +3347,7 @@ private struct CreativeStudioDetailSheet: View {
             .fixedSize()
             Spacer()
             pill(icon: "trash", label: "", color: GruxTheme.destructiveRose) {
-                engine.delete(b); onDismiss()
+                confirmingDelete = true
             }
         }
     }

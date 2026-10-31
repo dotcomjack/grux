@@ -68,6 +68,13 @@ struct CapabilityCredentialsSection: View {
             : "Every key Grux can use. \(configured) of \(offered) set, and each stays in your Mac's Keychain."
     }
 
+    /// The sentence under a credential's name: the contract's own sentence, so the reason
+    /// this credential exists reads in the same words the setup card used to get them here,
+    /// minus " in Settings". This row IS Settings, directly above the field (D63).
+    static func rowLine(_ req: SetupRequirement) -> String {
+        req.remediation.replacingOccurrences(of: " in Settings", with: "")
+    }
+
     @ViewBuilder
     private func row(_ req: SetupRequirement) -> some View {
         let isConfigured = CapabilityResolver.isSatisfied(req)
@@ -106,9 +113,7 @@ struct CapabilityCredentialsSection: View {
                 }
             }
 
-            // The contract's own sentence, so the reason this credential exists
-            // is stated in the same words the setup card used to get them here.
-            Text(req.remediation)
+            Text(Self.rowLine(req))
                 .font(GruxTheme.Font.caption)
                 .foregroundStyle(GruxTheme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)

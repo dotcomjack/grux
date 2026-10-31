@@ -166,6 +166,7 @@ final class GruxUpdater: ObservableObject {
                 let restored = (try? restorePreviousBuild()) != nil
                 tripAutoLandPause(
                     reason: "\(Self.breakerCrashThreshold) crashes at launch inside \(Int(Self.crashLoopWindow / 60)) minutes; restored=\(restored).",
+                    restored: restored,
                     now: now
                 )
                 // Any open watch is moot once the breaker tripped: clear it so
@@ -761,6 +762,9 @@ final class GruxUpdater: ObservableObject {
         var paused: Bool = false
         var trippedAt: Date?
         var reason: String = ""
+        // Whether the trip went back to the last-good build. Absent in a pause an
+        // older build wrote, so the pane makes no claim either way for it.
+        var restored: Bool?
     }
 
     // True when the crash-loop breaker has tripped. The governor checks this
@@ -770,22 +774,45 @@ final class GruxUpdater: ObservableObject {
     }
 
     // Trips the breaker: auto-land pauses until cleared. Idempotent.
-    func tripAutoLandPause(reason: String, now: Date = Date()) {
+    // Posted when the breaker trips or clears, so an open Self-Upgrade pane redraws
+    // at once whichever door cleared it.
+    static let autoLandPauseChanged = Notification.Name("grux.foundry.autoLandPauseChanged")
+
+    // What the Self-Upgrade pane says about a tripped breaker: when, and whether
+    // it went back to the last-good build. Nil while not paused.
+    struct AutoLandPause: Equatable {
+        var trippedAt: Date?
+        var restored: Bool?
+    }
+
+    func autoLandPause() -> AutoLandPause? {
+        let state = Persistence.load(BreakerState.self, from: autoLandPausedURL, fallback: BreakerState())
+        return state.paused ? AutoLandPause(trippedAt: state.trippedAt, restored: state.restored) : nil
+    }
+
+    func tripAutoLandPause(reason: String, restored: Bool? = nil, now: Date = Date()) {
         guard !isAutoLandPaused() else { return }
-        Persistence.save(BreakerState(paused: true, trippedAt: now, reason: reason), to: autoLandPausedURL)
+        Persistence.save(BreakerState(paused: true, trippedAt: now, reason: reason, restored: restored), to: autoLandPausedURL)
         WakeLog.shared.log("foundry-updater: auto-land PAUSED (\(reason))")
         timeline.append(FoundryTimelineEntry(
             kind: .rollback,
             title: "Auto-land paused (crash-loop breaker)",
-            detail: "\(reason) Restored the last-good build. Self-install stays paused until a human clears it."
+            detail: FoundrySchedule.pauseLine(AutoLandPause(trippedAt: nil, restored: restored), now: now)
         ))
+        NotificationCenter.default.post(name: Self.autoLandPauseChanged, object: nil)
     }
 
-    // Human clears the breaker (a Self-Upgrade tab control or CLI trigger
-    // calls this). Self-install and the governor resume on the next tick.
+    // Human clears the breaker (the Self-Upgrade pane's Resume button and the
+    // fire-foundry-resume trigger call this). Self-install and the governor resume on the next tick.
+    // The crash run starts over from the resume, so one more launch crash does not
+    // re-trip at once on the crashes that already tripped it. Only a real pause:
+    // with nothing paused, the crashes a watched new build has counted are kept.
     func clearAutoLandPause() {
+        let wasPaused = isAutoLandPaused()
         try? FileManager.default.removeItem(at: autoLandPausedURL)
+        if wasPaused { resetCrashRun() }
         WakeLog.shared.log("foundry-updater: auto-land pause cleared")
+        NotificationCenter.default.post(name: Self.autoLandPauseChanged, object: nil)
     }
 
     // A kept build resets the consecutive-crash run so the breaker measures

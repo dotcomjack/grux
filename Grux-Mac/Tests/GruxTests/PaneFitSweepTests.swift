@@ -48,6 +48,16 @@ struct PaneFitSlot: Layout {
     }
 }
 
+/// Fluid until 0.25 s after it appears, then 1,000pt wide: content that
+/// arrives late, as a pane's loaded rows do.
+struct PaneFitLateWidening: View {
+    @State private var wide = false
+    var body: some View {
+        Color.red.frame(width: wide ? 1_000 : nil, height: 20).frame(maxWidth: wide ? nil : .infinity)
+            .onAppear { DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { wide = true } }
+    }
+}
+
 /// One surface at one width.
 struct PaneFitResult {
     let surface: String
@@ -124,6 +134,42 @@ enum PaneFitHarness {
                                  settle: TimeInterval = 0.35, writePNG: Bool = true,
                                  findFirstInk: Bool = false, onBase: Bool = true,
                                  @ViewBuilder _ content: () -> V) -> PaneFitResult {
+        let staged = stage(surface, width: width, height: height, writePNG: writePNG,
+                           findFirstInk: findFirstInk, onBase: onBase, content)
+        pump(settle)
+        return read(staged)
+    }
+
+    /// One surface at several widths, every host laid out first and then all
+    /// settled together in ONE `settle`, so each host has had at least the
+    /// whole settle before it is read, as `measure` gives it, for one wait
+    /// instead of one per width (T1 part 3). Only for a surface whose hosts
+    /// share no state that a second live copy changes: Settings spends its
+    /// deep link on appear, so its sweep measures one width at a time.
+    static func measureEach<V: View>(_ surface: String, widths: [CGFloat], height: CGFloat,
+                                     settle: TimeInterval = 0.35, writePNG: Bool = true,
+                                     @ViewBuilder _ content: @escaping () -> V) -> [PaneFitResult] {
+        let staged = widths.map { stage(surface, width: $0, height: height, writePNG: writePNG,
+                                        findFirstInk: false, onBase: true, content) }
+        pump(settle)
+        return staged.map(read)
+    }
+
+    /// A surface hosted and laid out in its window, not yet settled or read.
+    struct Staged {
+        let surface: String
+        let width: CGFloat
+        let writePNG: Bool
+        let findFirstInk: Bool
+        let box: PaneFitBox
+        let cuts: GruxChipCuts
+        let host: NSView
+        let window: NSWindow
+    }
+
+    static func stage<V: View>(_ surface: String, width: CGFloat, height: CGFloat,
+                               writePNG: Bool, findFirstInk: Bool, onBase: Bool,
+                               _ content: () -> V) -> Staged {
         let box = PaneFitBox()
         let cuts = GruxChipCuts()
         let root = HStack(spacing: 0) {
@@ -147,7 +193,12 @@ enum PaneFitHarness {
         window.backgroundColor = .clear
         window.contentView = host
         host.layoutSubtreeIfNeeded()
-        pump(settle)
+        return Staged(surface: surface, width: width, writePNG: writePNG, findFirstInk: findFirstInk,
+                      box: box, cuts: cuts, host: host, window: window)
+    }
+
+    static func read(_ staged: Staged) -> PaneFitResult {
+        let host = staged.host, width = staged.width
         host.layoutSubtreeIfNeeded()
 
         var bleedLeading: CGFloat = 0
@@ -156,21 +207,21 @@ enum PaneFitHarness {
         if let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
             host.cacheDisplay(in: host.bounds, to: rep)
             (bleedLeading, bleedTrailing) = bleed(rep, slotWidth: width)
-            if findFirstInk { firstInk = firstInkColumn(rep, slotWidth: width) }
-            if writePNG { write(rep, slotWidth: width, name: "\(surface)-\(Int(width))") }
+            if staged.findFirstInk { firstInk = firstInkColumn(rep, slotWidth: width) }
+            if staged.writePNG { write(rep, slotWidth: width, name: "\(staged.surface)-\(Int(width))") }
         }
-        let fitting = box.child.width
+        let fitting = staged.box.child.width
         let overflowing = (fitting > width + PaneFitResult.tolerance || bleedLeading > PaneFitResult.tolerance
                            || bleedTrailing > PaneFitResult.tolerance)
             ? layersPastTheSlot(in: host, slotWidth: width) : []
         // Never `close()`: a programmatic NSWindow is released when closed, and
         // ARC releases it again, which crashes the next autorelease pool pop.
-        window.contentView = nil
+        staged.window.contentView = nil
         // Every layout pass places the chips again, so one cut is recorded
         // once per pass: it counts once.
         var cutChips: [GruxChipCuts.Cut] = []
-        for cut in cuts.cuts where !cutChips.contains(cut) { cutChips.append(cut) }
-        return PaneFitResult(surface: surface, width: width, fitting: fitting,
+        for cut in staged.cuts.cuts where !cutChips.contains(cut) { cutChips.append(cut) }
+        return PaneFitResult(surface: staged.surface, width: width, fitting: fitting,
                              bleedLeading: bleedLeading, bleedTrailing: bleedTrailing,
                              overflowingLayers: overflowing, firstInk: firstInk, cutChips: cutChips)
     }
@@ -501,6 +552,27 @@ final class PaneFitSweepTests: XCTestCase {
         PaneFitHarness.report("planted", [planted, fine, scrolled, sideways, cut, whole])
     }
 
+    /// `measureEach` settles every width in one wait: a surface whose
+    /// layout changes late, after it first appears, must still be read after
+    /// the change at every width, as `measure` reads it, or batching the
+    /// sweep would pass a pane that overflows once its content arrives.
+    /// The change lands 0.25 s after appearing, inside the 0.35 s settle.
+    func test_aBatchedSweepStillSeesALateLayoutChange() {
+        let w = GruxLayout.detailContentMin
+        let late = PaneFitHarness.measureEach("planted-late", widths: [w, w + 40, w + 80], height: 200,
+                                              writePNG: false) { PaneFitLateWidening() }
+        XCTAssertEqual(late.count, 3)
+        for r in late {
+            XCTAssertFalse(r.fits, "a layout that widened 0.25 s after appearing was read before it widened: \(r.line)")
+            XCTAssertGreaterThan(r.fitting, r.width + 100, "read before the late layout: \(r.line)")
+        }
+        // The same batch shape with nothing late fits, so the planted one is
+        // what failed, not the batch.
+        let steady = PaneFitHarness.measureEach("planted-steady", widths: [w, w + 40, w + 80], height: 200,
+                                                writePNG: false) { Color.red.frame(maxWidth: .infinity).frame(height: 20) }
+        for r in steady { XCTAssertTrue(r.fits, "a fluid view read as overflowing in a batch: \(r.line)") }
+    }
+
     /// The container, red first. The shell's pane column, holding a surface
     /// far wider than its pane, beside a transparent stand-in for the panel:
     /// contained, the surface takes the pane's width, draws nothing over the
@@ -572,10 +644,10 @@ final class PaneFitSweepTests: XCTestCase {
         var results: [PaneFitResult] = []
         for (name, tab) in Self.tabs {
             // The floor is the pane's honest minimum, which the window holds.
-            for w in [PaneMinimum.width(for: tab)] + Self.paneWidths.dropFirst() {
-                results.append(PaneFitHarness.measure(name, width: w, height: Self.paneHeight) {
-                    SurfacePane(selection: .constant(tab)).environment(\.hostedInPane, true)
-                })
+            // Its widths settle together (`measureEach`).
+            results += PaneFitHarness.measureEach(name, widths: [PaneMinimum.width(for: tab)] + Self.paneWidths.dropFirst(),
+                                                  height: Self.paneHeight) {
+                SurfacePane(selection: .constant(tab)).environment(\.hostedInPane, true)
             }
         }
         assertAllFit("tabs", results)
@@ -638,11 +710,9 @@ final class PaneFitSweepTests: XCTestCase {
             }
             XCTAssertLessThanOrEqual(fitting, w, "tab-cognitionMap with decisions traced answered \(fitting)pt to a \(Int(w))pt pane")
         }
-        var results: [PaneFitResult] = []
-        for w in [floor] + Self.paneWidths.dropFirst() {
-            results.append(PaneFitHarness.measure("tab-cognitionMap-traced", width: w, height: Self.paneHeight) {
-                SurfacePane(selection: .constant(.cognitionMap)).environment(\.hostedInPane, true)
-            })
+        let results = PaneFitHarness.measureEach("tab-cognitionMap-traced", widths: [floor] + Self.paneWidths.dropFirst(),
+                                                 height: Self.paneHeight) {
+            SurfacePane(selection: .constant(.cognitionMap)).environment(\.hostedInPane, true)
         }
         assertAllFit("cognition-traced", results)
     }
@@ -824,12 +894,10 @@ final class PaneFitSweepTests: XCTestCase {
         ]
         var results: [PaneFitResult] = []
         for (name, card, action) in cards {
-            for w in Self.paneWidths {
-                results.append(PaneFitHarness.measure(name, width: w, height: 420) {
-                    FoundryProposalCard(card: card, action: action, copied: false,
-                                        onPrimary: {}, onCopyHandoff: {}, onNotNow: {})
-                        .padding(GruxSpacing.l)
-                })
+            results += PaneFitHarness.measureEach(name, widths: Self.paneWidths, height: 420) {
+                FoundryProposalCard(card: card, action: action, copied: false,
+                                    onPrimary: {}, onCopyHandoff: {}, onNotNow: {})
+                    .padding(GruxSpacing.l)
             }
         }
         assertAllFit("selfupgrade", results)
@@ -863,9 +931,7 @@ final class PaneFitSweepTests: XCTestCase {
         ]
         var results: [PaneFitResult] = []
         for (name, make) in sheets {
-            for w in Self.sheetWidths {
-                results.append(PaneFitHarness.measure(name, width: w, height: GruxLayout.sheetMaxHeight) { make() })
-            }
+            results += PaneFitHarness.measureEach(name, widths: Self.sheetWidths, height: GruxLayout.sheetMaxHeight) { make() }
         }
         // A popover is its own window at the one width it declares.
         results.append(PaneFitHarness.measure("popover-chat-threads", width: GruxLayout.listColumnIdeal,

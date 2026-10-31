@@ -326,14 +326,23 @@ echo "window $WINID, ${WINW}pt wide, $SHELLMODE shell, comparing from ${RAILFRAC
 # looking at was just created or unhidden by the bootstrap and is already showing
 # BOOT. There is nothing to diff against and nothing to prove: the first settled
 # capture IS the bootstrap tab.
+#
+# Headless, Grux names the pane it last drew in rendered-tab.txt, written after
+# the pane updated (SurfacePane), so a frame that names BOOT and still matches
+# PRE means the app was already on BOOT and no change is coming. Waiting all 20
+# tries for one cost about 11 s per sweep (measured 2026-10-29). It is read
+# BEFORE the grab, so the frame compared was asked for after the pane drew.
 PREV="$OUT/${PREFIX}-_baseline.png"
+RENDERED="$HOME/.grux/rendered-tab.txt"
 BOOTOK=""
 for i in $(seq 1 20); do
   sleep 0.2
+  DREW=""; [ -n "$HEADLESS" ] && DREW=$(cat "$RENDERED" 2>/dev/null)
   grab "$PREV" || continue
   if [ -z "$PRE" ]; then BOOTOK=1; break; fi
   BD=$(fdiff "$PRE" "$PREV") || exit 2
   if [ "${BD:-0}" -ge "$THRESH" ]; then BOOTOK=1; break; fi
+  [ "$DREW" = "$BOOT" ] && break
 done
 [ -n "$PRE" ] && rm -f "$PRE"
 # No baseline, nothing to compare a tab against, so no tab can be certified.

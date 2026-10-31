@@ -303,7 +303,7 @@ struct PresetsView: View {
             .frame(maxWidth: 280)
             .controlSize(.small)
             .onChange(of: editProvider) { _, _ in commit() }
-            Text("Pin which brain this preset uses. Local needs a discovered local server (Settings, Offline mode).")
+            Text("Pin which brain this preset uses. Local needs a discovered local server (Settings, Models, Offline mode).")
                 .font(GruxTheme.Font.microCaps)
                 .foregroundStyle(GruxTheme.textTertiary)
         }

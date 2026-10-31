@@ -5,6 +5,21 @@ import GruxAgentCore
 // live step timeline. Read-only for v1; cancel buttons available per job.
 
 struct AgentsView: View {
+    /// Every amount this pane shows, in the words the Usage card uses: "$1.23", "under $0.01",
+    /// "$0.00". It showed "$0.0000 of $5.00" (D81).
+    static func money(_ usd: Double) -> String {
+        DecisionUsageSummary.money(usd) ?? "$0.00"
+    }
+
+    /// "$1.23 of $5.00", or "$5.00, over the $5.00 budget" when the spend passed it: 5.004
+    /// rounds to "$5.00" too, so an overrun read as on budget (W22-P3 item 6).
+    static func spentOfBudget(_ spent: Double, _ budget: Double) -> String {
+        if spent.isFinite, budget.isFinite, spent > budget {
+            return "\(money(spent)), over the \(money(budget)) budget"
+        }
+        return "\(money(spent)) of \(money(budget))"
+    }
+
     @ObservedObject private var svc = AgentService.shared
     @ObservedObject private var appState = AppState.shared
     @Environment(\.openWindow) private var openWindow
@@ -171,9 +186,14 @@ struct AgentsView: View {
         if job.isTerminal {
             Divider()
             Button(role: .destructive) {
-                Task {
-                    await svc.deleteJob(job.id)
-                    if selection == job.id { selection = nil }
+                DestructiveConfirm.shared.ask(
+                    question: "Delete the job \(DestructiveConfirm.quoted(job.title, or: "with no title"))?",
+                    detail: "Its log and results are deleted. Grux cannot bring them back.",
+                    confirmLabel: "Delete job") {
+                    Task {
+                        await svc.deleteJob(job.id)
+                        if selection == job.id { selection = nil }
+                    }
                 }
             } label: {
                 Label("Delete job", systemImage: "trash")
@@ -217,7 +237,7 @@ struct AgentsView: View {
                      + (failed > 0 ? " · \(failed) failed" : "")
                      + (running > 0 ? " · \(running) running" : "")
                      + (paused > 0 ? " · \(paused) paused-for-auth" : ""))
-        lines.append("**Cost:** $\(String(format: "%.4f", job.spentUSD)) of $\(String(format: "%.2f", job.budgetUSD)) budget")
+        lines.append("**Cost:** \(AgentsView.spentOfBudget(job.spentUSD, job.budgetUSD))")
         lines.append("**Root dir:** `\(job.rootDir)`")
         lines.append("**Job ID:** `\(job.id)`")
         lines.append("")
@@ -227,7 +247,7 @@ struct AgentsView: View {
             lines.append("")
             lines.append("**Worker roster:**")
             for w in job.workers {
-                var line = "- `\(w.label)` (\(w.role.rawValue)) - \(w.status.rawValue), $\(String(format: "%.4f", w.spentUSD))"
+                var line = "- `\(w.label)` (\(w.role.rawValue)) - \(w.status.rawValue), \(AgentsView.money(w.spentUSD))"
                 if let err = w.errorMessage, !err.isEmpty {
                     line += " - ⚠️ \(err.prefix(120))"
                 }
@@ -249,7 +269,7 @@ struct AgentsView: View {
         var s = "Job: \(job.title)\n"
         s += "Status: \(job.status.rawValue)\n"
         s += "Workers: \(done)/\(job.workers.count) done\(failed > 0 ? " · \(failed) failed" : "")\n"
-        s += "Spent: $\(String(format: "%.4f", job.spentUSD)) of $\(String(format: "%.2f", job.budgetUSD))\n"
+        s += "Spent: \(AgentsView.spentOfBudget(job.spentUSD, job.budgetUSD))\n"
         s += "ID: \(job.id)\n"
         return s
     }
@@ -366,7 +386,7 @@ private struct JobRow: View {
                 Text("\(done)/\(job.workers.count) done")
                 if failed > 0 { Text("· \(failed) failed").foregroundStyle(.red) }
                 if paused > 0 { Text("· \(paused) paused").foregroundStyle(.yellow) }
-                Text("· $\(String(format: "%.4f", job.spentUSD))").foregroundStyle(.secondary)
+                Text("· \(AgentsView.money(job.spentUSD))").foregroundStyle(.secondary)
             }
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -444,7 +464,7 @@ struct JobDetailView: View {
             HStack(spacing: GruxSpacing.m) {
                 Label(job.status.rawValue, systemImage: "circle.fill")
                     .foregroundStyle(statusColor(job.status))
-                Text("$\(String(format: "%.4f", job.spentUSD)) of $\(String(format: "%.2f", job.budgetUSD))")
+                Text(AgentsView.spentOfBudget(job.spentUSD, job.budgetUSD))
                     .foregroundStyle(.secondary)
                 Text(job.id.prefix(8)).font(.caption).monospaced().foregroundStyle(.tertiary)
             }
@@ -476,7 +496,7 @@ struct JobDetailView: View {
                 Text(w.label).font(.headline).lineLimit(1)
             }
             Text(w.role.rawValue).font(.caption).foregroundStyle(.secondary)
-            Text("$\(String(format: "%.4f", w.spentUSD))").font(.caption2).foregroundStyle(.tertiary)
+            Text("\(AgentsView.money(w.spentUSD))").font(.caption2).foregroundStyle(.tertiary)
             if let err = w.errorMessage {
                 Text(err).font(.caption2).foregroundStyle(.red).lineLimit(1)
             }

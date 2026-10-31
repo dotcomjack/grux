@@ -9,10 +9,13 @@ struct DesignStudioView: View {
     @ObservedObject private var store = DesignProjectStore.shared
     @ObservedObject private var engine = DesignStudioEngine.shared
     @ObservedObject private var brandRegistry = CreativeBrandRegistry.shared
+    @ObservedObject private var registry = ModelRegistry.shared
 
     @State private var selection: UUID?
     @State private var brief: String = ""
-    @State private var route: ExecutionRoute = .api
+    // nil until the person picks a route; until then the route is one this
+    // Mac can run (D59), and it follows a local model that starts later.
+    @State private var pickedRoute: ExecutionRoute?
     @State private var draftMode = false
     @State private var pickedBrandSlug: String?
     @State private var previewRevision = 0
@@ -32,6 +35,12 @@ struct DesignStudioView: View {
     private var selectedProject: DesignProject? {
         guard let selection else { return nil }
         return store.projects.first { $0.id == selection }
+    }
+
+    private var route: ExecutionRoute {
+        pickedRoute ?? ExecutionRoute.startingRoute(
+            hasAnthropicKey: AnthropicKeyPresence.current(),
+            localModelUsable: registry.localUsable)
     }
 
     private var currentConfig: DesignRunConfig {
@@ -488,7 +497,7 @@ struct DesignStudioView: View {
         Menu {
             Section("Run with") {
                 ForEach(ExecutionRoute.allCases, id: \.self) { r in
-                    Button(r.displayName) { route = r }
+                    Button(r.displayName) { pickedRoute = r }
                 }
             }
         } label: {
@@ -722,10 +731,15 @@ struct DesignStudioView: View {
     // other routes after it as such. Never re-add "estimated" or a second figure.
     // D34: the others used to follow with the same " | " that joined them, so
     // "API key | subscription" read as one choice.
+    // The API route's label is only an amount, so as one of the other routes
+    // (once a keyless Mac starts on Local model, D59) it carries its name; the
+    // subscription and local labels already lead with theirs.
     static func estimateText(_ estimate: DesignRunEstimate) -> String {
         var out = "\(estimate.primary.label), \(estimate.primary.route.displayName)"
         if !estimate.alternatives.isEmpty {
-            out += ". Other routes: " + estimate.alternatives.map { $0.label }.joined(separator: "; ")
+            out += ". Other routes: " + estimate.alternatives.map { alt in
+                alt.route == .api ? "\(alt.route.displayName), \(alt.label)" : alt.label
+            }.joined(separator: "; ")
         }
         return out
     }

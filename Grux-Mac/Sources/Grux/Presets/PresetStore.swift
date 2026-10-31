@@ -51,6 +51,7 @@ final class PresetStore: ObservableObject {
         self.activeChatPresetId = payload.activeChatPresetId
         self.configBaseline = payload.configBaseline
         seedIfNeeded()
+        healSeededNotes()
         // Heal a dangling pointer (preset deleted out from under us by an
         // older build or a hand-edited file). Restore any orphaned config
         // baseline so config does not stay stuck on a vanished preset.
@@ -346,6 +347,26 @@ final class PresetStore: ObservableObject {
 
     // MARK: - Seeding
 
+    /// Seeded notes are saved once, so an install seeded before a wording fix
+    /// keeps the old words. Only a note that still reads EXACTLY as Grux
+    /// seeded it is replaced; a note the person edited is theirs.
+    static let seededNoteFixes: [String: String] = [
+        // D74: Settings has no "Offline mode" pane; the switch is in Models.
+        "Pinned to the local model. Slower, but private. Needs a discovered local server (Settings, Offline mode).":
+            "Pinned to the local model. Slower, but private. Needs a discovered local server (Settings, Models, Offline mode).",
+    ]
+
+    private func healSeededNotes() {
+        var changed = false
+        for i in presets.indices {
+            if let fixed = Self.seededNoteFixes[presets[i].notes] {
+                presets[i].notes = fixed
+                changed = true
+            }
+        }
+        if changed { scheduleSave() }
+    }
+
     private func seedIfNeeded() {
         guard !seeded else { return }
         seeded = true
@@ -403,7 +424,7 @@ final class PresetStore: ObservableObject {
                 kind: .chat,
                 systemPrompt: "This conversation stays on the local model. Keep it private, do not reach for cloud tools, and answer from what is on the machine.",
                 providerOverride: "local",
-                notes: "Pinned to the local model. Slower, but private. Needs a discovered local server (Settings, Offline mode)."
+                notes: "Pinned to the local model. Slower, but private. Needs a discovered local server (Settings, Models, Offline mode)."
             ),
             Preset(
                 name: "Voice Brief",

@@ -10,6 +10,7 @@ struct CalendarView: View {
     @State private var monthAnchor: Date = Date()
     @State private var selectedDay: Date = Foundation.Calendar.current.startOfDay(for: Date())
     @State private var monthEvents: [CalendarService.EventSummary] = []
+    @State private var writableCalendarIds: Set<String> = []
     @State private var hasAccess = false
     @State private var checkedAccess = false
     @State private var showNewEvent = false
@@ -283,16 +284,21 @@ struct CalendarView: View {
                     .foregroundStyle(GruxTheme.textTertiary)
             }
             Spacer(minLength: 0)
-            Button {
-                delete(ev)
-            } label: {
-                Image(systemName: "trash")
-                    .font(.system(size: 10))
-                    .foregroundStyle(GruxTheme.destructiveRose.opacity(0.85))
-                    .frame(width: 22, height: 22)
+            if Self.canDelete(ev, writableCalendarIds: writableCalendarIds) {
+                Button {
+                    DestructiveConfirm.shared.ask(
+                        question: "Delete \(DestructiveConfirm.quoted(ev.title, or: "this event"))?",
+                        detail: "It is removed from \(ev.calendarName) on every device that syncs it. Grux cannot bring it back.",
+                        confirmLabel: "Delete event") { delete(ev) }
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 10))
+                        .foregroundStyle(GruxTheme.destructiveRose.opacity(0.85))
+                        .frame(width: 22, height: 22)
+                }
+                .buttonStyle(.plain)
+                .help("Delete event")
             }
-            .buttonStyle(.plain)
-            .help("Delete event")
         }
         .padding(GruxSpacing.s)
         .background(RoundedRectangle(cornerRadius: GruxTheme.Radius.chip).fill(Color.white.opacity(0.045)))
@@ -335,6 +341,7 @@ struct CalendarView: View {
         let start = interval.start.addingTimeInterval(-7 * 86400)
         let end = interval.end.addingTimeInterval(7 * 86400)
         monthEvents = CalendarService.shared.events(from: start, to: end)
+        writableCalendarIds = Self.writableCalendarIds(CalendarService.shared.calendars())
         hasAccess = CalendarService.shared.hasAccess
     }
 
@@ -342,6 +349,17 @@ struct CalendarView: View {
         let dayStart = calendar.startOfDay(for: day)
         guard let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart) else { return [] }
         return monthEvents.filter { $0.start < dayEnd && $0.end > dayStart }
+    }
+
+    /// D92: a subscribed or holiday calendar is read-only, so its events get no delete
+    /// button (Halloween carried one that could only fail). A calendar Grux has not read
+    /// counts as read-only.
+    static func writableCalendarIds(_ calendars: [CalendarService.CalendarSummary]) -> Set<String> {
+        Set(calendars.filter(\.allowsModifications).map(\.id))
+    }
+
+    static func canDelete(_ ev: CalendarService.EventSummary, writableCalendarIds: Set<String>) -> Bool {
+        writableCalendarIds.contains(ev.calendarId)
     }
 
     private func delete(_ ev: CalendarService.EventSummary) {

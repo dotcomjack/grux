@@ -135,9 +135,12 @@ final class AppState: ObservableObject {
     func takeSettingsRequest(now: Date = Date(), appearing: Bool = false, viewID: UUID? = nil) -> String? {
         // A handed-back link nobody took within the window is dropped, so a
         // later plain open never lands on it.
-        if let back = handedBackAt {
-            handedBackAt = nil
-            if now.timeIntervalSince(back) >= Self.settingsRequestWindow { requestedSettingsTab = nil }
+        // Only that link: a fresh one written since is left alone (D55).
+        if let back = handedBack {
+            handedBack = nil
+            if requestedSettingsTab == back.tag, now.timeIntervalSince(back.at) >= Self.settingsRequestWindow {
+                requestedSettingsTab = nil
+            }
         }
         var tag: String?
         if let tab = requestedSettingsTab, !tab.isEmpty {
@@ -163,7 +166,7 @@ final class AppState: ObservableObject {
     /// When the most recent Settings view appeared, and when a link was last
     /// handed back (wave 13 round 2).
     private var lastSettingsAppearedAt: Date?
-    private var handedBackAt: Date?
+    private var handedBack: (tag: String, at: Date)?
 
     func settingsViewAppeared(now: Date = Date()) {
         liveSettingsViews += 1
@@ -178,13 +181,20 @@ final class AppState: ObservableObject {
     /// last Settings closing hands nothing back, so the gear opens plainly.
     func settingsViewDisappeared(viewID: UUID, now: Date = Date()) {
         liveSettingsViews = max(0, liveSettingsViews - 1)
+        // The last Settings went before anyone took a handed-back link (the
+        // pane closed in the same transaction): it is nobody's now, so the
+        // gear opens plainly (D55).
+        if liveSettingsViews == 0, let back = handedBack {
+            handedBack = nil
+            if requestedSettingsTab == back.tag { requestedSettingsTab = nil }
+        }
         guard let spent = spentSettingsRequest, spent.viewID == viewID else { return }
         spentSettingsRequest = nil
         guard liveSettingsViews > 0, now.timeIntervalSince(spent.at) < Self.settingsRequestWindow else { return }
         // Only a replacement: a Settings that appeared after the link was
         // spent. One already open (the pane under a closing window) keeps its place.
         guard let appeared = lastSettingsAppearedAt, appeared > spent.at else { return }
-        handedBackAt = now
+        handedBack = (spent.tag, now)
         requestedSettingsTab = spent.tag
     }
     // A section inside a tab, for a folded child with no key of its own:

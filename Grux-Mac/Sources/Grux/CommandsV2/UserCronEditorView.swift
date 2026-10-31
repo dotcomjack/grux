@@ -147,7 +147,10 @@ struct UserCronEditorView: View {
                             .labelsHidden()
                             .help(editEnabled ? "Enabled" : "Disabled")
                         Button {
-                            deleteJob(job.id)
+                            DestructiveConfirm.shared.ask(
+                                question: "Delete the schedule \(DestructiveConfirm.quoted(job.title, or: "with no title"))?",
+                                detail: "It stops running and is removed. Grux cannot bring it back.",
+                                confirmLabel: "Delete schedule") { deleteJob(job.id) }
                         } label: {
                             Image(systemName: "trash")
                                 .font(.system(size: 12))

@@ -1029,7 +1029,8 @@ struct WelcomeBackStep: View {
 /// Copy for How Grux works that another surface or a test also reads.
 enum HowItWorksCopy {
     static let decisionsKeyTitle = "The Decisions key"
-    static let decisionsKeyBody = "Grux decides what you meant on this Mac, for free. A Decisions key (Jev, from TypeSafe) "
-        + "makes those calls faster and surer: a busy day of 265 decisions measured $0.02. Add one in Integrations, "
+    static let decisionsKeyBody = "Grux decides what you meant on this Mac, for free, matching what you say word for word. "
+        + "A Decisions key (Jev, from TypeSafe) also judges what you meant when you put it another way: a busy day of "
+        + "265 decisions measured $0.02. Add one in Integrations, "
         + "or in the extras at the end of setup."
 }

@@ -15,7 +15,7 @@ import GruxShellCore
 //     glow overlays) consult before running decorative animation.
 //
 // Every accent change is gated by a WCAG 2.1 audit (via GruxShellCore's
-// WCAGContrastChecker): a candidate accent that drops chip text or
+// WCAGContrastChecker): a candidate accent that drops chip text under 3:1 or
 // accent-on-base contrast below AA thresholds is refused and surfaced as an
 // inline warning instead of silently shipping an unreadable palette.
 //
@@ -119,19 +119,58 @@ enum ThemeAppearance: String, Codable, CaseIterable, Identifiable, Sendable {
 struct ThemeWCAGCheck: Equatable, Sendable {
     let name: String
     let ratio: Double      // measured contrast ratio (1...21)
-    let required: Double   // AA threshold for this pair
+    let required: Double   // Grux's floor: an accent under it is refused
+    let wcagAA: Double     // WCAG 2.1 AA's bar for this pair (D94)
     var passes: Bool { ratio >= required }
+    var meetsAA: Bool { ratio >= wcagAA }
+
+    /// `wcagAA` defaults to the floor, for the pairs whose floor is AA's bar.
+    init(name: String, ratio: Double, required: Double, wcagAA: Double? = nil) {
+        self.name = name
+        self.ratio = ratio
+        self.required = required
+        self.wcagAA = wcagAA ?? required
+    }
 }
 
 struct ThemeWCAGAuditResult: Equatable, Sendable {
     let checks: [ThemeWCAGCheck]
     var passes: Bool { checks.allSatisfy { $0.passes } }
+    /// Every pair meets WCAG AA's own bar, so the pane may call it a pass (D94).
+    var meetsAA: Bool { !checks.isEmpty && checks.allSatisfy { $0.meetsAA } }
     var worst: ThemeWCAGCheck? { checks.min { ($0.ratio / $0.required) < ($1.ratio / $1.required) } }
+
+    /// The Appearance pane's one-line verdict under the accent slider. It claims
+    /// WCAG AA only when every pair meets AA's own bar: "worst pair 4.2:1" alone
+    /// read as false (D62), and so did "Passes WCAG AA" for the 9 pt chip label at
+    /// 4.2:1, which AA holds to 4.5:1 (D94). An accent under Grux's floor is
+    /// "Too low to use"; one over it with a pair under AA names that pair.
+    var verdictLine: String? {
+        guard let worst else { return nil }
+        guard passes else {
+            return "Too low to use: \(worst.name) at \(Self.shown(worst.ratio)):1 (needs \(Self.shown(worst.required)):1)."
+        }
+        let underAA = checks.filter { !$0.meetsAA }.sorted { ($0.ratio / $0.wcagAA) < ($1.ratio / $1.wcagAA) }
+        guard !underAA.isEmpty else {
+            let closest = checks.min { ($0.ratio / $0.wcagAA) < ($1.ratio / $1.wcagAA) } ?? worst
+            return "Passes WCAG AA. Closest pair: \(closest.name), \(Self.shown(closest.ratio)):1 (needs \(Self.shown(closest.wcagAA)):1)."
+        }
+        let named = underAA.map { "\($0.name), \(Self.shown($0.ratio)):1 (needs \(Self.shown($0.wcagAA)):1)" }
+        let rest = underAA.count < checks.count ? " Every other pair passes." : ""
+        return "Below WCAG AA: " + named.joined(separator: "; ") + "." + rest
+    }
+
+    /// A ratio to one decimal, rounded DOWN: every bar has one decimal, so a pair
+    /// that fails never shows a number at its bar (2.99 read "3.0:1 (needs 3.0:1)")
+    /// and one that passes never shows a number under it.
+    static func shown(_ ratio: Double) -> String {
+        String(format: "%.1f", (ratio * 10).rounded(.down) / 10)
+    }
 
     var failureSummary: String? {
         guard !passes else { return nil }
         let failing = checks.filter { !$0.passes }
-            .map { String(format: "%@ (%.1f:1, needs %.1f:1)", $0.name, $0.ratio, $0.required) }
+            .map { "\($0.name) (\(Self.shown($0.ratio)):1, needs \(Self.shown($0.required)):1)" }
         return "Low contrast: " + failing.joined(separator: ", ")
     }
 }
@@ -343,9 +382,11 @@ final class ThemeConfig: ObservableObject {
 
     // MARK: WCAG audit
 
-    // AA thresholds per WCAG 2.1: 3:1 for large text / UI components
-    // (the bold micro-caps chips and accent rims), 4.5:1 for normal text.
-    // All pairs are checked against the canonical surfaces, which stay fixed.
+    // Floors per pair: 3:1 for the accent rims (WCAG 2.1 AA's bar for UI
+    // components) and 4.5:1 for accent text. The chip label is 9 pt, so AA
+    // holds it to 4.5:1, which white text on this accent reaches at no hue;
+    // Grux refuses it only under 3:1 and the verdict line says it is below AA
+    // (D94). All pairs are checked against the canonical surfaces, which stay fixed.
     nonisolated static func runWCAGAudit(palette: ThemePalette) -> ThemeWCAGAuditResult {
         let base = canonicalBase.wcag
         let white = WCAGColor.white
@@ -353,7 +394,8 @@ final class ThemeConfig: ObservableObject {
             ThemeWCAGCheck(
                 name: "chip text on accent",
                 ratio: WCAGContrastChecker.contrastRatio(white, palette.accentPrimary.wcag),
-                required: 3.0
+                required: 3.0,
+                wcagAA: 4.5
             ),
             ThemeWCAGCheck(
                 name: "accent on HUD base",

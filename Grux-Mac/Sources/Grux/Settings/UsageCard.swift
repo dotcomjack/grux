@@ -84,9 +84,10 @@ final class DecisionUsageModel: ObservableObject {
     struct Snapshot: Equatable {
         var card: UsageCardContent
         var hoverClause: String?
+        var jevTypicalMs: Int?
     }
 
-    @Published private(set) var snapshot = Snapshot(card: .empty, hoverClause: nil)
+    @Published private(set) var snapshot = Snapshot(card: .empty, hoverClause: nil, jevTypicalMs: nil)
 
     /// How many times the ledger has been scanned: once at start, once per
     /// recorded decision, once per calendar day change. A render never adds
@@ -126,7 +127,8 @@ final class DecisionUsageModel: ObservableObject {
         let rows = ledger.recent
         let at = now()
         let next = Snapshot(card: UsageCardContent.build(from: rows, now: at, calendar: calendar),
-                            hoverClause: DecisionUsageSummary.hoverClause(rows.last, now: at, calendar: calendar))
+                            hoverClause: DecisionUsageSummary.hoverClause(rows.last, now: at, calendar: calendar),
+                            jevTypicalMs: DecisionUsageSummary.jevTypicalMs(rows, now: at, calendar: calendar))
         // Publishing an unchanged value still redraws every observer.
         if next != snapshot { snapshot = next }
     }

@@ -259,7 +259,10 @@ struct SpeakersView: View {
                 }
                 .disabled(isRenaming)
                 Button(role: .destructive) {
-                    deleteProfile(profile)
+                    DestructiveConfirm.shared.ask(
+                        question: "Forget the voice \(DestructiveConfirm.quoted(profile.name, or: "with no name"))?",
+                        detail: "Future meetings label this person as Speaker N again until you enroll their voice again.",
+                        confirmLabel: "Delete profile") { deleteProfile(profile) }
                 } label: {
                     Label("Delete", systemImage: "trash")
                 }

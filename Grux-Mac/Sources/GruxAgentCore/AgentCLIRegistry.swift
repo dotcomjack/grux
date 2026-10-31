@@ -332,7 +332,7 @@ public actor AgentCLIRegistry {
         } catch {
             return nil
         }
-        proc.waitUntilExit()
+        proc.waitForExitBlocking()
         guard proc.terminationStatus == 0 else { return nil }
         let data = (try? out.fileHandleForReading.readToEnd()) ?? nil
         guard let data,
@@ -382,7 +382,7 @@ public actor AgentCLIRegistry {
             }
         }
         killer.asyncAfter(deadline: .now() + timeout, execute: watchdog)
-        proc.waitUntilExit()
+        proc.waitForExitBlocking()
         watchdog.cancel()
 
         let data = (try? out.fileHandleForReading.readToEnd()) ?? nil

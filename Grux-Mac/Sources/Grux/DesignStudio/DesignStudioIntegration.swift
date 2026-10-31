@@ -120,13 +120,13 @@ private struct StudioCritic: DesignCritiquing {
 // MARK: - Cost estimate seam (WS-B)
 
 // The estimate runs on every composer keystroke (the brief is @State bound to a
-// TextEditor), so the Anthropic-key presence, which only toggles the critique
-// cost between zero and a fixed figure, is cached with a short TTL instead of
+// TextEditor), so the Anthropic-key presence, which toggles the critique cost
+// between zero and a fixed figure and picks the starting route (D59), is cached with a short TTL instead of
 // reading the Keychain live per character. A Settings change is reflected within
 // the TTL. This keeps AppState's read-live-no-@Published convention for the key
 // itself while coalescing the hot typing path.
 @MainActor
-private enum AnthropicKeyPresence {
+enum AnthropicKeyPresence {
     static var cached = false
     static var checkedAt = Date.distantPast
     static let ttl: TimeInterval = 2

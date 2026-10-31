@@ -12,9 +12,11 @@ struct GruxApp: App {
     @ObservedObject private var theme = ThemeConfig.shared
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
+    // Every scene root hosts the destructive confirmation, so a delete asks in
+    // the window it was clicked in (wave 24).
     var body: some Scene {
         MenuBarExtra {
-            MenuBarView().environmentObject(state).id(theme.revision)
+            MenuBarView().destructiveConfirmHost().environmentObject(state).id(theme.revision)
         } label: {
             MenuBarLabel()
         }
@@ -31,7 +33,7 @@ struct GruxApp: App {
         }
 
         Window("Grux Chat", id: "chat") {
-            ChatView().environmentObject(state).id(theme.revision)
+            ChatView().destructiveConfirmHost().environmentObject(state).id(theme.revision)
         }
         .windowResizability(.contentSize)
         .defaultPosition(.center)
@@ -39,7 +41,7 @@ struct GruxApp: App {
         // New: iPhone pairing window. Shows a QR that the Grux Phone iOS app
         // scans to join the pipeline. See Sources/Grux/iPhone/.
         Window("Pair iPhone", id: "pair-iphone") {
-            PhonePairingView()
+            PhonePairingView().destructiveConfirmHost()
         }
         .windowResizability(.contentSize)
         .defaultPosition(.center)
@@ -49,7 +51,7 @@ struct GruxApp: App {
         // jobs be expanded into separate windows simultaneously, each keyed
         // by jobId.
         WindowGroup("Agent Job", id: "agent-job", for: String.self) { $jobId in
-            AgentJobWindow(jobId: jobId).environmentObject(state)
+            AgentJobWindow(jobId: jobId).destructiveConfirmHost().environmentObject(state)
         }
         .windowResizability(.contentSize)
         .defaultPosition(.center)
@@ -1469,7 +1471,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             WindowFacade.activateGrux()
             return
         }
-        let hosting = NSHostingController(rootView: SettingsView().environmentObject(AppState.shared))
+        // Settings raises DestructiveConfirm asks (endpoints, MCP servers), so its
+        // window hosts the dialog too (wave 24).
+        let hosting = NSHostingController(rootView: SettingsView().destructiveConfirmHost().environmentObject(AppState.shared))
         hosting.sizingOptions = []
         let win = NSWindow(contentViewController: hosting)
         win.title = "Grux AI Settings"
@@ -1494,7 +1498,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             WindowFacade.activateGrux()
             return
         }
-        let hosting = NSHostingController(rootView: PhonePairingView())
+        let hosting = NSHostingController(rootView: PhonePairingView().destructiveConfirmHost())
         let win = NSWindow(contentViewController: hosting)
         win.title = "Pair iPhone"
         win.styleMask = [.titled, .closable, .miniaturizable]
@@ -1513,7 +1517,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             WindowFacade.activateGrux()
             return
         }
-        let hosting = NSHostingController(rootView: EmpireDashboardWindow())
+        let hosting = NSHostingController(rootView: EmpireDashboardWindow().destructiveConfirmHost())
         let win = NSWindow(contentViewController: hosting)
         win.title = "Empire Dashboard"
         win.styleMask = [.titled, .closable, .miniaturizable, .resizable]

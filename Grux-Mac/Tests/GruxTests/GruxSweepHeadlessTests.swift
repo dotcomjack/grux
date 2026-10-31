@@ -83,20 +83,32 @@ final class GruxSweepHeadlessTests: XCTestCase {
     /// sweep's), so the result naming the sweep's token is gone almost at once.
     /// `corrupt`: every shot is bytes no image reader accepts.
     /// Every token it is asked to snapshot is appended to `reasons.log`.
+    /// Like the app, it names the pane it drew in `rendered-tab.txt` once that pane is up.
+    /// `startingOn` is the tab on screen before the sweep; `repaintAfter` is how long a
+    /// switch takes to draw after its ack (the old pane, and its name, stay until then).
     private func startFakeGrux(snapshots: Bool = true, answering limit: Int = .max,
-                               ownSnapshotAfter: Bool = false, corrupt: Bool = false) {
+                               ownSnapshotAfter: Bool = false, corrupt: Bool = false,
+                               startingOn first: String = "home", repaintAfter: TimeInterval = 0) {
         let grux = home.appendingPathComponent(".grux")
         let ws = grux.appendingPathComponent("headless-workspace")
+        let rendered = grux.appendingPathComponent("rendered-tab.txt")
+        try? first.write(to: rendered, atomically: true, encoding: .utf8)
         Thread.detachNewThread { [weak self] in
-            var current = "home"
+            var current = first
+            var pending: (key: String, at: Date)?
             var n = 0
             while let self, !self.stop {
                 let fm = FileManager.default
                 let tab = grux.appendingPathComponent("fire-open-tab")
                 if let key = try? String(contentsOf: tab, encoding: .utf8) {
                     try? fm.removeItem(at: tab)
-                    current = key
+                    pending = (key, Date().addingTimeInterval(repaintAfter))
                     try? key.write(to: grux.appendingPathComponent("open-tab-ack.txt"), atomically: true, encoding: .utf8)
+                }
+                if let p = pending, Date() >= p.at {
+                    current = p.key
+                    pending = nil
+                    try? current.write(to: rendered, atomically: true, encoding: .utf8)
                 }
                 let snap = grux.appendingPathComponent("fire-headless-snapshot")
                 if snapshots, n < limit, let reason = try? String(contentsOf: snap, encoding: .utf8) {
@@ -280,6 +292,33 @@ final class GruxSweepHeadlessTests: XCTestCase {
         let (status, log) = try runSweep(["mail"], extraEnv: ["GRUX_SWEEP_SNAP_WAIT": "3"])
         XCTAssertNotEqual(status, 0, log)
         assertCleanedUpAndRestored(log)
+    }
+
+    /// T1, 2026-10-29: a Grux already on the sweep's bootstrap tab (Home, when the first
+    /// tab asked for is Chat) cannot change when the bootstrap fires, and the sweep asked
+    /// for 20 frames over about 11 s waiting for a change that could not come. Grux names
+    /// the pane it drew, so the sweep takes "already there" from that at once.
+    func test_aSweepAlreadyOnItsBootstrapTabDoesNotWaitForAChange() throws {
+        startFakeGrux()
+        let (status, log) = try runSweep(["chat"])
+        XCTAssertEqual(status, 0, log)
+        XCTAssertTrue(log.contains("baseline on home (already there)"), log)
+        let reasons = ((try? String(contentsOf: home.appendingPathComponent("reasons.log"), encoding: .utf8)) ?? "")
+            .split(separator: "\n")
+        // Before the switch, after it, the baseline's settle check, Chat and Chat's settle check.
+        XCTAssertLessThanOrEqual(reasons.count, 6, "frames asked for: \(reasons.count)\n\(log)")
+        XCTAssertEqual(try? Data(contentsOf: home.appendingPathComponent("out/t-chat.png")), png(for: "chat"), log)
+    }
+
+    /// The shortcut takes Grux's word only for a pane it has drawn: a switch still
+    /// drawing (its ack written, the old pane and its name still up) is waited for,
+    /// so the old pane is never the baseline.
+    func test_aBootstrapStillDrawingIsWaitedForNotTakenAsAlreadyThere() throws {
+        startFakeGrux(startingOn: "today", repaintAfter: 0.8)
+        let (status, log) = try runSweep(["chat"])
+        XCTAssertEqual(status, 0, log)
+        XCTAssertTrue(log.contains("baseline on home (switched)"), log)
+        XCTAssertEqual(try? Data(contentsOf: home.appendingPathComponent("out/t-chat.png")), png(for: "chat"), log)
     }
 
     /// Review of e125705: a frame is this sweep's own only if its token is. A

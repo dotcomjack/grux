@@ -2,8 +2,8 @@ import Foundation
 import GruxAgentCore
 
 // Swarm lane of the Sense pass. Reads AgentStore's on-disk layout
-// (<agentsDir>/<jobId>/job.json + log.ndjson) for jobs that ended badly or
-// stalled out:
+// (<agentsDir>/<jobId>/job.json + log.ndjson) for jobs a person started
+// (never Self-Upgrade's own builds) that ended badly or stalled out:
 //
 //   - failed jobs (with errorMessage)
 //   - cancelled jobs
@@ -51,6 +51,23 @@ struct SwarmSignalSource: FoundrySignalSource {
         staleHeartbeat: TimeInterval = 10 * 60,
         now: Date = Date()
     ) -> [FoundrySignal] {
+        // Self-Upgrade's own builds report on its own pane. Filed here, a
+        // failed build became a proposal to fix that build, which failed the
+        // same way and filed again (proposal 427D17A0, D67).
+        if AgentService.isSelfUpgradeJob(job) { return [] }
+        // A job that failed on an expired Claude sign-in is fixed by signing
+        // in, which Now and Agents already say. Filed here, it became a
+        // proposal to spend money building code for it (37A54595, D76). The
+        // same verdict chat reads (`AgentService.failureReport`). Only when
+        // no worker failed another way: signing in does not fix a sibling that
+        // failed for its own reasons (W19-P3 item 5). Only workers that carry
+        // verdicts can say so; with none, the job's own words judge it.
+        let failedOtherwise = job.workers.contains { $0.interruption?.kind == .signInExpired }
+            && job.workers.contains { $0.status == .failed && $0.interruption?.kind != .signInExpired }
+        if !failedOtherwise,
+           job.failedOnSignIn || (job.status == .failed && SignInExpiry.detect(job.errorMessage ?? "")) {
+            return []
+        }
         var out: [FoundrySignal] = []
         let errorSteps = steps.filter { $0.kind == .error }
         let errorExcerpt = errorSteps.suffix(3)

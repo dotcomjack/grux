@@ -389,7 +389,7 @@ public actor AgentBridgeRunner {
             for ev in parsed { await consume(ev) }
         }
 
-        proc.waitUntilExit()
+        await proc.waitForExit()
         let exitCode = proc.terminationStatus
 
         // Retroactively classify a watchdog kill the read path did not itself

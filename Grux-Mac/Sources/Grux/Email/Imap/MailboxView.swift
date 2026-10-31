@@ -532,6 +532,10 @@ struct ComposeEmailSheet: View {
 struct MailAccountsSheet: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var accountStore = EmailAccountStore.shared
+    /// The account whose Remove was tapped, asked about by the dialog on this
+    /// sheet (wave 24: Remove deleted the cached mail and the Keychain password
+    /// on one click). A sheet is its own window, so it hosts its own dialog.
+    @State private var pendingRemove: EmailAccount?
 
     @State private var displayName = ""
     @State private var emailAddress = ""
@@ -571,8 +575,7 @@ struct MailAccountsSheet: View {
                             .toggleStyle(.switch)
                             .controlSize(.mini)
                             GruxChip(title: "Remove", style: .destructive) {
-                                MailStore.shared.remove(accountId: account.id)
-                                accountStore.remove(account.id)
+                                pendingRemove = account
                             }
                         }
                         .padding(.vertical, GruxSpacing.xs - 1)
@@ -626,6 +629,21 @@ struct MailAccountsSheet: View {
                idealWidth: 560,
                maxWidth: GruxLayout.sheetMax)
         .background(GruxTheme.base)
+        .confirmationDialog(
+            "Remove the account \(DestructiveConfirm.quoted(pendingRemove?.emailAddress ?? "", or: "with no address"))?",
+            isPresented: Binding(get: { pendingRemove != nil },
+                                 set: { if !$0 { pendingRemove = nil } }),
+            titleVisibility: .visible,
+            presenting: pendingRemove
+        ) { account in
+            Button("Remove account", role: .destructive) {
+                MailStore.shared.remove(accountId: account.id)
+                accountStore.remove(account.id)
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: { _ in
+            Text("Its mail is deleted from this Mac and its password from your Keychain. The mail stays on the server; add the account again to read it.")
+        }
     }
 
     private func addAccount() {

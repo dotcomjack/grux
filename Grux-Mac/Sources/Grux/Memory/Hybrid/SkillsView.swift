@@ -111,7 +111,13 @@ struct SkillsView: View {
                 editorState = SkillEditorState(skill: skill)
             }
             GruxChip(title: "DELETE", style: .destructive) {
-                store.remove(skill.id)
+                DestructiveConfirm.shared.ask(
+                    question: "Delete the skill \(DestructiveConfirm.quoted(skill.name, or: "with no name"))?",
+                    detail: "Its SKILL.md folder is removed from this Mac. This cannot be undone.",
+                    confirmLabel: "Delete skill"
+                ) {
+                    store.remove(skill.id)
+                }
             }
         }
     }

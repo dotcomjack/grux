@@ -75,6 +75,22 @@ struct DecisionUsageSummary: Equatable {
 
     var countPhrase: String { count == 1 ? "1 decision" : "\(count) decisions" }
 
+    /// The typical wait on Jev today, the same median the Usage card calls typical speed, for the
+    /// Integrations card. A Jev call that gave no answer is recorded as a local row with
+    /// `fallbackFrom: .jev` and the whole wait. It counts when it may have been billed (a timeout,
+    /// a server error), the rule `DecisionLedger.countRemote` uses, because that was a real wait
+    /// on Jev; a call refused at once (offline, a bad key, a 429) measures nothing about Jev. Nil
+    /// when Jev answered nothing today, so a day of refusals never reads as fast.
+    static func jevTypicalMs(_ rows: [DecisionLedgerEntry],
+                             now: Date = Date(),
+                             calendar: Calendar = .current) -> Int? {
+        let start = calendar.startOfDay(for: now)
+        let today = rows.filter { $0.at >= start }
+        guard today.contains(where: { $0.provider == .jev }) else { return nil }
+        let waits = today.filter { $0.provider == .jev || ($0.fallbackFrom == .jev && $0.fallbackMayHaveBilled == true) }
+        return median(waits.map(\.latencyMs))
+    }
+
     /// The middle value; with an even count, the mean of the two middle ones.
     static func median(_ values: [Int]) -> Int {
         guard !values.isEmpty else { return 0 }
@@ -91,7 +107,7 @@ struct DecisionUsageSummary: Equatable {
     /// round to nothing. Nil for exactly nothing, so each surface says zero in
     /// its own sentence ("no spend", "nothing") rather than "$0.00".
     static func money(_ usd: Double) -> String? {
-        if usd <= 0 { return nil }
+        if !usd.isFinite || usd <= 0 { return nil }
         if usd < 0.01 { return "under $0.01" }
         return "$" + String(format: "%.2f", usd)
     }

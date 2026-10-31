@@ -72,6 +72,9 @@ struct GruxReminder: Identifiable, Codable, Hashable {
     // Optional: link back to a task or action
     var taskId: UUID?
     var sourceCommitmentText: String?
+    /// The heard sentence (`AmbientMemory.id`) this reminder was made from, so a
+    /// relaunch never makes a second one from it (wave 15 review).
+    var sourceMemoryId: UUID?
 
     init(
         id: UUID = UUID(),
@@ -83,7 +86,8 @@ struct GruxReminder: Identifiable, Codable, Hashable {
         scheduledFor: Date? = nil,
         firedAt: Date? = nil,
         taskId: UUID? = nil,
-        sourceCommitmentText: String? = nil
+        sourceCommitmentText: String? = nil,
+        sourceMemoryId: UUID? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -95,6 +99,7 @@ struct GruxReminder: Identifiable, Codable, Hashable {
         self.firedAt = firedAt
         self.taskId = taskId
         self.sourceCommitmentText = sourceCommitmentText
+        self.sourceMemoryId = sourceMemoryId
     }
 
     var isPending: Bool { firedAt == nil && !dismissed }

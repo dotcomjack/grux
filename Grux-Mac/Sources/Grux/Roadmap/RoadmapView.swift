@@ -303,7 +303,10 @@ private struct RoadmapRow: View {
             }
             Divider()
             Button(role: .destructive) {
-                store.delete(id: item.id)
+                DestructiveConfirm.shared.ask(
+                    question: "Delete the roadmap item \(DestructiveConfirm.quoted(item.title, or: "with no title"))?",
+                    detail: "It is removed from your roadmap. Grux cannot bring it back.",
+                    confirmLabel: "Delete item") { store.delete(id: item.id) }
             } label: {
                 Text("Delete item")
             }

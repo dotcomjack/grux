@@ -91,7 +91,7 @@ public struct LocalExecutor: CommandExecutor {
                         proc.terminate()
                     }
                     let won = gate.tryBegin()
-                    proc.waitUntilExit()
+                    proc.waitForExitBlocking()
                     if won {
                         cont.resume(throwing: CommandTimeout())
                     }

@@ -26,7 +26,7 @@ enum BrowserTool {
         // Item 31: URL guard, block credential URLs and private-network
         // targets before any Chrome open.
         if case .denied(let reason) = URLGuard.check(normalized, purpose: "open_url") {
-            return "error: URL blocked by Grux URL guard (\(reason)). You can add the host under Settings, Security if intended."
+            return "error: URL blocked by Grux URL guard (\(reason)). You can add the host in Settings, Data & Security, Security if you meant to open it."
         }
         return await runChromeScript(openTab: normalized, purpose: "openURL")
     }

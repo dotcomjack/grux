@@ -4,6 +4,7 @@ import SwiftUI
 struct PanelNowList: View {
     let items: [PanelItem]
     var onAction: (PanelAction) -> Void
+    @Environment(\.gruxChipCuts) private var cuts
 
     var body: some View {
         VStack(alignment: .leading, spacing: GruxSpacing.xs) {
@@ -27,22 +28,29 @@ struct PanelNowList: View {
                 ForEach(items) { item in
                     HStack(spacing: GruxSpacing.xs) {
                     Button { onAction(item.action) } label: {
-                        HStack(spacing: GruxSpacing.s) {
+                        HStack(alignment: .firstTextBaseline, spacing: GruxSpacing.s) {
                             Image(systemName: item.icon)
                                 .font(GruxType.caption)
                                 .foregroundStyle(color(for: item.cls))
                                 .frame(width: GruxSpacing.l)
-                            Text(item.title)
-                                .font(GruxType.body)
-                                .foregroundStyle(GruxTheme.textPrimary)
-                                .lineLimit(1)
-                            Spacer(minLength: GruxSpacing.s)
-                            if !item.detail.isEmpty {
-                                Text(item.detail)
-                                    .font(GruxType.caption)
-                                    .foregroundStyle(GruxTheme.textTertiary)
+                            // The detail is what to do about the row, so it
+                            // reads whole: beside the title when both fit, and
+                            // otherwise under it, wrapped. On one line it read
+                            // "Agents cannot run until you si..." on every pane
+                            // at the default window (D68).
+                            GruxTitleActionsLayout(spacing: GruxSpacing.s) {
+                                Text(item.title)
+                                    .font(GruxType.body)
+                                    .foregroundStyle(GruxTheme.textPrimary)
                                     .lineLimit(1)
+                                if !item.detail.isEmpty {
+                                    GruxTextCutProbe(text: item.detail, cuts: cuts) {
+                                        detail(item.detail).fixedSize(horizontal: false, vertical: true)
+                                        detail(item.detail).fixedSize(horizontal: false, vertical: true).hidden()
+                                    }
+                                }
                             }
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         .padding(.vertical, GruxSpacing.s)
                         .padding(.horizontal, GruxSpacing.m)
@@ -68,6 +76,12 @@ struct PanelNowList: View {
             await Task.yield()
             RenderedNow.note(items)
         }
+    }
+
+    private func detail(_ text: String) -> some View {
+        Text(text)
+            .font(GruxType.caption)
+            .foregroundStyle(GruxTheme.textTertiary)
     }
 
     private func color(for cls: PanelItem.Class) -> Color {

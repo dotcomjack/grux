@@ -116,7 +116,8 @@ final class PanelOptimizeRowTests: XCTestCase {
         XCTAssertTrue(card.contains(".padding(.vertical, hub.isExpanded ? GruxSpacing.l : GruxSpacing.s)"),
                       "the collapsed row lost the Now row's padding")
         let now = try String(contentsOf: root.appendingPathComponent("Sources/Grux/Shell/CommandPanel/PanelNowList.swift"), encoding: .utf8)
-        XCTAssertTrue(now.contains("Text(item.title)\n                                .font(GruxType.body)"),
+        // Whatever the row's nesting, the title's own font is body.
+        XCTAssertNotNil(now.range(of: #"Text\(item\.title\)\s*\.font\(GruxType\.body\)"#, options: .regularExpression),
                       "the Now rows changed weight; the Optimize row must match them")
     }
 }

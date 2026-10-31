@@ -41,7 +41,7 @@ struct PhonePairingView: View {
             Text("Phone companion is off")
                 .font(.system(size: 15, weight: .semibold))
             Text("Grux is not listening for a phone, so there is no code to scan yet. "
-                 + "Turn it on in Settings, under Data & Capabilities, in the Grux Phone "
+                 + "Turn it on in Settings, Data & Security, Data & Capabilities, in the Grux Phone "
                  + "companion section, then relaunch Grux and open this window again.")
                 .font(.callout)
                 .foregroundStyle(.secondary)

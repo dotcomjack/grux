@@ -152,7 +152,7 @@ enum SetupRequirement: String, CaseIterable, Identifiable {
         case .keyTelegram:
             return "Add a Telegram bot token and chat id in Settings so Grux can send alerts to your phone. Nothing is sent until you add both."
         case .keyTypesafe:
-            return "Optional. Add a TypeSafe key in Settings for faster decisions. Grux matches on this Mac without one."
+            return "Optional. Add a TypeSafe key in Integrations so Grux understands asks it cannot match word for word. Without one, it decides on this Mac."
         case .permScreenRecording:
             return "Grux needs Screen Recording to see what you are working on. Open System Settings, Privacy and Security, Screen Recording, and enable Grux."
         case .permMicrophone:

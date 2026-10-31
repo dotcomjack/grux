@@ -313,6 +313,24 @@ extension FoundrySchedule {
         return line + "." + hold
     }
 
+    // The pane's sentence above its Resume button while the crash-loop breaker holds
+    // every pass: when it tripped, what it saw, and whether it went back.
+    static func pauseLine(_ pause: GruxUpdater.AutoLandPause, now: Date,
+                          calendar: Calendar = FoundryGovernorWindow.calendar) -> String {
+        let at = pause.trippedAt.map { date -> String in
+            let phrase = when(date, now: now, calendar: calendar)
+            return phrase.hasPrefix("today") || phrase.hasPrefix("yesterday") ? " " + phrase : " on " + phrase
+        } ?? ""
+        let saw = "Grux crashed \(GruxUpdater.breakerCrashThreshold) times at launch within \(Int(GruxUpdater.crashLoopWindow / 60)) minutes"
+        let went: String
+        switch pause.restored {
+        case true?: went = ", so it went back to the last build that worked"
+        case false?: went = ", and it could not go back to an earlier build"
+        case nil: went = ""
+        }
+        return "Self-upgrade paused itself\(at): \(saw)\(went). Nothing installs until you resume."
+    }
+
     // "today at 3:48 AM", "yesterday at", "tomorrow at", a weekday within the coming
     // week, else "Jun 13 at 9:00 AM".
     private static func when(_ date: Date, now: Date, calendar: Calendar) -> String {

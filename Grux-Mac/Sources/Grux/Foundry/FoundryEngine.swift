@@ -364,7 +364,63 @@ final class FoundryEngine: ObservableObject {
             if let hold { return .refuse(hold + " Ask again later.") }
             return .build(proposal.id)
         case .building, .verifying, .landed, .rejected, .rolledBack:
-            return .refuse("not building: '\(proposal.title)' is \(proposal.status.displayName), with no build left to run.")
+            return .refuse("not building: '\(proposal.title)' is \(proposal.status.displayName.lowercased()), with no build left to run.")
+        }
+    }
+
+    enum RejectRequest: Equatable {
+        case reject(UUID, reason: String)
+        case refuse(String)
+    }
+
+    /// The longest reason the reject door keeps, counted after whitespace is
+    /// folded: a sentence for the timeline, not a pasted log.
+    nonisolated static let rejectReasonLimit = 280
+
+    /// ~/.grux/fire-foundry-reject: the card's Reject for a Mac nobody can
+    /// click on (D83). The id start comes first, the reason after it; only a
+    /// proposal still waiting for a yes or no, as on the card.
+    nonisolated static func resolveRejectRequest(token: String, proposals: [UpgradeProposal]) -> RejectRequest {
+        let text = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = String(text.prefix { !$0.isWhitespace }).uppercased()
+        // One line in wake.log and the timeline, however the reason was typed.
+        let reason = String(text.dropFirst(name.count))
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+        guard name.count >= buildTokenMinimum else {
+            return .refuse("not turning down: name a proposal by its id (the first 8 characters are enough), then the reason.")
+        }
+        let matches = proposals.filter { $0.id.uuidString.hasPrefix(name) }
+        guard let proposal = matches.first else {
+            return .refuse("not turning down: no proposal id starts with \(name).")
+        }
+        guard matches.count == 1 else {
+            return .refuse("not turning down: \(matches.count) proposals start with \(name); give more of the id.")
+        }
+        guard proposal.status == .proposed else {
+            return .refuse("not turning down: '\(proposal.title)' is \(proposal.status.displayName.lowercased()), not waiting for a yes or no.")
+        }
+        guard !reason.isEmpty else {
+            return .refuse("not turning down: give the reason after the id, so the timeline says why.")
+        }
+        guard reason.count <= rejectReasonLimit else {
+            return .refuse("not turning down: keep the reason to \(rejectReasonLimit) characters or fewer (this one is \(reason.count)), so the timeline reads it whole.")
+        }
+        return .reject(proposal.id, reason: reason)
+    }
+
+    /// Returns the line wake.log records.
+    func rejectRequested(token: String) -> String {
+        switch Self.resolveRejectRequest(token: token, proposals: ProposalStore.shared.proposals) {
+        case .refuse(let why):
+            return why
+        case .reject(let id, let reason):
+            FoundryDashboardModel.shared.reject(id: id.uuidString, reason: reason)
+            let after = ProposalStore.shared.proposal(id: id)
+            let title = after?.title ?? id.uuidString
+            return after?.status == .rejected
+                ? "turned down '\(title)': \(reason)"
+                : "not turning down '\(title)': the Self-Upgrade pane has not loaded it yet. Ask again in a moment."
         }
     }
 
@@ -375,7 +431,8 @@ final class FoundryEngine: ObservableObject {
             token: token,
             proposals: ProposalStore.shared.proposals,
             foundryEnabled: AppState.shared.config.foundryEnabled,
-            inFlight: Self.inFlightProposals(building: building, escalated: escalatedJobs),
+            inFlight: Self.inFlightProposals(building: building, escalated: Self.holdingEscalations(
+                escalatedJobs, jobs: Self.agentJobStatuses(), routing: activated)),
             baselineMeasuring: RDBaselineStore.shared.measuring,
             hold: currentBuildHold()
         )

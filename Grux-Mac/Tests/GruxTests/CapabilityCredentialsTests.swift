@@ -76,4 +76,25 @@ final class CapabilityCredentialsTests: XCTestCase {
             XCTAssertTrue(line.contains("Keychain"), line)
         }
     }
+
+    /// D63 (sense pass 4): inside Settings the row read "Add your Anthropic API key in Settings
+    /// to use Claude." above the very field. The row says what the key unlocks; the setup card,
+    /// shown outside Settings, keeps saying where to go.
+    func testACredentialRowInSettingsDoesNotSendYouToSettings() {
+        let keys = SetupRequirement.allCases.filter { $0.kind == .key }
+        XCTAssertFalse(keys.isEmpty)
+        for req in keys {
+            let line = CapabilityCredentialsSection.rowLine(req)
+            XCTAssertFalse(line.contains("Settings"), "\(req.rawValue): \(line)")
+            XCTAssertEqual(line, req.remediation.replacingOccurrences(of: " in Settings", with: ""),
+                           "\(req.rawValue): the row keeps every other word of the contract sentence")
+        }
+        XCTAssertEqual(CapabilityCredentialsSection.rowLine(.keyAnthropic),
+                       "Add your Anthropic API key to use Claude. Get one at console.anthropic.com. "
+                       + "Chat also runs on a local model with no key.")
+        XCTAssertEqual(CapabilityCredentialsSection.rowLine(.keyReplicate),
+                       "Add a Replicate API token to generate images.")
+        XCTAssertTrue(SetupRequirement.keyAnthropic.remediation.contains("in Settings"),
+                      "the setup card outside Settings still says where to go")
+    }
 }

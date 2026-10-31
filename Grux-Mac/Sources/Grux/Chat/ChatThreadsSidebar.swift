@@ -226,7 +226,10 @@ struct ChatThreadsSidebar: View {
             }
             Divider()
             Button(role: .destructive) {
-                state.deleteThread(entry.id)
+                DestructiveConfirm.shared.ask(
+                    question: "Delete the conversation \(DestructiveConfirm.quoted(entry.title, or: "with no title"))?",
+                    detail: "Every message in it is deleted. Grux cannot bring it back.",
+                    confirmLabel: "Delete conversation") { state.deleteThread(entry.id) }
             } label: {
                 Label("Delete thread", systemImage: "trash")
             }

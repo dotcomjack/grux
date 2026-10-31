@@ -291,6 +291,36 @@ struct GruxChipCutProbe: Layout {
     }
 }
 
+/// The same check for a line of text that must read whole: lays out its
+/// first child (the text as shown) and measures its second (the same text,
+/// hidden, free to wrap) at the width the first was given. When the free
+/// copy needs more height than the shown one got, the shown one was cut
+/// ("Agents cannot run until you si..."), and that is recorded.
+struct GruxTextCutProbe: Layout {
+    let text: String
+    let cuts: GruxChipCuts?
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        subviews.first?.sizeThatFits(proposal) ?? .zero
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard let shown = subviews.first else { return }
+        shown.place(at: bounds.origin, anchor: .topLeading, proposal: ProposedViewSize(bounds.size))
+        guard subviews.count > 1 else { return }
+        let free = subviews[1]
+        let atWidth = ProposedViewSize(width: bounds.width, height: nil)
+        free.place(at: bounds.origin, anchor: .topLeading, proposal: atWidth)
+        guard let cuts else { return }
+        let needed = free.sizeThatFits(atWidth).height
+        if bounds.height + 1 < needed {
+            MainActor.assumeIsolated {
+                cuts.record(.init(title: text, placed: bounds.height, needed: needed))
+            }
+        }
+    }
+}
+
 // Standard action chip - used for Accept / Dismiss / Snooze on reminder cards.
 struct GruxChip: View {
     enum Style { case primary, secondary, destructive, success }

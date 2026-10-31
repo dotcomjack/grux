@@ -46,6 +46,7 @@ final class CalendarService {
         case permissionDenied
         case eventNotFound(String)
         case noWritableCalendar
+        case readOnlyCalendar(String)
         case saveFailed(String)
 
         var errorDescription: String? {
@@ -56,6 +57,8 @@ final class CalendarService {
                 return "No calendar event found with id '\(id)'."
             case .noWritableCalendar:
                 return "No writable calendar available."
+            case .readOnlyCalendar(let name):
+                return "\(name) is a read-only calendar, so its events cannot be deleted."
             case .saveFailed(let why):
                 return "Calendar save failed: \(why)"
             }
@@ -211,6 +214,10 @@ final class CalendarService {
     func deleteEvent(id: String) throws {
         guard hasAccess else { throw ServiceError.permissionDenied }
         guard let event = store.event(withIdentifier: id) else { throw ServiceError.eventNotFound(id) }
+        // D92: a subscribed or holiday calendar is read-only; say so instead of EventKit's error.
+        guard event.calendar?.allowsContentModifications ?? false else {
+            throw ServiceError.readOnlyCalendar(event.calendar?.title ?? "This calendar")
+        }
         do {
             try store.remove(event, span: .thisEvent, commit: true)
         } catch {
@@ -282,32 +289,10 @@ final class CalendarService {
         }
     }
 
-    // MARK: - CommitmentScheduler seam
-
-    // Writes a calendar block for a time-anchored commitment so it shows up in
-    // the real macOS calendar, not just the in-app reminder toast. Safe to call
-    // fire-and-forget: returns nil (and logs) instead of throwing when access
-    // is missing or the save fails. Default block length 30 minutes.
-    @discardableResult
-    func addCommitmentEvent(title: String, at fireAt: Date, durationMinutes: Int = 30) -> EventSummary? {
-        guard hasAccess else {
-            WakeLog.shared.log("calendarService: skipped commitment event (no calendar access)")
-            return nil
-        }
-        let clamped = String(title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(120))
-        let safeTitle = clamped.isEmpty ? "Commitment" : clamped
-        do {
-            return try createEvent(
-                title: safeTitle,
-                start: fireAt,
-                end: fireAt.addingTimeInterval(TimeInterval(max(5, durationMinutes) * 60)),
-                notes: "Scheduled by Grux from an ambient commitment."
-            )
-        } catch {
-            WakeLog.shared.log("calendarService: commitment event save failed \(error.localizedDescription)")
-            return nil
-        }
-    }
+    // There is no CommitmentScheduler seam here any more, on purpose (D60). It saved an event
+    // straight from the ambient timer with no approval. A heard commitment now files a card in
+    // Approvals that replays the gated `create_event` tool; `CalendarWritesGoThroughTheGateTests`
+    // fails if any other path calls `createEvent`.
 
     // MARK: - Helpers
 

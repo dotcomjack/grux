@@ -371,6 +371,7 @@ final class AgentService: ObservableObject {
         for i in job.workers.indices where job.workers[i].status == .failed {
             job.workers[i].status = .queued
             job.workers[i].errorMessage = nil
+            job.workers[i].interruption = nil
             job.workers[i].startedAt = nil
             job.workers[i].completedAt = nil
             job.workers[i].lastResultText = nil
@@ -509,8 +510,41 @@ final class AgentService: ObservableObject {
     nonisolated static let startedByIntroduced = Date(timeIntervalSince1970: 1_793_318_400)
 
     nonisolated static func reportsEndToChat(_ job: AgentJob) -> Bool {
-        guard job.startedBy == nil else { return false }
-        return job.createdAt >= startedByIntroduced || !job.title.hasPrefix(RDWorker.escalationTitlePrefix)
+        !isSelfUpgradeJob(job)
+    }
+
+    /// A job Self-Upgrade started for its own build, not one a person did.
+    /// Chat is not told of its end, and Self-Upgrade does not file its
+    /// failures as problems to fix (D67).
+    nonisolated static func isSelfUpgradeJob(_ job: AgentJob) -> Bool {
+        guard job.startedBy == nil else { return true }
+        return job.createdAt < startedByIntroduced && job.title.hasPrefix(RDWorker.escalationTitlePrefix)
+    }
+
+    /// How chat hears that a job a person started failed.
+    enum FailureReport: Equatable {
+        /// Words handed to the model as the next turn.
+        case inject(String)
+        /// One line Grux says itself.
+        case assistantLine(String)
+    }
+
+    /// Grux says it itself, in plain words. Handed to the model as the next
+    /// turn, the failure showed in chat as the person's own message ("UNPROCESSED
+    /// FAILED SWARM ... OAuth session expired") and came back as "the solo
+    /// worker's OAuth session expired", never as "sign in again" (D71). The
+    /// line asks nothing of the model and retries nothing.
+    nonisolated static func failureReport(for job: AgentJob) -> FailureReport {
+        let name = "\u{201C}\(job.title)\u{201D}"
+        // The worker's own verdict first: it read the CLI's raw words, while
+        // `errorMessage` is the swarm's summary, which wraps and cuts them
+        // (wave 17 review). Agents and Now read the same verdict.
+        if job.failedOnSignIn || SignInExpiry.detect(job.errorMessage ?? "") {
+            return .assistantLine("\(name) could not run: Claude's sign-in on this Mac has expired. "
+                + "Sign in again (Claude sign-in, at the top of Now), then ask me to run it again.")
+        }
+        return .assistantLine("\(name) stopped before it finished. "
+            + "Agents shows what happened; ask me to try it again, or tell me what to change.")
     }
 
     private func notifyChatOfJobCompletion(_ job: AgentJob) {
@@ -537,7 +571,7 @@ final class AgentService: ObservableObject {
                 injection = """
                 ⚠️ UNPROCESSED COMPLETED BRIEF - HANDLE THIS FIRST, before any other tool call this turn. If anything else arrived in this turn, defer it; come back to it on the next turn.
 
-                The agent_swarm '\(job.title)' (\(job.id.prefix(8))) just finished - status=done, spent=$\(String(format: "%.4f", job.spentUSD)) of $\(String(format: "%.2f", job.budgetUSD)). Deliverable: \(p)
+                The agent_swarm '\(job.title)' (\(job.id.prefix(8))) just finished - status=done, spent=\(AgentsView.spentOfBudget(job.spentUSD, job.budgetUSD)). Deliverable: \(p)
 
                 REQUIRED ACTION:
                 1) fs_read the file above.
@@ -550,19 +584,18 @@ final class AgentService: ObservableObject {
                 injection = """
                 ⚠️ UNPROCESSED COMPLETED SWARM - HANDLE THIS FIRST, before any other tool call this turn.
 
-                Job '\(job.title)' (\(job.id.prefix(8))) finished status=done, spent=$\(String(format: "%.4f", job.spentUSD)) of $\(String(format: "%.2f", job.budgetUSD)) but no expected deliverable file (concept-brief.md / plan.md / brief.md / research.md / summary.md / spec.md) was found under \(rootDir).
+                Job '\(job.title)' (\(job.id.prefix(8))) finished status=done, spent=\(AgentsView.spentOfBudget(job.spentUSD, job.budgetUSD)) but no expected deliverable file (concept-brief.md / plan.md / brief.md / research.md / summary.md / spec.md) was found under \(rootDir).
 
                 REQUIRED ACTION: run `ls \(rootDir)` via shell, find what actually landed (the swarm may have used a non-standard filename), fs_read it, summarize in 4-6 lines, end with a one-line CTA. Don't dispatch another swarm.
                 """
             }
         case .failed:
-            injection = """
-            ⚠️ UNPROCESSED FAILED SWARM - HANDLE THIS FIRST, before any other tool call this turn.
-
-            Job '\(job.title)' (\(job.id.prefix(8))) ended status=failed. Error: \(job.errorMessage ?? "no message recorded")
-
-            REQUIRED ACTION: surface the error to me in one line, propose the next move (retry / change scope / abandon), and wait for me to pick. Do NOT auto-retry.
-            """
+            switch Self.failureReport(for: job) {
+            case .inject(let text): injection = text
+            case .assistantLine(let line):
+                AppState.shared.appendChat(ChatMessage(role: .assistant, content: line))
+                return
+            }
         case .cancelled:
             injection = """
             ⚠️ UNPROCESSED CANCELLED SWARM - HANDLE THIS FIRST, before any other tool call this turn.

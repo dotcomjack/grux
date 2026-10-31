@@ -255,7 +255,58 @@ enum KeychainStore {
     /// Same argument as `Lookup`, `BillView` and `AgentHandoff` being single copies.
     nonisolated static func copyMatching(_ query: [String: Any],
                                          _ result: UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus {
-        SecItemCopyMatching(onlyOurOwnKeychain(withoutUI(query)) as CFDictionary, result)
+        gateInteraction(headless: WindowFacade.isHeadless)
+        return SecItemCopyMatching(onlyOurOwnKeychain(withoutUI(query)) as CFDictionary, result)
+    }
+
+    /// HEADLESS, NO KEYCHAIN DIALOG AT ALL (D56).
+    ///
+    /// `kSecUseAuthenticationUISkip` above governs items behind an access control. A file
+    /// keychain's own dialogs, "wants to use the login keychain" and "wants to use your
+    /// confidential information", answer to the process-wide interaction switch instead.
+    /// Measured on the Mac Mini, which runs headless: Grux launched at 12:04:20 AM on
+    /// 2026-10-28, SecurityAgent put a dialog on the screen one second later, and it was
+    /// still there two days on, while every launch logged its key read as still out.
+    ///
+    /// So while `~/.grux/HEADLESS` exists, the switch is off before any read reaches macOS,
+    /// and that covers writes too: nobody is at that screen to answer either. A read macOS
+    /// would have asked about fails closed and the key reads as not set. Leaving headless
+    /// puts the switch back on the next read; a Mac that never went headless is never
+    /// touched.
+    nonisolated(unsafe) static var interactionSetter: (Bool) -> Void = { allowed in
+        SecKeychainSetUserInteractionAllowed(allowed)
+    }
+    private static let gateLock = NSLock()
+    /// What the gate last set; nil until it first changes macOS's default (allowed).
+    nonisolated(unsafe) private static var interactionApplied: Bool?
+
+    nonisolated static func gateInteraction(headless: Bool) {
+        gateLock.lock(); defer { gateLock.unlock() }
+        let allowed = !headless
+        guard allowed != (interactionApplied ?? true) else { return }
+        interactionSetter(allowed)
+        interactionApplied = allowed
+        WakeLog.shared.log(allowed ? "keychain: not headless, Keychain dialogs back on"
+                                   : "keychain: headless, so no Keychain dialog can show this run")
+    }
+
+    nonisolated static func resetInteractionGateForTests() {
+        gateLock.lock(); defer { gateLock.unlock() }
+        interactionApplied = nil
+        interactionSetter = { allowed in SecKeychainSetUserInteractionAllowed(allowed) }
+    }
+
+    enum ReadOutcome: Equatable { case notSet, transient }
+
+    /// How `get` reads a status that carried no value. Headless, a read that needed a
+    /// dialog is a key nobody can reach this run, so it is not set (cached until a write)
+    /// rather than retried and logged as still out on every ask.
+    nonisolated static func readOutcome(status: OSStatus, headless: Bool) -> ReadOutcome {
+        switch status {
+        case errSecItemNotFound: return .notSet
+        case errSecInteractionNotAllowed where headless: return .notSet
+        default: return .transient
+        }
     }
 
     /// SEARCH ONLY THE DEFAULT KEYCHAIN, because a search with no search list traverses
@@ -314,7 +365,10 @@ enum KeychainStore {
             let value = String(data: data, encoding: .utf8) ?? ""
             store(key, value)
             return value
-        case errSecItemNotFound:
+        case _ where readOutcome(status: status, headless: WindowFacade.isHeadless) == .notSet:
+            if status == errSecInteractionNotAllowed {
+                WakeLog.shared.log("keychain: \(key.rawValue) needs a Keychain dialog and this Mac is headless, so it reads as not set")
+            }
             store(key, "")
             return ""
         default:

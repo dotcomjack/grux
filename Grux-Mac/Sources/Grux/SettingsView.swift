@@ -1,4 +1,5 @@
 import SwiftUI
+import AVFoundation
 
 /// Settings tabs. The system segmented control paints the selected tab gray.
 /// Selected is the same accent the rest of Grux uses. When the labels do not
@@ -79,6 +80,24 @@ struct SettingsView: View {
     /// to MacBook built-in mic" under "No input devices detected").
     static func builtInMicButtonTitle(builtInPresent: Bool) -> String? {
         builtInPresent ? "Use this Mac's built-in mic" : nil
+    }
+    /// Under an empty microphone list: why it is empty. Grux reads no input device until
+    /// macOS grants the microphone (reading one raises the prompt, see
+    /// `MicDevices.inputQueriesAllowed`), so an empty list usually means "not allowed yet",
+    /// not "none connected" (D58: a Mini with an input device was told to connect one).
+    static func micListEmptyNote(status: AVAuthorizationStatus) -> String {
+        switch status {
+        case .authorized:
+            return "No microphone is connected. Connect one, then press Refresh."
+        case .denied:
+            return "Grux is not allowed to use the microphone, so it cannot list them. Turn Grux on in System Settings, Privacy and Security, Microphone, then press Refresh."
+        case .restricted:
+            return "This Mac's settings do not let Grux use a microphone, so it cannot list them. Whoever manages this Mac can change that."
+        case .notDetermined:
+            fallthrough
+        @unknown default:
+            return "Grux lists your microphones once macOS lets it use one. macOS asks the first time you choose Allow listening or dictate."
+        }
     }
     /// Under the microphone list: only what the voice processing caption above does not say,
     /// and only when a listed microphone carries the toggle it names (D48).
@@ -959,9 +978,9 @@ if showGeneral(9) && sectionVisible("general.permissions") {
                         Section("ElevenLabs") {
                             HStack {
                                 if showElevenKey {
-                                    TextField("sk_…", text: $elevenKey).textFieldStyle(.roundedBorder)
+                                    TextField("API key", text: $elevenKey, prompt: Text("sk_…")).textFieldStyle(.roundedBorder)
                                 } else {
-                                    SecureField("sk_…", text: $elevenKey).textFieldStyle(.roundedBorder)
+                                    SecureField("API key", text: $elevenKey, prompt: Text("sk_…")).textFieldStyle(.roundedBorder)
                                 }
                                 Button(showElevenKey ? "Hide" : "Show") { showElevenKey.toggle() }
                             }
@@ -2161,9 +2180,9 @@ if showGeneral(9) && sectionVisible("general.permissions") {
 
             if devices.isEmpty {
                 // A genuine problem state, not an empty list, so it says what
-                // to do about it. "No input devices detected." alone left the
-                // reader unable to tell a broken Grux from an unplugged mic.
-                Text("No input devices detected. Connect a microphone, or check Privacy and Security, Microphone in System Settings, then press Refresh.")
+                // to do about it, from macOS's own answer: until the microphone
+                // is granted Grux reads no device at all.
+                Text(Self.micListEmptyNote(status: MicController.authorizationStatus()))
                     .font(.caption).foregroundStyle(.secondary)
             } else {
                 ForEach(devices) { dev in

@@ -70,6 +70,76 @@ final class UsageCardTests: XCTestCase {
         ])
     }
 
+    /// D87: the Integrations card's speed is the median of TODAY's Jev decisions, so on a
+    /// day answered all on Jev it is exactly the Usage card's "Typical speed", and a local
+    /// decision or an older Jev one never moves it.
+    func test_theJevSpeedIsTodaysJevMedianAndMatchesTheCardOnAnAllJevDay() {
+        let now = at(9, 21, 15)
+        let allJev = [row(900, .jev, at: at(9, 20)), row(200, .jev, at: at(9, 21, 9)),
+                      row(216, .jev, at: at(9, 21, 10)), row(300, .jev, at: at(9, 21, 14))]
+        XCTAssertEqual(DecisionUsageSummary.jevTypicalMs(allJev, now: now, calendar: utc), 216)
+        XCTAssertTrue(text(UsageCardContent.build(from: allJev, now: now, calendar: utc))
+            .contains("Typical speed: 216 ms"))
+        let mixed = allJev + [row(4, .local, at: at(9, 21, 14, 30)), row(3, .local, at: at(9, 21, 14, 31))]
+        XCTAssertEqual(DecisionUsageSummary.jevTypicalMs(mixed, now: now, calendar: utc), 216)
+        XCTAssertNil(DecisionUsageSummary.jevTypicalMs([row(4, .local, at: at(9, 21, 9))], now: now, calendar: utc))
+        XCTAssertNil(DecisionUsageSummary.jevTypicalMs([row(450, .jev, at: at(9, 20, 23, 59))], now: now, calendar: utc),
+                     "yesterday's Jev decision is not today's speed")
+        XCTAssertNil(DecisionUsageSummary.jevTypicalMs([], now: now, calendar: utc))
+    }
+
+    /// A fixed clock: a row recorded at 23:59:59.999 and scanned at midnight would read as
+    /// yesterday's (wave 22).
+    func test_theModelPublishesTodaysJevSpeed() {
+        let ledger = DecisionLedger(storeURL: nil)
+        let now = at(9, 21, 15)
+        let model = DecisionUsageModel(ledger: ledger, now: { now }, calendar: utc,
+                                       dayChanged: Empty().eraseToAnyPublisher())
+        XCTAssertNil(model.snapshot.jevTypicalMs)
+        ledger.record(row(216, .jev, inputTokens: 4_468, at: at(9, 21, 14)))
+        XCTAssertEqual(model.snapshot.jevTypicalMs, 216)
+    }
+
+    /// Wave 22: a Jev call that gave no answer is recorded as a local row with `fallbackFrom: .jev`
+    /// and the whole wait as its latency. It is a Jev wait, so it counts in Jev's speed, or the
+    /// card reads "a typical 218 ms" on a day Jev mostly timed out.
+    func test_aJevWaitThatFellBackCountsInJevsSpeed() {
+        let now = at(9, 21, 15)
+        let timeout = { (t: Date) in
+            DecisionLedgerEntry(surface: "voice", provider: .local, latencyMs: 10_000, inputTokens: 0,
+                                outputTokens: 0, at: t, summary: "x -> y", fallbackFrom: .jev,
+                                fallbackMayHaveBilled: true)
+        }
+        let rows = [row(216, .jev, at: at(9, 21, 9)), row(220, .jev, at: at(9, 21, 10)),
+                    timeout(at(9, 21, 11)), timeout(at(9, 21, 12)), timeout(at(9, 21, 13))]
+        XCTAssertEqual(DecisionUsageSummary.jevTypicalMs(rows, now: now, calendar: utc), 10_000)
+        XCTAssertEqual(DecisionUsageSummary.jevTypicalMs(Array(rows.prefix(3)), now: now, calendar: utc), 220)
+        XCTAssertNil(DecisionUsageSummary.jevTypicalMs([row(0, .local, at: at(9, 21, 9))], now: now, calendar: utc),
+                     "a decision made on this Mac with no Jev call is not Jev's speed")
+    }
+
+    /// Wave 22 round 2: a Jev call that failed at once (offline, a bad key, a 429) is recorded the
+    /// same way with a few ms and `fallbackMayHaveBilled: false`. That is no measure of Jev's
+    /// speed, and a day Jev answered nothing claims no number at all.
+    func test_aJevCallThatFailedAtOnceIsNotJevsSpeed() {
+        let now = at(9, 21, 15)
+        let fellBack = { (ms: Int, billed: Bool?, t: Date) in
+            DecisionLedgerEntry(surface: "voice", provider: .local, latencyMs: ms, inputTokens: 0,
+                                outputTokens: 0, at: t, summary: "x -> y", fallbackFrom: .jev,
+                                fallbackMayHaveBilled: billed)
+        }
+        let good = [row(216, .jev, at: at(9, 21, 9)), row(220, .jev, at: at(9, 21, 10))]
+        let fast = [fellBack(9, false, at(9, 21, 11)), fellBack(8, false, at(9, 21, 12)),
+                    fellBack(7, false, at(9, 21, 13))]
+        XCTAssertEqual(DecisionUsageSummary.jevTypicalMs(good + fast, now: now, calendar: utc), 218)
+        XCTAssertEqual(DecisionUsageSummary.jevTypicalMs(good + [fellBack(9, nil, at(9, 21, 11))], now: now, calendar: utc), 218,
+                       "an older row that never said whether it billed is not counted")
+        XCTAssertNil(DecisionUsageSummary.jevTypicalMs(fast, now: now, calendar: utc),
+                     "every call refused: Jev answered nothing today")
+        XCTAssertNil(DecisionUsageSummary.jevTypicalMs([fellBack(10_000, true, at(9, 21, 11))], now: now, calendar: utc),
+                     "only timeouts: Jev answered nothing today")
+    }
+
     /// The ledger keeps its most recent rows. When they do not reach back to
     /// the first of the month the total is partial, and the label says so.
     func test_aLedgerThatStartsMidMonthSaysWhereTheTotalStarts() {

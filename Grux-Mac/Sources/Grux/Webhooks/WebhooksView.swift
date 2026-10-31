@@ -105,8 +105,13 @@ struct WebhooksView: View {
                 .help("Edit webhook")
 
                 Button {
-                    store.delete(id: config.id)
-                    testResults[config.id] = nil
+                    DestructiveConfirm.shared.ask(
+                        question: "Delete the webhook \(DestructiveConfirm.quoted(config.name, or: "with no name"))?",
+                        detail: "Grux stops sending to it and deletes its signing secret.",
+                        confirmLabel: "Delete webhook") {
+                        store.delete(id: config.id)
+                        testResults[config.id] = nil
+                    }
                 } label: {
                     Image(systemName: "trash")
                 }

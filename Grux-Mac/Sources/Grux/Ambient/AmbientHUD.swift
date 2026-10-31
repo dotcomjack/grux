@@ -19,6 +19,9 @@ struct AmbientHUDRoot: View {
     @ObservedObject private var voice = VoiceCommandRouter.shared
 
     @State private var editingMemoryId: UUID?
+    /// The memory whose delete was tapped, asked about by the dialog on the
+    /// memories section (wave 24: the xmark deleted it on one click).
+    @State private var pendingMemoryDelete: AmbientMemory?
     @State private var editingText: String = ""
     @State private var editingProject: String = ""
     @State private var isFlushingTurn = false
@@ -492,6 +495,18 @@ struct AmbientHUDRoot: View {
                 }
             }
         }
+        .confirmationDialog(
+            "Delete the memory \(DestructiveConfirm.quoted(pendingMemoryDelete?.text ?? "", or: "with no text"))?",
+            isPresented: Binding(get: { pendingMemoryDelete != nil },
+                                 set: { if !$0 { pendingMemoryDelete = nil } }),
+            titleVisibility: .visible,
+            presenting: pendingMemoryDelete
+        ) { memory in
+            Button("Delete memory", role: .destructive) { ambient.deleteMemory(memory.id) }
+            Button("Cancel", role: .cancel) { }
+        } message: { _ in
+            Text("Grux stops recalling it. This cannot be undone.")
+        }
     }
 
     @ViewBuilder
@@ -528,7 +543,7 @@ struct AmbientHUDRoot: View {
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
             }.buttonStyle(.plain).help("Edit")
-            Button { ambient.deleteMemory(memory.id) } label: {
+            Button { pendingMemoryDelete = memory } label: {
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: 11))
                     .foregroundStyle(.tertiary)

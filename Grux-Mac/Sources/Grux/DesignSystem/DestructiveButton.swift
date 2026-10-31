@@ -100,16 +100,79 @@ final class DestructiveConfirm: ObservableObject {
         let detail: String?
         let confirmLabel: String
         let action: () -> Void
+        /// The host window that shows it: the window asked from, when it hosts.
+        var window: ObjectIdentifier? = nil
     }
 
     @Published var pending: Request?
+
+    /// Every host and the window it is drawn in, in the order they came up. The
+    /// main window and the Settings window both show Settings, so a request goes
+    /// to the window it was raised in, and only that window shows it (wave 24: the
+    /// Settings window had no host, so its asks showed nowhere). Kept per host,
+    /// not per window: two hosts can share a window for a moment while the shell
+    /// swaps roots, and the one leaving must not take the other's window with it.
+    private var hosts: [(token: UUID, window: () -> NSWindow?)] = []
+
+    func register(_ token: UUID, in window: NSWindow) {
+        hosts.removeAll { $0.token == token || $0.window() == nil }
+        hosts.append((token, { [weak window] in window }))
+    }
+
+    /// The hosts registered now, for the tests.
+    var hostTokens: [UUID] { hosts.map(\.token) }
+
+    func unregister(_ token: UUID) {
+        hosts.removeAll { $0.token == token || $0.window() == nil }
+    }
+
+    /// The windows that host and are on screen now, in the order they came up. A
+    /// closed window kept alive for reuse is not one: a request sent there showed
+    /// nowhere (wave 24, the menu-bar Delete with the main window closed).
+    var visibleHostWindows: [ObjectIdentifier] {
+        hosts.removeAll { $0.window() == nil }
+        var seen: [ObjectIdentifier] = []
+        for host in hosts {
+            guard let w = host.window(), w.isVisible else { continue }
+            let id = ObjectIdentifier(w)
+            if !seen.contains(id) { seen.append(id) }
+        }
+        return seen
+    }
+
+    /// The window a request goes to: the key window when it hosts, else the main
+    /// window when it hosts, else the first host. Nil only when nothing on screen
+    /// hosts, and then the first host to come up shows it.
+    nonisolated static func target(key: ObjectIdentifier?, main: ObjectIdentifier?,
+                                   hosts: [ObjectIdentifier]) -> ObjectIdentifier? {
+        if let key, hosts.contains(key) { return key }
+        if let main, hosts.contains(main) { return main }
+        return hosts.first
+    }
+
+    /// Whether the host in `window` shows `request`.
+    nonisolated static func shows(_ request: Request?, in window: ObjectIdentifier?) -> Bool {
+        guard let request else { return false }
+        return request.window == nil || request.window == window
+    }
+
+    /// A name for a dialog's question, in quotes and cut at 60 characters, or the
+    /// fallback when there is none (D99: questions name what is lost).
+    static func quoted(_ name: String, or fallback: String) -> String {
+        let t = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return fallback }
+        return "\"" + (t.count > 60 ? String(t.prefix(57)) + "..." : t) + "\""
+    }
 
     /// Queue a confirmation. Safe to call from a menu item that is about to
     /// dismiss, because the dialog belongs to the window and not to the menu.
     func ask(question: String, detail: String? = nil,
              confirmLabel: String, action: @escaping () -> Void) {
+        let window = Self.target(key: NSApp?.keyWindow.map(ObjectIdentifier.init),
+                                 main: NSApp?.mainWindow.map(ObjectIdentifier.init),
+                                 hosts: visibleHostWindows)
         pending = Request(question: question, detail: detail,
-                          confirmLabel: confirmLabel, action: action)
+                          confirmLabel: confirmLabel, action: action, window: window)
     }
 }
 
@@ -122,11 +185,15 @@ extension View {
 
 private struct DestructiveConfirmHost: ViewModifier {
     @ObservedObject private var confirm = DestructiveConfirm.shared
+    /// This host's window, once the view is in one.
+    @State private var window: ObjectIdentifier?
 
     func body(content: Content) -> some View {
-        content.confirmationDialog(
+        content
+            .background(HostWindowRegistrar { window = $0 })
+            .confirmationDialog(
             confirm.pending?.question ?? "",
-            isPresented: Binding(get: { confirm.pending != nil },
+            isPresented: Binding(get: { DestructiveConfirm.shows(confirm.pending, in: window) },
                                  set: { if !$0 { confirm.pending = nil } }),
             titleVisibility: .visible
         ) {
@@ -138,6 +205,36 @@ private struct DestructiveConfirmHost: ViewModifier {
             if let d = confirm.pending?.detail { Text(d) }
         }
     }
+}
+
+/// Registers the window a host is drawn in, and unregisters it when the view
+/// leaves that window.
+private struct HostWindowRegistrar: NSViewRepresentable {
+    let onWindow: (ObjectIdentifier?) -> Void
+
+    final class Probe: NSView {
+        var onWindow: ((ObjectIdentifier?) -> Void)?
+        /// This host's own registration, so leaving drops only this host.
+        private let token = UUID()
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            let now = window
+            if let now { DestructiveConfirm.shared.register(token, in: now) }
+            else { DestructiveConfirm.shared.unregister(token) }
+            let id = now.map(ObjectIdentifier.init)
+            // Not during the view update that moved it.
+            DispatchQueue.main.async { [onWindow] in onWindow?(id) }
+        }
+    }
+
+    func makeNSView(context: Context) -> Probe {
+        let probe = Probe()
+        probe.onWindow = onWindow
+        return probe
+    }
+
+    func updateNSView(_ probe: Probe, context: Context) { probe.onWindow = onWindow }
 }
 
 /// A destructive item for a menu or context menu. Raises the shared dialog

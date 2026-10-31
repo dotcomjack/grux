@@ -74,7 +74,7 @@ enum ChatReadiness: Equatable {
         case .ready:
             return ""
         case .localModelFoundButNotRouted:
-            return "Turn on offline mode in Settings and Grux will use it. It costs nothing and needs no key. "
+            return "Turn on Offline mode in Settings, Models and Grux will use it. It costs nothing and needs no key. "
                  + "You can also add an API key instead."
         case .needsModel:
             // NAMES WHICH CREDENTIAL. Grux has two and they are easy to confuse

@@ -16,6 +16,11 @@ struct IntegrationsView: View {
     /// The folded child's anchor (C5): `integrations:webhooks`.
     static let webhooksSection = "webhooks"
 
+    /// Every section below sends to a service once it is connected, so the
+    /// line says where the tokens live and that no Grux server sits between
+    /// (it used to claim nothing went to any server, D69).
+    static let headerLine = "Connect Grux to the services you already use. Tokens are stored in your macOS Keychain. Grux talks to each service you connect straight from your Mac, with no Grux server in between."
+
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -52,7 +57,7 @@ struct IntegrationsView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Integrations")
                 .font(GruxType.title).foregroundStyle(GruxTheme.textPrimary)
-            Text("Connect Grux to the services you already use. Tokens are stored in your macOS Keychain. Nothing is sent to a server. Grux talks to each service directly from your Mac.")
+            Text(Self.headerLine)
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }

@@ -25,7 +25,7 @@ struct ReactorView: View {
     // Calendar is the one non-reactive source (a plain @MainActor service, not a
     // store), polled into @State on appear + a slow timer rather than observed.
     // EventKit's fetch is synchronous, so the cadence is deliberately gentle.
-    @State private var nextEvent: CalendarService.EventSummary?
+    @State private var upcomingEvents: [CalendarService.EventSummary] = []
     @State private var calendarDenied = false
     private let calendarPoll = Timer.publish(every: 300, on: .main, in: .common).autoconnect()
 
@@ -106,16 +106,12 @@ struct ReactorView: View {
         // panel can offer a Grant affordance instead of masking the gap as Clear.
         guard CalendarService.shared.hasAccess else {
             calendarDenied = true
-            nextEvent = nil
+            upcomingEvents = []
             return
         }
         calendarDenied = false
         let now = Date()
-        let upcoming = CalendarService.shared
-            .events(from: now, to: now.addingTimeInterval(7 * 86_400))
-            .filter { $0.end > now }
-            .sorted { $0.start < $1.start }
-        nextEvent = upcoming.first
+        upcomingEvents = CalendarService.shared.events(from: now, to: now.addingTimeInterval(7 * 86_400))
     }
 
     // MARK: - Radial telemetry panels (flanking HUD columns)
@@ -166,16 +162,50 @@ struct ReactorView: View {
                                 value: "··", sub: "Grant calendar access",
                                 tint: GruxTheme.warnAmber, dim: true)
         }
-        let rel: String = nextEvent.map {
-            let f = RelativeDateTimeFormatter()
-            f.unitsStyle = .abbreviated
-            return f.localizedString(for: $0.start, relativeTo: Date())
-        } ?? "Clear"
+        let readout = Self.calendarReadout(events: upcomingEvents, now: Date())
         return ReactorPanel(icon: "calendar", title: "CALENDAR",
-                            value: rel,
-                            sub: nextEvent?.title ?? "Nothing scheduled",
-                            tint: GruxTheme.accentPrimary, dim: nextEvent == nil,
+                            value: readout.value,
+                            sub: readout.sub,
+                            tint: GruxTheme.accentPrimary, dim: readout.event == nil,
                             onTap: { jump("calendar") })
+    }
+
+    /// The Calendar card's number and line (D91: on Halloween it read "11h ago / Halloween",
+    /// counting from the all-day event's midnight start, so today's event looked over).
+    /// A meeting still ahead today comes first; then today's all-day event; then whatever
+    /// starts soonest. An event underway reads "Now", an all-day one "Today", "Tomorrow", its
+    /// weekday within six days or its date, and a later one how long until it starts. Nothing here reads "ago".
+    static func calendarReadout(events: [CalendarService.EventSummary], now: Date,
+                                calendar: Calendar = .current) -> (value: String, sub: String, event: CalendarService.EventSummary?) {
+        let ahead = events.filter { $0.end > now }.sorted { $0.start < $1.start }
+        let startOfToday = calendar.startOfDay(for: now)
+        let endOfToday = calendar.date(byAdding: .day, value: 1, to: startOfToday) ?? startOfToday.addingTimeInterval(86_400)
+        let next = ahead.first { !$0.isAllDay && $0.start < endOfToday }
+            ?? ahead.first { $0.isAllDay && $0.start < endOfToday }
+            ?? ahead.first
+        guard let next else { return ("Clear", "Nothing scheduled", nil) }
+        if next.start <= now {
+            return (next.isAllDay ? "Today" : "Now", next.title, next)
+        }
+        if next.isAllDay {
+            if calendar.isDate(next.start, inSameDayAs: now) { return ("Today", next.title, next) }
+            if calendar.isDate(next.start, inSameDayAs: endOfToday) { return ("Tomorrow", next.title, next) }
+            let day = DateFormatter()
+            day.calendar = calendar
+            day.timeZone = calendar.timeZone
+            day.locale = calendar.locale ?? .current
+            // A weekday names the next six days only: a week out, "Sat" on a Saturday
+            // read as today (wave 24), so from seven days on the card reads the date.
+            let daysOut = calendar.dateComponents([.day], from: startOfToday,
+                                                  to: calendar.startOfDay(for: next.start)).day ?? 0
+            day.setLocalizedDateFormatFromTemplate(daysOut < 7 ? "EEE" : "MMMd")
+            return (day.string(from: next.start), next.title, next)
+        }
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .abbreviated
+        f.calendar = calendar
+        f.locale = calendar.locale ?? .current
+        return (f.localizedString(for: next.start, relativeTo: now), next.title, next)
     }
 
     /// The Meta Ads card's number and line. No snapshot is no spend (D51: this read "$0.00"

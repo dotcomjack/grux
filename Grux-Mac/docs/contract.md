@@ -82,7 +82,7 @@ Secrets. Resolved from Keychain only. See section 2.4.
 | `key.slack` | Slack token | Connect Slack in Settings so Grux can read and post in your workspace. |
 | `key.notion` | Notion token | Paste your Notion integration secret in Settings, and the database you want Grux to write to. |
 | `key.telegram` | Telegram bot token | Add a Telegram bot token and chat id in Settings so Grux can send alerts to your phone. Nothing is sent until you add both. |
-| `key.typesafe` | TypeSafe decision key | Optional. Add a TypeSafe key in Settings for faster decisions. Grux matches on this Mac without one. |
+| `key.typesafe` | TypeSafe decision key | Optional. Add a TypeSafe key in Integrations so Grux understands asks it cannot match word for word. Without one, it decides on this Mac. |
 
 **Amended 2026-09-27. `key.typesafe` is added.** The decision engine already read this
 Keychain slot, but only Settings and the first run could write it, so `grux connect` and

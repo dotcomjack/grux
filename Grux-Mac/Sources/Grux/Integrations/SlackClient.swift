@@ -39,7 +39,7 @@ enum SlackError: Error, LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .missingToken: return "No Slack token. Paste your User OAuth Token in Settings → Integrations."
+        case .missingToken: return "No Slack token. Paste your User OAuth Token on the Integrations page (in the sidebar)."
         case .http(let code, let body): return "Slack HTTP \(code): \(body.prefix(200))"
         case .apiError(let msg): return "Slack API: \(msg)"
         case .decoding(let msg): return "Slack decode: \(msg)"

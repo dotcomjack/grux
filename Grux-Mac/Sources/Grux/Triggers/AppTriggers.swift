@@ -95,6 +95,26 @@ enum AppTriggers {
             }
         }
 
+        // Commitment ask: write a heard sentence ("I'll call Sam in 2 hours") to
+        // ~/.grux/fire-commitment-ask and the scheduler's own scan runs over it as
+        // one commitment memory, so the calendar card it files can be seen and
+        // answered in Approvals on a Mac with no microphone (D60). The in-app
+        // reminder is logged, not scheduled, so the door never raises a toast.
+        let commitmentAskFile = dir.appendingPathComponent("fire-commitment-ask")
+        TriggerWatcher.shared.register(commitmentAskFile) {
+            guard let raw = try? String(contentsOf: commitmentAskFile, encoding: .utf8) else { return }
+            try? FileManager.default.removeItem(at: commitmentAskFile)
+            let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return }
+            Task { @MainActor in
+                let door = CommitmentScheduler(scheduleReminder: { r in
+                    WakeLog.shared.log("fire-commitment-ask: reminder not scheduled by the door (\(r.title.prefix(60)))")
+                })
+                door.scan([AmbientMemory(kind: .commitment, text: text)], onTheBooks: [], now: Date())
+                WakeLog.shared.log("fire-commitment-ask: scanned '\(text.prefix(80))', \(ApprovalQueue.shared.pending.count) waiting in Approvals")
+            }
+        }
+
         // Chat context dump: touch ~/.grux/fire-chat-context-dump and Grux
         // writes the exact system blocks, messages and tool sizes the next
         // turn would send to ~/.grux/chat-context-dump.txt, 0600.
@@ -1734,6 +1754,20 @@ enum AppTriggers {
             try? FileManager.default.removeItem(at: fireFoundryBuild)
             Task { @MainActor in
                 WakeLog.shared.log("fire-foundry-build: \(FoundryEngine.shared.buildRequested(token: token))")
+            }
+        }
+
+        // fire-foundry-reject (contents = the start of a proposal id, then the reason):
+        // Self-Upgrade's Reject, for a Mac nobody can click on (D83). Same path as the
+        // card's button; the reason lands in the Self-Upgrade timeline and the outcome
+        // in wake.log as `fire-foundry-reject:`.
+        let fireFoundryReject = dir.appendingPathComponent("fire-foundry-reject")
+        TriggerWatcher.shared.register(fireFoundryReject) {
+            guard FileManager.default.fileExists(atPath: fireFoundryReject.path) else { return }
+            let token = (try? String(contentsOf: fireFoundryReject, encoding: .utf8)) ?? ""
+            try? FileManager.default.removeItem(at: fireFoundryReject)
+            Task { @MainActor in
+                WakeLog.shared.log("fire-foundry-reject: \(FoundryEngine.shared.rejectRequested(token: token))")
             }
         }
 

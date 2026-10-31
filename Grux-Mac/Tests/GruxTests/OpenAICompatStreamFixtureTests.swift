@@ -546,6 +546,60 @@ final class OpenAICompatStreamFixtureTests: XCTestCase {
     /// The second half of each case is the sentence a PERSON reads, not the
     /// enum: an error that classifies correctly and still renders as the wrong
     /// advice has fixed nothing.
+    /// D82: a stopped fixture's accept thread must never answer for the next
+    /// fixture. In a full run the 403 case above read the 401 case's status and
+    /// sentence: stop() closed the listening descriptor, the next server was
+    /// handed the same descriptor number, and the old thread, coming back round
+    /// its loop, accepted the new server's connection. This holds the old
+    /// thread at that exact point and keeps the new one from accepting until
+    /// the old one has had its chance.
+    func test_aStoppedFixtureNeverAnswersForTheNextOne() async throws {
+        final class Once: @unchecked Sendable {
+            private let lock = NSLock()
+            private var used = false
+            func first() -> Bool { lock.lock(); defer { lock.unlock() }; defer { used = true }; return !used }
+        }
+        let oldServed = Once()
+        let oldBackRound = DispatchSemaphore(value: 0)
+        let releaseOld = DispatchSemaphore(value: 0)
+        let releaseNew = DispatchSemaphore(value: 0)
+
+        let old = SSEFixtureServer(frames: ["old"], statusCode: 401, contentType: "text/plain")
+        old.afterServe = {
+            if oldServed.first() { oldBackRound.signal(); releaseOld.wait() }
+        }
+        try old.start()
+        // Whatever throws below, no fixture thread is left parked on a seam
+        // for the rest of the run (W19-P3 item 8). Each is safe twice.
+        defer { old.stop(); releaseOld.signal(); releaseNew.signal() }
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        func get(_ base: String) async throws -> (Int, String) {
+            var request = URLRequest(url: URL(string: base + "/probe")!)
+            request.timeoutInterval = 10
+            let (data, response) = try await session.data(for: request)
+            return ((response as? HTTPURLResponse)?.statusCode ?? -1, String(decoding: data, as: UTF8.self))
+        }
+        let first = try await get(old.baseURL)
+        XCTAssertEqual(first.0, 401)
+        XCTAssertEqual(oldBackRound.wait(timeout: .now() + 5), .success,
+                       "the old fixture's thread never came back round its loop")
+        old.stop()
+
+        let new = SSEFixtureServer(frames: ["new"], statusCode: 403, contentType: "text/plain")
+        new.onStart = { releaseNew.wait() }
+        try new.start()
+        defer { new.stop() }
+        releaseOld.signal()
+        let answer = Task { try await get(new.baseURL) }
+        // The old thread gets a clear head start on the new server's socket.
+        try await Task.sleep(nanoseconds: 300_000_000)
+        releaseNew.signal()
+        let (status, body) = try await answer.value
+        XCTAssertEqual(status, 403, "a stopped fixture answered the next fixture's request")
+        XCTAssertEqual(body, "new", "a stopped fixture answered the next fixture's request")
+    }
+
     func test_visionCallFailuresKeepTheirStatusInsteadOfReadingAsUnsupportedVision() async {
         // The error envelope every OpenAI-compatible server sends, and the same
         // shape `ChatService.providerMessage` already reads on the chat path.
@@ -1081,8 +1135,9 @@ final class OpenAICompatStreamFixtureTests: XCTestCase {
 ///    fixture that claims to stream in several chunks should actually do it.
 ///
 /// `@unchecked Sendable` is accurate rather than a shortcut: the frames are
-/// immutable after init, the port is written before the accept thread starts,
-/// and the only field the accept thread mutates is guarded by `lock`.
+/// immutable after init, the port and the two seams are written before the
+/// accept thread starts, and every field shared with that thread afterwards
+/// (the stored request and the stop flag) is guarded by `lock`.
 ///
 /// File scoped on purpose. It is a fixture for one test file, and a helper this
 /// generically named sitting at target scope is how two test files end up
@@ -1093,7 +1148,6 @@ private final class SSEFixtureServer: @unchecked Sendable {
     private let contentType: String
     private let frames: [Data]
     private let lock = NSLock()
-    private var listenFD: Int32 = -1
     private var storedRequestLine = ""
     private var storedRequestBody = Data()
     private var storedRequestLines: [String] = []
@@ -1165,28 +1219,52 @@ private final class SSEFixtureServer: @unchecked Sendable {
             p.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &len) }
         }
         port = UInt16(bigEndian: actual.sin_port)
-        listenFD = fd
         Thread.detachNewThread { self.acceptLoop(fd) }
     }
 
-    /// Closing the listening descriptor is also how the accept thread is told
-    /// to exit: the blocked `accept` returns an error, the loop returns, and
-    /// the last strong reference to this object goes with it.
+    /// stop() only raises a flag. The accept thread sees it within one short
+    /// poll, closes the listening descriptor itself on its way out, and the
+    /// last strong reference to this object goes with it.
+    ///
+    /// D82: the accept thread owns the descriptor. When stop() closed it,
+    /// the kernel handed the same descriptor NUMBER to the next case's server,
+    /// and this thread, coming back round its loop, accepted that server's
+    /// connection and answered with this server's status (a 403 case read the
+    /// 401 case's sentence in a full run).
     func stop() {
-        let fd = listenFD
-        listenFD = -1
-        if fd >= 0 { close(fd) }
+        lock.lock(); stopped = true; lock.unlock()
     }
 
+    private var stopped = false
+    private var isStopped: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return stopped
+    }
+
+    /// Test seams for D82, set before start(). `onStart` runs once on the
+    /// accept thread before it first waits for a connection; `afterServe`
+    /// runs after each connection is served and closed, the exact point where
+    /// an old thread comes back round its loop.
+    var onStart: (@Sendable () -> Void)?
+    var afterServe: (@Sendable () -> Void)?
+
     private func acceptLoop(_ fd: Int32) {
+        defer { close(fd) }
+        onStart?()
         while true {
+            if isStopped { return }
+            var waiting = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+            let ready = poll(&waiting, 1, 20)
+            if isStopped { return }
+            if ready <= 0 { continue }
             let conn = accept(fd, nil, nil)
-            if conn < 0 { return }
+            if conn < 0 { continue }
             var yes: Int32 = 1
             setsockopt(conn, SOL_SOCKET, SO_NOSIGPIPE, &yes, socklen_t(MemoryLayout<Int32>.size))
             setsockopt(conn, Int32(IPPROTO_TCP), TCP_NODELAY, &yes, socklen_t(MemoryLayout<Int32>.size))
             serve(conn)
             close(conn)
+            afterServe?()
         }
     }
 

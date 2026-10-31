@@ -119,6 +119,11 @@ struct RDLiveProcessRunner: RDProcessRunning {
             proc.standardOutput = outPipe
             proc.standardError = errPipe
             proc.standardInput = inPipe
+            // Signalled when the child exits, so the wait below returns then. It
+            // used to look every 0.2 s, and a 13 ms git call cost 200 to 500 ms on a
+            // loaded Mac, dozens of times per build (measured 2026-10-29).
+            let exited = DispatchSemaphore(value: 0)
+            proc.terminationHandler = { _ in exited.signal() }
 
             do {
                 try proc.run()
@@ -154,15 +159,12 @@ struct RDLiveProcessRunner: RDProcessRunning {
 
             // Timeout watchdog: SIGTERM past the deadline so a hung gate
             // fails with evidence instead of wedging the cycle.
-            let deadline = Date().addingTimeInterval(timeoutSeconds)
+            let limit: DispatchTime = timeoutSeconds.isFinite && timeoutSeconds < 1e9
+                ? .now() + max(0, timeoutSeconds) : .distantFuture
             var timedOut = false
-            while proc.isRunning {
-                if Date() > deadline {
-                    timedOut = true
-                    proc.terminate()
-                    break
-                }
-                Thread.sleep(forTimeInterval: 0.2)
+            if exited.wait(timeout: limit) == .timedOut {
+                timedOut = true
+                proc.terminate()
             }
             proc.waitUntilExit()
             group.wait()

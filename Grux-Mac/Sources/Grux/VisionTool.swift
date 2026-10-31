@@ -32,7 +32,7 @@ enum VisionTool {
         }
         let apiKey = state.anthropicKey
         guard !apiKey.isEmpty else {
-            return "error: Anthropic API key not set. Add it in Settings → Model & API."
+            return "error: Anthropic API key not set. Add it in Settings, Models."
         }
 
         do {
@@ -111,7 +111,7 @@ enum VisionTool {
             // around here: this is a rule the user set. Saying so plainly is
             // what stops it trying another route to the same pixels.
             WakeLog.shared.log("read_screen blocked: \(blocked.appName) (\(blocked.reason))")
-            return "ok: I can't look at that one. \(blocked.errorDescription ?? "") You can change which apps are excluded in Settings, Privacy and capture."
+            return "ok: I can't look at that one. \(blocked.errorDescription ?? "") You can change which apps are excluded in Settings, Data & Security, Data & Capabilities, Privacy and capture."
         } catch {
             return "error: \(error.localizedDescription)"
         }

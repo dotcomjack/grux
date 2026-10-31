@@ -269,6 +269,33 @@ final class ChatService {
             return
         }
 
+        // "Grux, upgrade yourself" (D86): the exact ask takes the cycle's own
+        // path, because a local model offered the tool for these very words
+        // called none and the person read only an offer. Self-upgrade off is
+        // said before the gate, so no card waits in Approvals for a cycle that
+        // would refuse when tapped; on, the call goes through dispatchTool and
+        // its gate exactly as the model's would. Needs no model, so it sits
+        // above the readiness guard like the V2 path.
+        if imageData == nil, ChatIntentClassifier.isUpgradeYourselfAsk(trimmed) {
+            let input: [String: Any] = ["action": "start"]
+            let result: String
+            if let off = FoundryEngine.manualCycleRefusal(foundryEnabled: state.config.foundryEnabled) {
+                result = "foundry: \(off)"
+            } else {
+                result = await Self.dispatchTool(name: "foundry_upgrade_cycle", input: input)
+            }
+            WakeLog.shared.log("chat: upgrade-yourself fast-path -> \(result)")
+            let reply = ToolReplyCopy.forPerson(tool: "foundry_upgrade_cycle", input: input, result: result)
+            state.appendChat(ChatMessage(role: .assistant, content: DashSanitizer.stripDashesOnly(reply)))
+            if state.config.memoryEnabled {
+                SemanticMemory.shared.store(kind: .chatAssistant, text: reply)
+            }
+            if state.config.speakRepliesAloud && !state.voiceMuted {
+                SpeechEngine.shared.speak(reply)
+            }
+            return
+        }
+
         // PIM fast-path: confident calendar / note / email-draft / doc-search
         // utterances skip the Claude round trip. Confirmation card + spoken
         // ack + 5s undo, then execution through dispatchTool (one
@@ -606,7 +633,8 @@ final class ChatService {
                 finalText = person
             }
             let claimCheck = ActionClaimGuard.vet(reply: finalText, route: pending.provider,
-                                                  results: toolResultsThisTurn)
+                                                  results: toolResultsThisTurn, ask: userText,
+                                                  approvals: ApprovalQueue.shared.pending.map(\.summary))
             if claimCheck.replaced {
                 WakeLog.shared.log("chat: local reply corrected (an action claimed that no result backs, or a write waiting in Approvals) -> '\(claimCheck.text)' instead of '\(finalText.prefix(160))'")
                 finalText = claimCheck.text

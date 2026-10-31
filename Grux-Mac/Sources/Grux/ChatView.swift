@@ -289,7 +289,12 @@ struct ChatView: View {
             Spacer()
             presetMenu
             muteVoiceButton
-            Button { state.clearChat() } label: {
+            Button {
+                DestructiveConfirm.shared.ask(
+                    question: "Clear every message in this conversation?",
+                    detail: "The conversation stays, empty. Grux cannot bring the messages back.",
+                    confirmLabel: "Clear messages") { state.clearChat() }
+            } label: {
                 Label("Clear", systemImage: "trash")
                     .labelStyle(.iconOnly)
                     .font(.callout)
