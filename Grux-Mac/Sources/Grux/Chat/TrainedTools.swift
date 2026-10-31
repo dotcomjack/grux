@@ -226,35 +226,80 @@ extension TrainedTools {
 }
 
 extension TrainedTools {
-    /// Two real `/api/chat` bodies from the app's own path, for the training
-    /// run to byte-compare its renderer against: an everyday turn (the stable
-    /// list) and one that asks to open a page (the ranked list), on `model`,
-    /// a 16 GB Mac's window. Built by `assemblePendingContext`, the turn's
-    /// own `forModel` step, `withTurnContextAfterTools`, `streamedChatBody`
-    /// and `ollamaChatBody`, then `wireData`. Debug flag only: the per-turn
-    /// block carries the minute and this install's state, so it is written
-    /// under a clean HOME and never compared by a test.
+    /// One local turn's exact `/api/chat` bytes, from the app's own path:
+    /// `assemblePendingContext`, the turn's `forModel` step,
+    /// `withTurnContextAfterTools`, `streamedChatBody`, `ollamaChatBody` and
+    /// `wireData`. `memoryGB` picks the window as a Mac of that size would;
+    /// `lines` replaces whole lines of the per-turn block by their label
+    /// ("NOW", "ACTIVE_APP_RIGHT_NOW"), so a training set holds no minute or
+    /// machine of its own. Debug flag only (GruxApp), under a clean HOME.
     @MainActor
-    static func samples(model: String = "gruxai.com/grux/grux-local:4b-v3") -> [String: Any] {
+    static func request(ask: String, model: String, memoryGB: Double,
+                        lines: [String: String] = [:]) -> (body: String, stable: Bool, tools: [ClaudeTool]) {
         let state = AppState.shared
         let saved = state.chat
         defer { state.chat = saved }
+        state.chat = [ChatMessage(role: .user, content: ask)]
+        let window = LocalTurn.contextTokens(memoryGB: memoryGB)
+        let turn = ChatService.shared.assemblePendingContext(state: state, lean: true, window: window)
+        let tools = forModel(model, turn.tools)
+        let blocks = turn.systemBlocks.map { block -> [String: Any] in
+            guard let text = block["text"] as? String, !lines.isEmpty else { return block }
+            var out = block
+            out["text"] = text.components(separatedBy: "\n").map { line in
+                lines.first { line.hasPrefix($0.key + ":") }.map { "\($0.key): \($0.value)" } ?? line
+            }.joined(separator: "\n")
+            return out
+        }
+        let messages = OpenAICompatBackend.withTurnContextAfterTools(
+            systemBlocks: blocks, messages: OpenAICompatBackend.openAIChatMessages(turn.messages))
+        let body = OpenAICompatBackend.ollamaChatBody(
+            OpenAICompatBackend.streamedChatBody(model: model, maxTokens: ChatService.chatMaxTokens,
+                                                 temperature: ChatService.chatTemperature,
+                                                 messages: messages, tools: tools),
+            stream: true, contextTokens: window)
+        return (String(decoding: (try? OpenAICompatBackend.wireData(body)) ?? Data(), as: UTF8.self),
+                turn.localStable, turn.tools)
+    }
+
+    /// Two of `request`: an everyday turn (the stable list) and one that asks
+    /// to open a page (the ranked list), on a 16 GB Mac's window.
+    @MainActor
+    static func samples(model: String = "gruxai.com/grux/grux-local:4b-v3") -> [String: Any] {
         var out: [[String: Any]] = []
         for (name, ask) in [("stable", "what is on my plate today?"), ("ranked", "open github.com")] {
-            state.chat = [ChatMessage(role: .user, content: ask)]
-            let turn = ChatService.shared.assemblePendingContext(state: state, lean: true, window: 16_384)
-            let tools = forModel(model, turn.tools)
-            let messages = OpenAICompatBackend.withTurnContextAfterTools(
-                systemBlocks: turn.systemBlocks, messages: OpenAICompatBackend.openAIChatMessages(turn.messages))
-            let body = OpenAICompatBackend.ollamaChatBody(
-                OpenAICompatBackend.streamedChatBody(model: model, maxTokens: ChatService.chatMaxTokens,
-                                                     temperature: ChatService.chatTemperature,
-                                                     messages: messages, tools: tools),
-                stream: true, contextTokens: LocalTurn.contextTokens(memoryGB: 16))
-            out.append(["turn": name, "ask": ask, "tools": tools.map(\.name),
-                        "compacted": isTrainedModel(model) ? turn.tools.filter(isTrained).count : 0,
-                        "body": String(decoding: (try? OpenAICompatBackend.wireData(body)) ?? Data(), as: UTF8.self)])
+            let r = request(ask: ask, model: model, memoryGB: 16)
+            out.append(["turn": name, "ask": ask, "path": r.stable ? "stable" : "fallback",
+                        "tools": r.tools.map(\.name),
+                        "compacted": isTrainedModel(model) ? r.tools.filter(isTrained).count : 0,
+                        "body": r.body])
         }
         return ["model": model, "num_ctx": LocalTurn.contextTokens(memoryGB: 16), "requests": out]
+    }
+
+    /// `--dump-local-requests <in.jsonl> <out.jsonl>`: one `request` per input
+    /// line {id, utterance, memory_gb, model, now?, active_app?}, written as
+    /// {id, path ("stable" or "fallback"), body}.
+    @MainActor
+    static func dumpRequests(from input: URL, to output: URL) throws -> Int {
+        let text = try String(contentsOf: input, encoding: .utf8)
+        var lines: [String] = []
+        for raw in text.split(separator: "\n") where !raw.trimmingCharacters(in: .whitespaces).isEmpty {
+            guard let item = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any],
+                  let id = item["id"], let ask = item["utterance"] as? String else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            var over: [String: String] = [:]
+            if let now = item["now"] as? String { over["NOW"] = now }
+            if let app = item["active_app"] as? String { over["ACTIVE_APP_RIGHT_NOW"] = app }
+            RecentToolUse.shared.clear()
+            let r = request(ask: ask, model: item["model"] as? String ?? "gruxai.com/grux/grux-local:4b-v3",
+                            memoryGB: (item["memory_gb"] as? NSNumber)?.doubleValue ?? 16, lines: over)
+            let row: [String: Any] = ["id": id, "path": r.stable ? "stable" : "fallback", "body": r.body]
+            let data = try JSONSerialization.data(withJSONObject: row, options: [.sortedKeys, .withoutEscapingSlashes])
+            lines.append(String(decoding: data, as: UTF8.self))
+        }
+        try Data((lines.joined(separator: "\n") + "\n").utf8).write(to: output)
+        return lines.count
     }
 }

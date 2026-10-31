@@ -963,8 +963,11 @@ final class OpenAICompatStreamFixtureTests: XCTestCase {
 
     /// A chat title gets 32 tokens and Qwen 3.5 spent all of them thinking: no
     /// title came back on 49 of 50 real-app turns, so the call ran again after
-    /// every reply. A short answer on Ollama asks the model not to think;
-    /// every other call keeps the model's default.
+    /// every reply. A short answer on Ollama asks the model not to think.
+    /// release/3.2: so does every other call on Ollama (D-THINK, measured
+    /// 2026-10-22: qwen3.5:2b scored 0.48 thinking and 0.75 told not to, 3.8x
+    /// faster, and Grux Local's published numbers were measured with thinking
+    /// off), where main had left plain and tool calls at the model's default.
     func test_aShortAnswerOnOllamaAsksTheModelNotToThink() async throws {
         let server = SSEFixtureServer(
             frames: [#"{"model":"m","message":{"role":"assistant","content":"capital cities quiz"},"done":true,"done_reason":"stop","prompt_eval_count":9,"eval_count":4}"#],
@@ -985,13 +988,13 @@ final class OpenAICompatStreamFixtureTests: XCTestCase {
                                        messages: [ClaudeMessage(role: "user", content: "summarize")],
                                        maxTokens: 800, temperature: 0.2)
         let plain = try XCTUnwrap(try JSONSerialization.jsonObject(with: server.requestBody) as? [String: Any])
-        XCTAssertNil(plain["think"], "a plain completion had the model's thinking changed")
+        XCTAssertEqual(plain["think"] as? Bool, false, "a plain completion let the model think")
 
         _ = try await backend.completeWithTools(
             apiKey: "ollama", model: "qwen3.5:4b", system: nil,
             messages: [["role": "user", "content": "hi"]], tools: [], maxTokens: 16, temperature: 0)
         let turn = try XCTUnwrap(try JSONSerialization.jsonObject(with: server.requestBody) as? [String: Any])
-        XCTAssertNil(turn["think"], "a chat turn with tools had its thinking changed")
+        XCTAssertEqual(turn["think"] as? Bool, false, "a chat turn with tools let the model think")
     }
 
     /// The field is Ollama's own. A server that is not Ollama gets the OpenAI

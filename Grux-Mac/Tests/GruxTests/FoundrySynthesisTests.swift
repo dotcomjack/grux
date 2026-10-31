@@ -350,3 +350,19 @@ final class FoundrySynthesisTests: XCTestCase {
         XCTAssertNil(FoundryEngine.manualCycleRefusal(foundryEnabled: true))
     }
 }
+
+/// release/3.2: one pass files from one place. The model-driven synthesizer
+/// runs first; the deterministic filer only when it did not run or failed.
+final class FoundryOneFilerPerPassTests: XCTestCase {
+    func test_theFilerIsTheSynthesizersFallback() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let src = try String(contentsOf: root.appendingPathComponent("Sources/Grux/Foundry/FoundryEngine.swift"),
+                             encoding: .utf8)
+        let refresh = try XCTUnwrap(src.range(of: "synthesized = await ProposalSynthesizer.refresh("))
+        let file = try XCTUnwrap(src.range(of: "SignalProposalFiler.file(from: report.signals"))
+        XCTAssertLessThan(refresh.lowerBound, file.lowerBound, "the filer runs before the synthesizer")
+        XCTAssertTrue(src.contains("let filed = !full && (synthesized == nil || synthesized?.error != nil)"),
+                      "the filer runs beside the synthesizer, not instead of it")
+    }
+}

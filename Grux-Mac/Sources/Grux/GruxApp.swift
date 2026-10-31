@@ -217,7 +217,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // `--trained-tools-check` exits 1 naming any trained tool whose
         // definition changed. Exit 2 is a usage or write failure. Run it
         // under a clean HOME: the samples carry this install's state.
-        if let flag = CommandLine.arguments.firstIndex(where: { $0.hasPrefix("--trained-tools-") }) {
+        if let flag = CommandLine.arguments.firstIndex(where: {
+            $0.hasPrefix("--trained-tools-") || $0 == "--dump-local-requests"
+        }) {
             let args = CommandLine.arguments
             let tools = ChatService.allTools()
             func fail(_ why: String) -> Never {
@@ -234,6 +236,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     let samples = try JSONSerialization.data(withJSONObject: TrainedTools.samples(),
                                                              options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
                     try samples.write(to: dir.appendingPathComponent("trained-tools-v3-samples.json"))
+                } catch { fail(error.localizedDescription) }
+                exit(0)
+            case "--dump-local-requests":
+                guard flag + 2 < args.count else { fail("needs <in.jsonl> <out.jsonl>") }
+                do {
+                    let n = try TrainedTools.dumpRequests(from: URL(fileURLWithPath: args[flag + 1]),
+                                                          to: URL(fileURLWithPath: args[flag + 2]))
+                    FileHandle.standardError.write(Data("dumped \(n) requests\n".utf8))
                 } catch { fail(error.localizedDescription) }
                 exit(0)
             case "--trained-tools-check":

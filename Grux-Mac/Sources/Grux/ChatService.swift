@@ -761,6 +761,9 @@ final class ChatService {
         let backend: ModelBackend
         let apiKey: String
         let presetApp: PresetApplication?
+        /// A local turn that took the stable list (LocalTurn.stableHead)
+        /// rather than the ranked one. For the Grux Local request dump.
+        var localStable = false
     }
 
     // Assemble the full pending-turn context: the preset-applied system blocks
@@ -796,6 +799,7 @@ final class ChatService {
         let visible = lean ? state.chat.filter { !$0.isNotice } : []
         var messages = Self.modelFacingMessages(lean ? Array(visible.suffix(LocalTurn.historyMessages))
                                                      : Array(state.chat.suffix(30)))
+        var stablePath = false
         if lean {
             let filtered = tools
             tools = LocalTurn.rank(tools, utterance: lastUser?.content ?? "")
@@ -835,6 +839,7 @@ final class ChatService {
                     systemBlocks.append(["type": "text", "text": line])
                 }
                 tools = stable
+                stablePath = true
             } else {
                 let cut = LocalTurn.inCanonicalOrder(Array(tools.dropFirst(fit.tools)), order: order)
                 if let line = LocalTurn.cutToolsLine(cut.map(\.name)) {
@@ -858,7 +863,8 @@ final class ChatService {
             maxTokens: lean ? LocalTurn.replyTokens : 2000,
             backend: routing.backend,
             apiKey: routing.apiKey,
-            presetApp: presetApp)
+            presetApp: presetApp,
+            localStable: stablePath)
     }
 
     /// The stable list for a local turn (LocalTurn.stableHead), or nil when

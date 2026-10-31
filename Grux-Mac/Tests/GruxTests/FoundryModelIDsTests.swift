@@ -29,13 +29,14 @@ final class FoundryModelIDsTests: XCTestCase {
         }
     }
 
-    // Anthropic's list prices: Sonnet 5.5 $2 in, $10 out, cache read $0.20;
+    // Anthropic's list prices: Sonnet 5.5 $2 in, $10 out, cache read $0.10
+    // (main's 329467d7 read the pricing page again on 2026-10-29: $0.10, not $0.20);
     // Opus 5.5 $4 in, $20 out, cache read $0.20; cache write 1.25x input.
     // Without their own ladder rows they fell to a prefix or family rate
     // (Sonnet 5.5 read $3 / $15, Opus 5.5 read $15 / $75).
     func test_theCostLinePricesEachModelAtItsOwnRate() {
         XCTAssertEqual(ModelRates.rates(forModelID: FoundryModelIDs.standard),
-                       ModelRates.Rates(input: 2.00, output: 10.00, cacheRead: 0.20, cacheWrite: 2.50))
+                       ModelRates.Rates(input: 2.00, output: 10.00, cacheRead: 0.10, cacheWrite: 2.50))
         XCTAssertEqual(ModelRates.rates(forModelID: FoundryModelIDs.highStakes),
                        ModelRates.Rates(input: 4.00, output: 20.00, cacheRead: 0.20, cacheWrite: 5.00))
         XCTAssertEqual(ModelRates.rates(forModelID: FoundryModelIDs.vision).input, 1.00)

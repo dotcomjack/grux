@@ -226,7 +226,7 @@ enum LocalTurn {
         let ordered = stableOrder(core)
         let stepped = (cachedSystemChars / 2_000 + 1) * 2_000
         let fit = Self.fit(systemChars: stepped + longestCutLineChars + turnReserveChars, messageChars: [],
-                      toolChars: ordered.map { Self.chars($0) }, window: window)
+                      toolChars: ordered.map { Self.chars($0) }, window: window, toolsTakeAllRoom: true)
         return Array(ordered.prefix(fit.tools))
     }
 
@@ -294,9 +294,14 @@ enum LocalTurn {
     /// How many of the newest messages and of the ranked tools fit in the
     /// window beside the system prompt and the reply. The newest message
     /// always stays; then the best tools, up to half of what the window leaves
-    /// beside the system prompt (D17); then older history.
+    /// beside the system prompt (D17); then older history. `toolsTakeAllRoom`
+    /// is the stable list's sizing (`stableTools`): no history rides in it, and
+    /// the room `turnReserveChars` holds back is already its other half, so the
+    /// tools take what is left (release/3.2: at half, a fresh install's stable
+    /// list held 6 tools against main's 12).
     static func fit(systemChars: Int, messageChars: [Int], toolChars: [Int],
-                    window: Int, reply: Int = replyTokens) -> (messages: Int, tools: Int) {
+                    window: Int, reply: Int = replyTokens,
+                    toolsTakeAllRoom: Bool = false) -> (messages: Int, tools: Int) {
         let margin = 256
         var budget = window - reply - margin - tokens(chars: systemChars)
         var messages = 0
@@ -305,7 +310,7 @@ enum LocalTurn {
         // prompt, whatever the conversation holds, so two turns of one thread
         // send the same tools. A newest message too long for the other half
         // takes from the tools' half instead.
-        var toolLimit = max(0, budget / 2)
+        var toolLimit = toolsTakeAllRoom ? max(0, budget) : max(0, budget / 2)
         if let newest = messageChars.last {
             budget -= tokens(chars: newest)
             toolLimit = min(toolLimit, max(0, budget))

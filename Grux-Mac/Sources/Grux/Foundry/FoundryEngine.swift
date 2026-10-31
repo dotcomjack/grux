@@ -232,8 +232,28 @@ final class FoundryEngine: ObservableObject {
 
         // Sense: refresh the signal book, then synthesize proposals from it.
         let report = await SignalHarvester.standard().harvest()
-        // Synthesize: this pass's signals become proposals on the pane.
-        let filed = SignalProposalFiler.file(from: report.signals, into: .shared)
+
+        // Synthesize: the signals become proposals. Before 2026-10-30 this
+        // stage did not exist and the harvest above went nowhere.
+        // Not on an opportunistic pass: that one runs while the person is
+        // away and must stand down when they return, and a synthesis run
+        // cannot be interrupted part way. Nor after the governor yielded.
+        var synthesized: SynthesisOutcome?
+        if pass != .opportunistic, case .running = FoundryGovernor.shared.phase {
+            synthesized = await ProposalSynthesizer.refresh(sourceRoot: ProposalSynthesizer.sourceRoot(), harvested: report)
+        }
+
+        // The deterministic filer (release/3.2: the 3.2 loop's synthesis
+        // stage) is the fallback when that did not run or failed, so one
+        // pass files from one place: run beside it, its templated proposals
+        // filled ProposalSynthesizer.maxOpen within a few cycles and the same
+        // problem could be filed twice under two titles.
+        // Not when the queue is full: that is the synthesizer's own refusal,
+        // and the filer has no cap of its own.
+        let full = ProposalStore.shared.proposals.filter { $0.status == .proposed || $0.status == .accepted }.count
+            >= ProposalSynthesizer.maxOpen
+        let filed = !full && (synthesized == nil || synthesized?.error != nil)
+            ? SignalProposalFiler.file(from: report.signals, into: .shared) : []
         for proposal in filed {
             FoundryViewBridge.mirror(action: .proposed, proposal: proposal,
                                      detail: proposal.evidence.first?.display ?? proposal.estCostLabel)
@@ -243,18 +263,9 @@ final class FoundryEngine: ObservableObject {
             title: "\(pass.displayName) ran",
             detail: SignalProposalFiler.cycleDetail(signals: report.signals.count,
                                                     sourceErrors: report.sourceErrors.count,
-                                                    filed: filed.count)
+                                                    filed: filed.count + (synthesized?.filed ?? 0))
         ))
-        WakeLog.shared.log("foundry: \(pass.rawValue) cycle harvested \(report.signals.count) signal(s), filed \(filed.count) proposal(s)")
-
-        // Synthesize: the signals become proposals. Before 2026-10-30 this
-        // stage did not exist and the harvest above went nowhere.
-        // Not on an opportunistic pass: that one runs while the person is
-        // away and must stand down when they return, and a synthesis run
-        // cannot be interrupted part way. Nor after the governor yielded.
-        if pass != .opportunistic, case .running = FoundryGovernor.shared.phase {
-            _ = await ProposalSynthesizer.refresh(sourceRoot: ProposalSynthesizer.sourceRoot(), harvested: report)
-        }
+        WakeLog.shared.log("foundry: \(pass.rawValue) cycle harvested \(report.signals.count) signal(s), filed \(filed.count + (synthesized?.filed ?? 0)) proposal(s)")
 
         // Build: every accepted proposal rides the rail, one at a time.
         // Stand down mid-cycle on a session limit (the user's work comes first).
