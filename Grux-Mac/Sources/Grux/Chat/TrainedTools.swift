@@ -50,6 +50,11 @@ enum TrainedTools {
         SHA256.hash(data: wire(function(t))).map { String(format: "%02x", $0) }.joined()
     }
 
+    /// SHA-256 of `text`'s UTF-8, hex.
+    static func schemaHashOfText(_ text: String) -> String {
+        SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
     /// Abbreviations that end in a full stop without ending the sentence.
     private static let abbreviations = ["e.g.", "i.e.", "etc.", "vs.", "approx."]
 

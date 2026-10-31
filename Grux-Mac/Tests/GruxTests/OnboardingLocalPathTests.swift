@@ -60,7 +60,7 @@ final class OnboardingLocalPathTests: XCTestCase {
     /// call that lives in `submit()`, which is the one place a write belongs.
     private func useLocalModelBody() throws -> String {
         let src = try onboardingViewSource()
-        guard let start = src.range(of: "private func useLocalModel()") else {
+        guard let start = src.range(of: "private func useLocalModel(") else {
             XCTFail("""
                 `useLocalModel()` is gone from ModelKeyStep. If the local path was \
                 renamed, retarget these tests. If it was REMOVED, the first-run flow \

@@ -233,9 +233,11 @@ enum Cookbook {
 
     /// The Grux Local to lead with on this Mac at this headroom: the tier's
     /// own, or the next smaller one, whichever first fits at Good or better.
-    /// Nil when none does, and the score order decides as before.
+    /// Nil when none does, and the score order decides as before. Nil on an
+    /// Intel Mac too: v1.json says Grux Local requires Apple silicon.
     static func gruxLocalPick(for profile: HardwareProfile,
                               headroom: MachineLoad.Headroom) -> CookbookModel? {
+        guard profile.isAppleSilicon else { return nil }
         let top = gruxLocal(for: profile.memoryTier)
         return gruxLocal.filter { $0.estimatedMemoryGB <= top.estimatedMemoryGB }.reversed().first {
             let f = fit(of: $0, in: profile, headroom: headroom)

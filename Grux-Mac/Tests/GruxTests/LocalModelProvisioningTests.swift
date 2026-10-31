@@ -27,9 +27,10 @@ final class LocalModelProvisioningTests: XCTestCase {
         let lines = try source("Sources/Grux/Onboarding/OnboardingView.swift")
             .components(separatedBy: "\n")
         guard let start = lines.firstIndex(where: {
-            $0.contains("private func useLocalModel()")
+            $0.contains("private func useLocalModel(")
         }) else {
-            throw XCTSkip("useLocalModel was renamed; this file is about that method.")
+            XCTFail("useLocalModel was renamed; this file is about that method.")
+            return ""
         }
         guard let end = lines[(start + 1)...].firstIndex(where: {
             $0.hasPrefix("    private func ") || $0.hasPrefix("    private var ")
@@ -47,7 +48,8 @@ final class LocalModelProvisioningTests: XCTestCase {
         // because the string survived inside the now-dead block. A source scan
         // cannot see dead code, so it has to pin the line that does the work.
         XCTAssertTrue(
-            body.contains("if GruxConfig.usableLocalModels(OllamaManager.shared.installedTags).isEmpty {"),
+            body.contains("if GruxConfig.usableLocalModels(OllamaManager.shared.installedTags).isEmpty\n")
+                && body.contains("|| wanted.map({ !OllamaManager.shared.isInstalled($0.id) }) ?? false {"),
             "The gate no longer branches on whether a USABLE model is installed. Plain "
                 + "`installedTags.isEmpty` is not enough: a server holding only the "
                 + "superseded model passes it and cannot serve a turn.")

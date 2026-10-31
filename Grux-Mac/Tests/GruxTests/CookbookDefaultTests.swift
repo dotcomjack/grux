@@ -90,7 +90,7 @@ final class CookbookDefaultTests: XCTestCase {
             Cookbook.defaultModelID(for: airEightGB,
                                     userHasChosen: false,
                                     current: GruxConfig.defaultLocalModel),
-            "llama3.2:3b",
+            "gruxai.com/grux/grux-local:2b",
             "the 8 GB tier is the one this finding was about")
     }
 
@@ -99,7 +99,7 @@ final class CookbookDefaultTests: XCTestCase {
             Cookbook.defaultModelID(for: laptopSixteenGB,
                                     userHasChosen: false,
                                     current: GruxConfig.defaultLocalModel),
-            "qwen3-vl:4b")
+            "gruxai.com/grux/grux-local:4b")
     }
 
     func test_defaultModelID_picksTheHeadline_onASixtyFourGigMac() {
@@ -107,8 +107,8 @@ final class CookbookDefaultTests: XCTestCase {
             Cookbook.defaultModelID(for: studioSixtyFourGB,
                                     userHasChosen: false,
                                     current: GruxConfig.defaultLocalModel),
-            "qwen3.5:35b",
-            "a 48 GB budget was handed a small model, which wastes the machine")
+            "gruxai.com/grux/grux-local:9b",
+            "a 48 GB budget leads with the largest Grux Local (Grux 3.2)")
     }
 
     /// The three above must not be the same answer, or "reads your hardware" is
@@ -226,7 +226,7 @@ final class CookbookDefaultTests: XCTestCase {
         // The score order, which decides the headline whenever no Grux Local
         // fits at Good or better.
         let picks = (0..<25).map { _ in
-            Cookbook.recommended(for: laptopSixteenGB).first?.id
+            Cookbook.recommended(for: laptopSixteenGB).first { !Cookbook.gruxLocal.contains($0) }?.id
         }
         XCTAssertEqual(Set(picks.compactMap { $0 }).count, 1, "the headline moved between calls")
         XCTAssertEqual(picks.first ?? nil, tied.first)
@@ -1024,6 +1024,14 @@ final class GruxLocalHeadlineTests: XCTestCase {
             XCTAssertEqual(Cookbook.defaultModelID(for: m, userHasChosen: false, current: GruxConfig.defaultLocalModel),
                            id, "\(Int(ram)) GB default")
         }
+    }
+
+    func test_anIntelMacIsNotLedToGruxLocal() {
+        let intel = HardwareProfile(chipName: "Intel", physicalMemoryBytes: 16 * 1_073_741_824, gpuWorkingSetBytes: 0,
+                                    cpuCoreCount: 8, hasUnifiedMemory: false, isAppleSilicon: false)
+        XCTAssertNil(Cookbook.gruxLocalPick(for: intel, headroom: .full))
+        XCTAssertFalse(Cookbook.gruxLocal.contains { $0.id == Cookbook.headline(for: intel)?.id })
+        XCTAssertNotNil(Cookbook.headline(for: intel), "control: an Intel Mac is still offered a model")
     }
 
     func test_aBusyMacStepsDownThenFallsBack() {

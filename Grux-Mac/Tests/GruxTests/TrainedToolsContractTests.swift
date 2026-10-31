@@ -35,6 +35,25 @@ final class TrainedToolsContractTests: XCTestCase {
             + "(they then keep their full description), or bump TrainedTools.version, regenerate and retrain.")
     }
 
+    /// The table each contract version was trained on, as one digest. A
+    /// regenerated table under the same version fails here: a v3 model never
+    /// saw the new bytes, so a change is a new version and a new training run
+    /// (add its row), or a removal from the table, which is also a new row.
+    static let trainedTableDigests: [Int: String] = [
+        3: "4e6e62e955d958a477d346db718fe6bc570f50746079363109dff9a691ae28ba",
+    ]
+
+    static func tableDigest(_ table: [String: String]) -> String {
+        let lines = table.keys.sorted().map { "\($0) \(table[$0] ?? "")\n" }.joined()
+        return TrainedTools.schemaHashOfText(lines)
+    }
+
+    func test_theTableIsTheOneThisVersionWasTrainedOn() {
+        XCTAssertEqual(Self.tableDigest(TrainedTools.v3), Self.trainedTableDigests[TrainedTools.version],
+                       "TrainedToolsV3.swift changed under version \(TrainedTools.version). A v3 model was trained on "
+                       + "the old table: bump TrainedTools.version and the tag suffix, retrain, and add a row here.")
+    }
+
     func test_theContractFileIsTheAppsOwnBytes() throws {
         let committed = try Data(contentsOf: contractURL)
         let generated = TrainedTools.contractData(ChatService.allTools())
