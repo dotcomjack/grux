@@ -15,6 +15,7 @@ struct ReactorView: View {
     @ObservedObject private var speech = SpeechEngine.shared
     @ObservedObject private var voice = VoiceInput.shared
     @ObservedObject private var mail = MailStore.shared
+    @ObservedObject private var accounts = EmailAccountStore.shared
     @ObservedObject private var activity = ActivityStripModel.shared
     @ObservedObject private var metaAds = MetaAdsStore.shared
     // Observed so a Reduce Motion toggle gives the view a dependency edge and
@@ -43,7 +44,8 @@ struct ReactorView: View {
         // MAIL: unread pressure (cyan, dims to nothing at inbox zero).
         let unread = mail.unreadCount()
         let mailFrac = min(1.0, Double(unread) / 30.0)
-        let mailRing = ReactorRing(label: "MAIL", fraction: mailFrac, readout: "\(unread)",
+        let mailRing = ReactorRing(label: "MAIL", fraction: mailFrac,
+                                   readout: Self.mailRingReadout(hasAccount: !accounts.accounts.isEmpty, unread: unread),
                                    tint: GruxTheme.accentCo, dashed: false, dim: unread == 0)
 
         // AGENTS: a dashed data-ring that fills with running swarm jobs.
@@ -137,11 +139,25 @@ struct ReactorView: View {
         // Resolve the sender ONLY from the unread set, so a zero-name fallback
         // never borrows an already-read message and names the wrong person.
         let newest = mail.messages.first(where: { $0.isUnread && !$0.fromName.isEmpty })?.fromName ?? ""
+        let readout = Self.mailboxReadout(hasAccount: !accounts.accounts.isEmpty, unread: unread, newest: newest)
         return ReactorPanel(icon: "envelope.fill", title: "MAILBOX",
-                            value: "\(unread)",
-                            sub: unread == 0 ? "Inbox zero" : (newest.isEmpty ? "unread" : "from \(newest)"),
+                            value: readout.value,
+                            sub: readout.sub,
                             tint: GruxTheme.accentCo, dim: unread == 0,
                             onTap: { jump("mailbox") })
+    }
+
+    /// The Mailbox card's number and line. With no mailbox set up there is
+    /// no count to show, and zero unread from nothing is not an empty inbox
+    /// (D30: this read "0 / Inbox zero" while Now said "Set up Mailbox").
+    static func mailboxReadout(hasAccount: Bool, unread: Int, newest: String) -> (value: String, sub: String) {
+        guard hasAccount else { return ("··", "Not set up") }
+        if unread == 0 { return ("0", "Inbox zero") }
+        return ("\(unread)", newest.isEmpty ? "unread" : "from \(newest)")
+    }
+
+    static func mailRingReadout(hasAccount: Bool, unread: Int) -> String {
+        hasAccount ? "\(unread)" : "··"
     }
 
     private var calendarPanel: some View {
@@ -162,14 +178,23 @@ struct ReactorView: View {
                             onTap: { jump("calendar") })
     }
 
+    /// The Meta Ads card's number and line. No snapshot is no spend (D51: this read "$0.00"
+    /// and "offline" for a service that was not set up).
+    static func metaAdsReadout(spendCents: Int?, mode: String?, attention: Int, notSetUp: Bool) -> (value: String, sub: String) {
+        guard let spendCents else { return ("··", notSetUp ? "Not set up" : "offline") }
+        return (cents(spendCents), "\(mode ?? "") · \(attention) need you")
+    }
+
     private var metaAdsPanel: some View {
         let snap = metaAds.snapshot
         let spendC = snap?.spendTodayCents ?? 0
         let capC = snap?.effectiveDailyCapCents ?? 0
         let frac = capC > 0 ? Double(spendC) / Double(capC) : 0
+        let readout = Self.metaAdsReadout(spendCents: snap?.spendTodayCents, mode: snap?.mode,
+                                          attention: snap?.attentionCount ?? 0, notSetUp: metaAds.lastErrorIsAbsence)
         return ReactorPanel(icon: "megaphone.fill", title: "META ADS",
-                            value: Self.cents(spendC),
-                            sub: snap.map { "\($0.mode) · \($0.attentionCount) need you" } ?? "offline",
+                            value: readout.value,
+                            sub: readout.sub,
                             tint: ReactorSignals.tint(frac), pacing: snap == nil ? nil : frac,
                             dim: snap == nil,
                             onTap: { jump("metaAds") })

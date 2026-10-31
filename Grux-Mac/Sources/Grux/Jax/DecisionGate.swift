@@ -239,6 +239,18 @@ final class DecisionGate: ObservableObject {
         return verdict
     }
 
+    /// Why anything that is not provably routine waits. The hold is the fail
+    /// safe below and stays; this is only what a person reads on the card.
+    /// It must be true of EVERY action the residual hold covers, and many of
+    /// those change nothing (deep_research, ios_doctor, a read-only shell_run),
+    /// so it says what happens, not what the action does (D54). Cards stored
+    /// with an earlier sentence read this one on load (`PendingApproval.init(from:)`).
+    static let asksFirstReason = "This waits for your OK before it runs."
+    static let legacyAsksFirstReason = "Not clearly routine and reversible. Pausing for your call."
+    /// D46's sentence, which claimed a change the action may not make.
+    static let changesSomethingReason = "This changes something, so it waits for your OK."
+    static let earlierAsksFirstReasons: Set<String> = [legacyAsksFirstReason, changesSomethingReason]
+
     // The decision tree. Order matters: a public post that also spends should
     // refuse on the post rule first; money is the next-hardest line; leaks
     // refuse; outbound comms queue with the right persona; everything else falls
@@ -298,7 +310,7 @@ final class DecisionGate: ObservableObject {
                 action: action,
                 urgent: false,
                 persona: .none,
-                reason: "Not clearly routine and reversible. Pausing for your call."
+                reason: Self.asksFirstReason
             )
             return .queueForApproval(item)
         case .guardrailHit(let reason):

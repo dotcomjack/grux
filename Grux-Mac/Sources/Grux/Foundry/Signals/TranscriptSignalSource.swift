@@ -87,7 +87,8 @@ struct TranscriptSignalSource: FoundrySignalSource {
             summary: "Thread '\(thread.title)': \(hits.count) user correction(s) right after assistant replies",
             evidence: hits.prefix(5).joined(separator: "\n"),
             suggestedLane: .capability,
-            suggestedDomain: "chat"
+            suggestedDomain: "chat",
+            fingerprint: "thread \(thread.id.uuidString) corrections \(hits.count)"
         )
     }
 
@@ -115,7 +116,8 @@ struct TranscriptSignalSource: FoundrySignalSource {
             summary: "Thread '\(thread.title)': \(repeated.count) ask(s) repeated near-identically (\(totalRepeats) messages)",
             evidence: worst.prefix(4).map { String($0.prefix(140)) }.joined(separator: "\n"),
             suggestedLane: .capability,
-            suggestedDomain: "chat"
+            suggestedDomain: "chat",
+            fingerprint: "thread \(thread.id.uuidString) repeats \(repeated.count) of \(totalRepeats)"
         )
     }
 

@@ -171,11 +171,13 @@ struct MenuBarView: View {
                 // The last thing Grux decided and how long it took. Renders
                 // nothing until there is a decision, so it adds no chrome to
                 // a fresh install.
-                if let decision = DecisionUsageSummary.lastLine(ledger.last) {
+                if let decision = DecisionUsageSummary.datedLastLine(ledger.last) {
                     Text(decision)
                         .font(.caption2.monospaced())
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
+                        // The day is last; a long gist gives way in the middle.
+                        .truncationMode(.middle)
                         .help(usageToday.line)
                 }
             }

@@ -49,7 +49,7 @@ struct AgentsView: View {
         .onChange(of: appState.pendingResumeJobId) { _, _ in
             consumePendingResume()
         }
-        .sheet(isPresented: Binding(
+        .gruxSheet(isPresented: Binding(
             get: { resumeSheetJobId != nil },
             set: { if !$0 { resumeSheetJobId = nil } }
         )) {

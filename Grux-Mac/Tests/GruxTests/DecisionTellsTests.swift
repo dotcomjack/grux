@@ -53,7 +53,7 @@ final class DecisionTellsTests: XCTestCase {
 
     func testTheMenuBarShowsTheLastDecisionAndItsLatency() throws {
         let text = try source("MenuBarView.swift")
-        XCTAssertTrue(text.contains("DecisionUsageSummary.lastLine("),
+        XCTAssertTrue(text.contains("DecisionUsageSummary.datedLastLine("),
                       "the menu bar no longer shows the last decision")
         XCTAssertTrue(text.contains("DecisionLedger.shared"),
                       "the menu bar is not reading the decision ledger")

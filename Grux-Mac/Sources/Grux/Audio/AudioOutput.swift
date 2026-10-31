@@ -198,13 +198,26 @@ enum AudioOutput {
     static let wireShellDoors: Void = {
         ShellSilence.isSilent = { AudioOutput.isSilent }
         SwarmWorker.isSilent = { AudioOutput.isSilent }
+        SwarmWorker.isHeadless = { ForeignAppScript.refusal() != nil }
         ShellSilence.onRefused = { program, command in AudioOutput.record(.shell, source: program, text: command) }
+        ShellAppleEvents.refusal = { ForeignAppScript.refusal() }
+        ShellAppleEvents.onRefused = { purpose, why in ForeignAppScript.noteRefused(purpose, why) }
+        ShellAppleEvents.gruxDirectory = { Persistence.gruxDir.path }
     }()
 
-    /// The reason a shell command may not run (it would make sound in silent mode), or nil.
+    /// The reason a shell command may not run, or nil: it would make sound in silent mode,
+    /// or script or open another app in headless mode.
     static func shellRefusal(for command: String) -> String? {
         _ = wireShellDoors
-        return ShellSilence.refusal(for: command)
+        return ShellSilence.refusal(for: command) ?? ShellAppleEvents.refusal(for: command)
+    }
+
+    /// The same question for a program run with an argument vector and no shell
+    /// (`ShellRunner.runArgs`). Silent mode reads the joined line as before; headless mode
+    /// judges the argv itself, so an argument is never re-read as a command.
+    static func argvRefusal(_ argv: [String]) -> String? {
+        _ = wireShellDoors
+        return ShellSilence.refusal(for: argv.joined(separator: " ")) ?? ShellAppleEvents.refusal(argv: argv)
     }
 
     /// The reason AppleScript source may not run (it would make sound in silent mode), or nil.

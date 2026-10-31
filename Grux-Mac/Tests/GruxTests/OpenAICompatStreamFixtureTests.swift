@@ -812,6 +812,25 @@ final class OpenAICompatStreamFixtureTests: XCTestCase {
         XCTAssertEqual(usage.output, 5)
     }
 
+    /// A THINKING MODEL ON OLLAMA SPENT THE WHOLE REPLY BUDGET THINKING.
+    ///
+    /// Measured 2026-10-22 on this Mac mini (Ollama 0.22.0): `qwen3:8b` with no
+    /// `think` field returned '' after 177 thinking characters in 2.02 s; with
+    /// `"think": false` it returned `ok` in 0.05 s. `llama3.2:3b`, which cannot
+    /// think, answered `ok` both ways. On a GPU eval of Grux's own jobs,
+    /// qwen3-vl:4b returned empty on every triage, notification, title and
+    /// meeting summary call. So every native chat call says `think: false`.
+    func test_ollamaChatTellsAThinkingModelNotToThink() async throws {
+        let (_, _, server) = try await runOllamaStream(frames: Self.ollamaFrames)
+        defer { server.stop() }
+        let body = try XCTUnwrap(try JSONSerialization.jsonObject(with: server.requestBody) as? [String: Any])
+        XCTAssertEqual(body["think"] as? Bool, false, "a streamed chat turn let a thinking model think: \(body)")
+        for stream in [true, false] {
+            let built = OpenAICompatBackend.ollamaChatBody(["model": "qwen3:8b", "messages": []], stream: stream)
+            XCTAssertEqual(built["think"] as? Bool, false, "stream \(stream)")
+        }
+    }
+
     /// Native tool calls arrive whole, with arguments as an object.
     func test_ollamaNativeToolCallStreamsAsOneToolUse() async throws {
         let frames = [
@@ -873,6 +892,7 @@ final class OpenAICompatStreamFixtureTests: XCTestCase {
         let body = try XCTUnwrap(try JSONSerialization.jsonObject(with: server.requestBody) as? [String: Any])
         XCTAssertEqual((body["options"] as? [String: Any])?["num_ctx"] as? Int, OpenAICompatBackend.ollamaContextTokens)
         XCTAssertEqual(body["stream"] as? Bool, false)
+        XCTAssertEqual(body["think"] as? Bool, false, "a non-streaming job let a thinking model think: \(body)")
         let usage = await backend.usageSnapshot()
         XCTAssertEqual(usage.input, 9)
 
@@ -880,6 +900,8 @@ final class OpenAICompatStreamFixtureTests: XCTestCase {
             apiKey: "ollama", model: "qwen2.5:7b", system: nil,
             messages: [["role": "user", "content": "hi"]], tools: [], maxTokens: 16, temperature: 0)
         XCTAssertTrue(server.requestLine.hasPrefix("POST /api/chat "), server.requestLine)
+        let toolsBody = try XCTUnwrap(try JSONSerialization.jsonObject(with: server.requestBody) as? [String: Any])
+        XCTAssertEqual(toolsBody["think"] as? Bool, false, "a tool call let a thinking model think: \(toolsBody)")
         XCTAssertEqual(tools.stopReason, "stop")
         XCTAssertEqual(server.requestLines.filter { $0.hasPrefix("GET /api/version") }.count, 1,
                        "the server is asked what it is once, not per call")
@@ -1016,6 +1038,8 @@ final class OpenAICompatStreamFixtureTests: XCTestCase {
             messages: [["role": "user", "content": "hi"]], tools: [], maxTokens: 16, temperature: 0,
             spanName: "test.stream", feature: "test")
         for try await _ in stream {}
+        let wire = try XCTUnwrap(try JSONSerialization.jsonObject(with: server.requestBody) as? [String: Any])
+        XCTAssertNil(wire["think"], "think is Ollama's field; another server was sent it: \(wire)")
         let sent = try Self.sentMessages(server)
         XCTAssertEqual(sent.first?["content"] as? String, "You are Grux.\n\nNOW: 6:30 AM")
         XCTAssertEqual(sent.last?["content"] as? String, "hi")

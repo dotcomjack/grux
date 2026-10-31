@@ -87,7 +87,7 @@ struct ProjectsView: View {
             obs.start()
             Task { await obs.refresh() }
         }
-        .sheet(item: $openEntry) { e in
+        .gruxSheet(item: $openEntry) { e in
             ProjectDetailSheet(entry: e) { openEntry = nil }
         }
     }
@@ -624,10 +624,7 @@ fileprivate func revealInFinder(_ path: String) {
 
 fileprivate func openInTerminal(_ path: String) {
     let script = "tell application \"Terminal\" to do script \"cd \\\"\(path)\\\"\""
-    let task = Process()
-    task.launchPath = "/usr/bin/osascript"
-    task.arguments = ["-e", script]
-    try? task.run()
+    ForeignAppScript.launch(script, purpose: "ProjectsView.openInTerminal")
 }
 
 // MARK: - FlowHStack

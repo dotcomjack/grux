@@ -278,8 +278,8 @@ enum MicDevices {
         return stringProperty(deviceID: id, selector: kAudioObjectPropertyName) ?? "(device \(id))"
     }
 
-    /// UID of the Apple-internal built-in mic, used by "Revert to MacBook
-    /// default". Matches on kAudioDevicePropertyTransportType == built-in;
+    /// UID of the Apple-internal built-in mic, used by "Use this Mac's built-in mic"
+    /// button. Matches on kAudioDevicePropertyTransportType == built-in;
     /// falls back to any device whose UID starts with "BuiltInMicrophone".
     static func builtInMicUID() -> String? {
         for dev in listInputs() {

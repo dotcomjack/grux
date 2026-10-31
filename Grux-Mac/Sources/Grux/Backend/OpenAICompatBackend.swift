@@ -157,6 +157,15 @@ actor OpenAICompatBackend: ModelBackend {
     /// answers `{"version": ...}` there and nowhere else). A hosted endpoint is
     /// never asked. No answer at all is not remembered, so a server started
     /// later is still recognized.
+    ///
+    /// The limit, on purpose: only a base URL `ModelRates.isLocalBaseURL`
+    /// accepts is probed (localhost, `.local` names, 127/8, 10/8, 172.16/12,
+    /// 192.168/16). An Ollama reached any other way, a Tailscale address
+    /// (100.64/10, a `.ts.net` name) or a public host name, is never asked, so
+    /// it gets `/v1/chat/completions` with no `num_ctx` and no `"think": false`,
+    /// and a model that thinks may answer empty there. Probing hosted
+    /// endpoints would send a request to a server the person never meant Grux
+    /// to call.
     private func speaksOllama() async -> Bool {
         if let ollamaNative { return ollamaNative }
         guard ModelRates.isLocalBaseURL(baseURL),
@@ -188,8 +197,20 @@ actor OpenAICompatBackend: ModelBackend {
         if native, wire["keep_alive"] != nil {
             LocalModelUnload.noteKept(baseURL: baseURL, model: wire["model"] as? String ?? "")
         }
-        req.httpBody = try Self.wireData(wire, native: native)
+        req.httpBody = try Self.wireData(wire)
         return (req, native)
+    }
+
+    /// The request body's bytes, keys sorted. D17: a Swift dictionary has no
+    /// fixed order, so the same tool went out as `{"function": {"parameters"...`
+    /// on one turn and `{"function": {"name"...` on the next (captured on a 16 GB
+    /// Mac mini, 2026-10-29), and a local server reads again everything after
+    /// the first byte that differs. Measured 2026-10-25 on the same Mac mini:
+    /// one tool sent twice with the same key order matched 503 of 513 tokens
+    /// of Ollama's cache, and with its keys reordered, 68. Every server gets
+    /// sorted keys, not only Ollama.
+    static func wireData(_ object: Any) throws -> Data {
+        try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
     }
 
     // A LOCAL CHAT TURN RE-READ EVERY TOOL SCHEMA, 78 TO 117 SECONDS A TURN.
@@ -237,19 +258,20 @@ actor OpenAICompatBackend: ModelBackend {
         return [["role": "system", "content": stable]] + out
     }
 
-    /// An OpenAI chat body in Ollama's native shape.
-    /// The request bytes. On Ollama every object's keys are sorted. Ollama
-    /// keeps a tool's parameter keys in the order it receives them, and a
-    /// Swift dictionary has no fixed order, so the same tools could reach it
-    /// as different bytes on consecutive turns and its prompt cache would
-    /// break inside the first tool. Measured 2026-10-25 on the 16 GB Mac mini:
-    /// in the running app the cache matched 159 or 426 of about 6,200 tokens
-    /// per turn; one tool sent twice with the same key order matched 503 of
-    /// 513 tokens, and with its keys reordered, 68.
-    static func wireData(_ wire: [String: Any], native: Bool) throws -> Data {
-        try JSONSerialization.data(withJSONObject: wire, options: native ? [.sortedKeys] : [])
-    }
+    // A THINKING MODEL SPENT THE WHOLE REPLY BUDGET THINKING.
+    //
+    // A model that can think (qwen3, qwen3-vl, qwen3.5) thinks by default on
+    // `/api/chat` unless told `think: false`, and Grux never told it. Measured
+    // 2026-10-22 on a 16 GB Mac mini (Ollama 0.22.0): qwen3:8b returned ''
+    // after 177 thinking characters in 2.02 s with no field, and `ok` in
+    // 0.05 s with `think: false`; llama3.2:3b, which cannot think, answered
+    // `ok` both ways. On an eval of Grux's own jobs qwen3-vl:4b returned empty
+    // on every title, notification, triage and meeting summary call, and
+    // qwen3.5:2b scored 0.48 as sent and 0.75 told not to think, 3.8x faster.
+    // So every native call says it. The empty-content error above
+    // (`thinkingBudgetMessage`) stays for a server that ignores the field.
 
+    /// An OpenAI chat body in Ollama's native shape.
     static func ollamaChatBody(_ body: [String: Any], stream: Bool,
                                contextTokens: Int? = ollamaContextTokens,
                                think: Bool? = nil) -> [String: Any] {
@@ -261,6 +283,7 @@ actor OpenAICompatBackend: ModelBackend {
             "model": body["model"] ?? "",
             "messages": ollamaMessages(body["messages"] as? [[String: Any]] ?? []),
             "stream": stream,
+            "think": false,
             "options": options
         ]
         if let tools = body["tools"] { out["tools"] = tools }

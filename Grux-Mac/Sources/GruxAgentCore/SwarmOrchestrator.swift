@@ -18,6 +18,24 @@ public protocol SwarmOrchestratorObserver: AnyObject, Sendable {
 
 public actor SwarmOrchestrator: SwarmWorkerObserver {
 
+    /// The job's error when workers failed: each failed worker by label, with its own
+    /// words (the CLI's "Failed to authenticate: ..."), flattened to one line and cut so
+    /// one long reason cannot bury the rest. Chat, `grux agents` and Self-Upgrade all
+    /// read this string; "workers failed: architect" alone told none of them why (D26).
+    public static func failureSummary(workers: [SwarmWorkerSpec]) -> String {
+        let parts = workers.filter { $0.status == .failed }.map { w -> String in
+            let words = (w.errorMessage ?? "")
+                .components(separatedBy: .newlines)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+            guard !words.isEmpty else { return w.label }
+            let cut = words.count > 160 ? String(words.prefix(157)) + "..." : words
+            return "\(w.label) (\(cut))"
+        }
+        return "workers failed: " + parts.joined(separator: ", ")
+    }
+
     public let store: AgentStore
     public private(set) var job: AgentJob
     public weak var observer: (any SwarmOrchestratorObserver)?
@@ -110,7 +128,7 @@ public actor SwarmOrchestrator: SwarmWorkerObserver {
                 let anyFailed = job.workers.contains(where: { $0.status == .failed })
                 if anyFailed && !allDone {
                     job.status = .failed
-                    job.errorMessage = "workers failed: " + job.workers.filter { $0.status == .failed }.map(\.label).joined(separator: ", ")
+                    job.errorMessage = Self.failureSummary(workers: job.workers)
                 } else if allDone {
                     job.status = .done
                 } else {
@@ -154,18 +172,27 @@ public actor SwarmOrchestrator: SwarmWorkerObserver {
 
                     group.addTask { [self] in
                         let scaffold = MegapromptScaffold.block()
-                        // Per-worker TTL: 1800s default, overridable via env
+                        // Per-worker TTL: the worker's own when its job set one
+                        // (Foundry does), else 1800s, overridable via env
                         // GRUX_WORKER_TTL_SECONDS so callers (SwarmDemo --ttl-seconds)
                         // can extend for big single-worker Opus runs that
                         // legitimately need 45-60 min.
-                        let ttl = (ProcessInfo.processInfo.environment["GRUX_WORKER_TTL_SECONDS"]
-                                    .flatMap(Int.init)) ?? 1800
+                        let ttl = Self.ttlSeconds(for: spec, environment: ProcessInfo.processInfo.environment)
                         let result = await worker.run(scaffold: scaffold, ttlSeconds: ttl)
                         await self.workerCompleted(spec.id, result: result)
                     }
                 }
             }
         }
+    }
+
+    public static let defaultWorkerTTLSeconds = 1800
+
+    public static func ttlSeconds(for spec: SwarmWorkerSpec, environment: [String: String]) -> Int {
+        // Zero or less would kill the worker at once, so it counts as unset.
+        let positive = { (n: Int?) in n.flatMap { $0 > 0 ? $0 : nil } }
+        return positive(spec.ttlSeconds) ?? positive(environment["GRUX_WORKER_TTL_SECONDS"].flatMap(Int.init))
+            ?? defaultWorkerTTLSeconds
     }
 
     private func workerCompleted(_ workerId: String, result: SwarmWorkerResult) async {

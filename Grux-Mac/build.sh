@@ -163,7 +163,7 @@ echo "[3/7] Redact builder paths from the binaries…"
 # it, which is what it is for, but the shape of the mistake is worth naming: a step that
 # hardcodes ONE artifact silently stops covering the bundle the moment the bundle grows.
 for TARGET in "$APP/Contents/MacOS/Grux" "$APP/Contents/MacOS/grux-cli"; do
-python3 - "$TARGET" <<'REDACT'
+python3 -I - "$TARGET" <<'REDACT'
 import re, sys, pathlib
 p = pathlib.Path(sys.argv[1])
 data = p.read_bytes()
@@ -443,11 +443,68 @@ xattr -cr /Applications/Grux.app
 # builder path). Release builds never reach this line, so the downloaded app
 # has no record and its work orders clone the matching tag instead.
 mkdir -p "$HOME/.grux"
-python3 - "$(pwd)" "$(git rev-parse --short HEAD 2>/dev/null || echo unknown)$(git diff --quiet 2>/dev/null || echo -dirty)" \
+# Dirty is read from the tracked files themselves against HEAD's blobs, never
+# through the index: a Foundry worktree shares its .git with the worker, and
+# any git command that reads the index can run a clean filter or fsmonitor
+# program that config names.
+python3 -I - "$(pwd)" "$(git -c core.fsmonitor=false rev-parse --short HEAD 2>/dev/null || echo unknown)" \
     "$(stat -f %m /Applications/Grux.app/Contents/MacOS/Grux)" "$HOME/.grux/source.json" <<'SOURCE'
-import json, sys
+import hashlib, json, os, stat, subprocess, sys
 path, commit, mtime, out = sys.argv[1:5]
-json.dump({"path": path, "commit": commit, "binaryMtime": float(mtime)}, open(out, "w"), indent=2)
+
+def dirty():
+    try:
+        # The work tree is named (build.sh runs in Grux-Mac, the checkout is
+        # its parent), so a core.worktree setting cannot point this elsewhere.
+        work = os.path.dirname(os.path.abspath(path))
+        top = subprocess.run(["git", "--work-tree=" + work, "rev-parse", "--show-toplevel"],
+                             capture_output=True, check=True).stdout.strip()
+        tree = subprocess.run(["git", "ls-tree", "-r", "-z", "-l", "--full-tree", "HEAD"],
+                              capture_output=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return True
+    for record in tree.split(b"\0"):
+        if not record:
+            continue
+        meta, _, name = record.partition(b"\t")
+        mode, kind, sha, size = meta.split()
+        if kind != b"blob":
+            continue
+        file = os.path.join(top, name)
+        digest = hashlib.sha256 if len(sha) == 64 else hashlib.sha1
+        # Only a regular file is ever opened (a FIFO would block forever),
+        # never through a link, in chunks; mode and size are compared first.
+        try:
+            st = os.lstat(file)
+            if mode == b"120000":
+                if not stat.S_ISLNK(st.st_mode):
+                    return True
+                data = os.readlink(file)
+                h = digest(b"blob %d\0" % len(data))
+                h.update(data)
+            else:
+                if not stat.S_ISREG(st.st_mode) or st.st_size != int(size):
+                    return True
+                if bool(st.st_mode & 0o100) != (mode == b"100755"):
+                    return True
+                h = digest(b"blob %d\0" % st.st_size)
+                fd = os.open(file, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+                with os.fdopen(fd, "rb") as fh:
+                    left = st.st_size + 1   # bounded: a file that grows reads dirty
+                    while left > 0:
+                        chunk = fh.read(min(1 << 20, left))
+                        if not chunk:
+                            break
+                        h.update(chunk)
+                        left -= len(chunk)
+        except (OSError, ValueError):
+            return True
+        if h.hexdigest().encode() != sha:
+            return True
+    return False
+
+stamp = commit + ("-dirty" if dirty() else "")
+json.dump({"path": path, "commit": stamp, "binaryMtime": float(mtime)}, open(out, "w"), indent=2)
 SOURCE
 echo "   source recorded for Optimize Grux: ~/.grux/source.json"
 

@@ -63,12 +63,16 @@ struct PaneFitResult {
     /// Where the first ink sits, in points from the slot's leading edge, when
     /// the measurement asked for it.
     var firstInk: CGFloat? = nil
+    /// Every action chip placed narrower than its own label, which then
+    /// reads "DELE...": inside the slot, so neither measure above sees it.
+    var cutChips: [GruxChipCuts.Cut] = []
 
     static let tolerance: CGFloat = 1
 
     var fits: Bool {
         fitting <= width + Self.tolerance
             && bleedLeading <= Self.tolerance && bleedTrailing <= Self.tolerance
+            && cutChips.isEmpty
     }
 
     var key: String { "\(surface)@\(Int(width))" }
@@ -79,6 +83,10 @@ struct PaneFitResult {
             parts.append("drew \(Int(bleedLeading.rounded(.up)))pt past the leading edge and \(Int(bleedTrailing.rounded(.up)))pt past the trailing edge")
         }
         if !overflowingLayers.isEmpty { parts.append("past the slot: " + overflowingLayers.joined(separator: "; ")) }
+        if !cutChips.isEmpty {
+            parts.append("cut chips: " + cutChips.map { "\($0.title) \(Int($0.placed))pt of \(Int($0.needed.rounded(.up)))pt" }
+                .joined(separator: "; "))
+        }
         return parts.joined(separator: ", ")
     }
 }
@@ -117,6 +125,7 @@ enum PaneFitHarness {
                                  findFirstInk: Bool = false, onBase: Bool = true,
                                  @ViewBuilder _ content: () -> V) -> PaneFitResult {
         let box = PaneFitBox()
+        let cuts = GruxChipCuts()
         let root = HStack(spacing: 0) {
             Color.clear.frame(width: margin, height: height)
             // On the app's base colour, as a person sees it, unless the caller
@@ -126,6 +135,7 @@ enum PaneFitHarness {
             Color.clear.frame(width: margin, height: height)
         }
         .environmentObject(AppState.shared)
+        .environment(\.gruxChipCuts, cuts)
         .tint(GruxTheme.accentPrimary)
         let host = NSHostingView(rootView: root)
         let size = NSSize(width: width + 2 * margin, height: height)
@@ -156,9 +166,13 @@ enum PaneFitHarness {
         // Never `close()`: a programmatic NSWindow is released when closed, and
         // ARC releases it again, which crashes the next autorelease pool pop.
         window.contentView = nil
+        // Every layout pass places the chips again, so one cut is recorded
+        // once per pass: it counts once.
+        var cutChips: [GruxChipCuts.Cut] = []
+        for cut in cuts.cuts where !cutChips.contains(cut) { cutChips.append(cut) }
         return PaneFitResult(surface: surface, width: width, fitting: fitting,
                              bleedLeading: bleedLeading, bleedTrailing: bleedTrailing,
-                             overflowingLayers: overflowing, firstInk: firstInk)
+                             overflowingLayers: overflowing, firstInk: firstInk, cutChips: cutChips)
     }
 
     /// The surface's fitting width alone, laid out in a window but with no
@@ -466,7 +480,25 @@ final class PaneFitSweepTests: XCTestCase {
             ScrollView(.horizontal, showsIndicators: false) { Color.red.frame(width: wide, height: 40) }
         }
         XCTAssertTrue(sideways.fits, "a horizontal scroll view is meant to hold wider content: \(sideways.line)")
-        PaneFitHarness.report("planted", [planted, fine, scrolled, sideways])
+
+        // A chip squeezed inside the slot draws no ink past it and leaves the
+        // fitting width alone: it reads "DELE..." and only the probe sees it.
+        let cut = PaneFitHarness.measure("planted-cut-chip", width: w, height: 200, writePNG: false) {
+            HStack {
+                Color.red.frame(width: w - 60, height: 20)
+                GruxChip(title: "DELETE", systemImage: "trash", style: .destructive) {}
+            }
+        }
+        XCTAssertFalse(cut.fits, "a chip cut to fit went unseen: \(cut.line)")
+        XCTAssertEqual(cut.cutChips.map(\.title), ["DELETE"], "the cut was not traced to its chip")
+        let whole = PaneFitHarness.measure("planted-whole-chip", width: w, height: 200, writePNG: false) {
+            HStack {
+                Color.red.frame(maxWidth: .infinity).frame(height: 20)
+                GruxChip(title: "DELETE", systemImage: "trash", style: .destructive) {}
+            }
+        }
+        XCTAssertTrue(whole.fits, "a chip with room to spare read as cut: \(whole.line)")
+        PaneFitHarness.report("planted", [planted, fine, scrolled, sideways, cut, whole])
     }
 
     /// The container, red first. The shell's pane column, holding a surface
@@ -613,6 +645,28 @@ final class PaneFitSweepTests: XCTestCase {
             })
         }
         assertAllFit("cognition-traced", results)
+    }
+
+    /// The header shape itself, every 40pt from narrower than any pane to
+    /// wide: one row when the heading and every chip fit whole, the heading
+    /// over the chips below that, never a chip cut and never past the edge.
+    func test_aTitleWithActionsNeverCutsAChip() {
+        var results: [PaneFitResult] = []
+        for w in stride(from: CGFloat(160), through: 760, by: 40) {
+            results.append(PaneFitHarness.measure("title-actions", width: w, height: 200,
+                                                  settle: 0.02, writePNG: false) {
+                GruxTitleActions {
+                    Text("Research copilot with a long name").font(GruxTheme.Font.title).lineLimit(1)
+                } actions: {
+                    GruxChip(title: "APPLY TO CHAT", systemImage: "bolt.fill", style: .primary) {}
+                    GruxChip(title: "DUPLICATE", systemImage: "plus.square.on.square", style: .secondary) {}
+                    GruxChip(title: "DELETE", systemImage: "trash", style: .destructive) {}
+                }
+                // Padded as every surface pads it: a chip's shadow is ink.
+                .padding(GruxSpacing.m)
+            })
+        }
+        assertAllFit("title-actions", results)
     }
 
     func test_everySettingsSectionFitsEveryPaneWidth() {

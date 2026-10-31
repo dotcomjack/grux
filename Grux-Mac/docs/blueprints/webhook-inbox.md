@@ -146,7 +146,7 @@ equivalent `CommandV2Definition` to `CommandV2Definitions.swift` and list it in
 The feature renders `needs-setup` with a setup card showing these exact strings.
 
 - Webhook inbox: "Turn on the local webhook listener in Settings and choose a port to let other machines push updates in."
-- Anthropic API key: "Add your Anthropic API key in Settings to let Grux think. Get one at console.anthropic.com."
+- Anthropic API key: "Add your Anthropic API key in Settings to use Claude. Get one at console.anthropic.com. Chat also runs on a local model with no key."
 - Notifications: "Allow notifications so Grux can nudge you. Open System Settings, Notifications, Grux, and turn them on."
 
 Turning the listener on without a shared secret is not a valid state. The contract makes

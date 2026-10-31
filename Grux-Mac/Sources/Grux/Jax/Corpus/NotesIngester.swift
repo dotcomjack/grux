@@ -157,21 +157,24 @@ actor NotesIngester: CorpusIngester {
         case failure
     }
 
-    // NSAppleScript must run on the main thread (it needs a run loop). We hop
-    // there, run it, and classify a TCC denial vs other errors.
-    @MainActor
+    /// The export reads every note (about three Apple Events each), so a library of a
+    /// few thousand notes takes far longer than one command.
+    static let exportTimeout: TimeInterval = 300
+
+    // Runs on ForeignAppScript's own queue, bounded, and classifies a TCC denial
+    // vs other errors.
     static func runAppleScript(_ source: String) async -> ScriptOutcome {
-        guard let script = NSAppleScript(source: source) else { return .failure }
-        var errorDict: NSDictionary?
-        let result = script.executeAndReturnError(&errorDict)
-        if let err = errorDict {
-            let code = (err[NSAppleScript.errorNumber] as? Int) ?? 0
+        switch await ForeignAppScript.run(source, purpose: "NotesIngester", timeout: exportTimeout) {
+        case .ok(let result):
+            return .success(result.stringValue ?? "")
+        case .failed(let code, _):
             // -1743 errAEEventNotPermitted, -600 procNotFound (Notes not running
             // yet can also surface here, but a denial is the common case).
             if code == -1743 || code == -10004 { return .denied }
             return .failure
+        case .refused, .timedOut, .busy, .stopped, .behindLongerScript:
+            return .failure
         }
-        return .success(result.stringValue ?? "")
     }
 
     static func parseISO(_ s: String) -> Date? {

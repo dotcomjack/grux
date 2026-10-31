@@ -106,3 +106,35 @@ final class ListeningMicDiscoverabilityTests: XCTestCase {
         XCTAssertTrue(GruxConfig.default.listenOnTheMacsOwnMic)
     }
 }
+
+/// D7 (3.2 sense pass): Settings, Voice offered "Revert to MacBook built-in
+/// mic" under "No input devices detected" on a Mac that has no
+/// built-in microphone. The button is drawn only when this Mac has one, and
+/// its name fits any Mac that does.
+final class BuiltInMicButtonTests: XCTestCase {
+    func test_theRevertButtonNeedsABuiltInMic() throws {
+        XCTAssertNil(SettingsView.builtInMicButtonTitle(builtInPresent: false))
+        XCTAssertEqual(SettingsView.builtInMicButtonTitle(builtInPresent: true), "Use this Mac's built-in mic")
+        let src = try String(contentsOf: URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/Grux/SettingsView.swift"), encoding: .utf8)
+        XCTAssertFalse(src.contains("Revert to MacBook built-in mic"), "a button that names a MacBook on any Mac")
+        XCTAssertTrue(src.contains("if let title = Self.builtInMicButtonTitle(builtInPresent: MicDevices.builtInMicUID() != nil)"),
+                      "the button is drawn without asking whether this Mac has a built-in mic")
+    }
+
+    /// D48 (sense pass 3): under the microphone list a second paragraph repeated the voice
+    /// processing caption nearly word for word and said to tick "Preserve speaker fidelity",
+    /// a toggle drawn only beside a listed microphone, on a Mac that listed none. The footer
+    /// says only what the caption does not, and only when there is a toggle to tick.
+    @MainActor
+    func testTheFidelityFooterNamesOnlyAToggleThatIsOnScreen() {
+        XCTAssertNil(SettingsView.micFidelityFooter(hasDevices: false),
+                     "no microphone is listed, so there is no Preserve speaker fidelity toggle to tick")
+        let footer = try? XCTUnwrap(SettingsView.micFidelityFooter(hasDevices: true))
+        XCTAssertTrue(footer?.contains("Preserve speaker fidelity") ?? false, footer ?? "nil")
+        for repeated in ["Your music and video keep full quality", "Background listening never does", "can lose its microphone"] {
+            XCTAssertFalse(footer?.contains(repeated) ?? true, "the caption above already says: \(repeated)")
+        }
+    }
+}

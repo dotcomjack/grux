@@ -2135,7 +2135,7 @@ struct CreativeStudioView: View {
         }
         .background(GruxTheme.base)
         .foregroundStyle(GruxTheme.textPrimary)
-        .sheet(item: Binding<CreativeBundle?>(
+        .gruxSheet(item: Binding<CreativeBundle?>(
             get: { sheetBundleID.flatMap { id in engine.inbox.first(where: { $0.id == id }) } },
             set: { newValue in sheetBundleID = newValue?.id }
         )) { bundle in

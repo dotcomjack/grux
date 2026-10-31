@@ -267,6 +267,15 @@ final class PanelModel: ObservableObject {
             // The Settings window, as the foot gear opens it (spec 3.6), at Models.
             AppState.shared.requestedSettingsTab = "connect"
             WindowOpener.openSettings()
+        case .downloadUpdate:
+            UpdateDownload.open(headless: WindowFacade.isHeadless,
+                                open: { NSWorkspace.shared.open($0) },
+                                withhold: { WindowFacade.withhold($0) })
+        case .copyBrewUpgrade:
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(UpdateCheck.brewCommand, forType: .string)
+        case .dismissUpdate(let version):
+            UpdateChecker.shared.notNow(version: version)
         case .revealClaudeSettings:
             let settings = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".claude/settings.json")
             if WindowFacade.isHeadless {
@@ -374,6 +383,8 @@ final class PanelModel: ObservableObject {
             // The count Now shows is the dashboard's, as the Improve door's.
             FoundryDashboardModel.shared.$proposals.dropFirst().map { _ in () }.eraseToAnyPublisher(),
             ClaudeSignInState.shared.$expired.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+            // A newer version found, or Not now pressed.
+            UpdateChecker.shared.$available.dropFirst().map { _ in () }.eraseToAnyPublisher(),
             // Follows ~/.claude/settings.json live, so a hook removed by hand clears the row.
             TerminalFocusHookState.shared.$needsManualRemoval.dropFirst().map { _ in () }.eraseToAnyPublisher(),
         ]

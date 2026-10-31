@@ -150,6 +150,34 @@ final class ThirdPartyNoticesTests: XCTestCase {
                        + "python3 Grux-Mac/scripts/gen-third-party-notices.py\n\(out)")
     }
 
+    /// build.sh runs the generator on every install. Rewriting an unchanged file
+    /// moved its mtime, so build.sh's stat only dirty check stamped every build of
+    /// a clean checkout "-dirty" in ~/.grux/source.json. A current file is left alone.
+    func testACurrentNoticesFileIsNotRewritten() throws {
+        let mac = repoRoot().appendingPathComponent("Grux-Mac")
+        let notices = repoRoot().appendingPathComponent("THIRD-PARTY-NOTICES.md")
+        func generate(_ args: [String]) throws -> Int32 {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            p.arguments = ["python3", "scripts/gen-third-party-notices.py"] + args
+            p.currentDirectoryURL = mac
+            p.standardOutput = Pipe()
+            p.standardError = Pipe()
+            try p.run()
+            p.waitUntilExit()
+            return p.terminationStatus
+        }
+        // Only on a current file, so this test never rewrites a stale one.
+        guard try generate(["--check"]) == 0 else {
+            return XCTFail("THIRD-PARTY-NOTICES.md is stale; testTheNoticesFileHasNotDrifted says how to fix it")
+        }
+        let before = try XCTUnwrap(try FileManager.default.attributesOfItem(atPath: notices.path)[.modificationDate] as? Date)
+        Thread.sleep(forTimeInterval: 1.1)
+        XCTAssertEqual(try generate([]), 0)
+        let after = try XCTUnwrap(try FileManager.default.attributesOfItem(atPath: notices.path)[.modificationDate] as? Date)
+        XCTAssertEqual(after, before, "the generator rewrote a file that was already current")
+    }
+
     /// And it has to reach the thing a user actually downloads. The repo copy is
     /// invisible to somebody who only ever opens the app, and the site tells
     /// them the licence text is in the bundle.

@@ -66,10 +66,10 @@ struct MailboxView: View {
                 Task { await InboxSyncEngine.shared.syncAll() }
             }
         }
-        .sheet(isPresented: $showCompose) {
+        .gruxSheet(isPresented: $showCompose) {
             ComposeEmailSheet()
         }
-        .sheet(isPresented: $showAccounts) {
+        .gruxSheet(isPresented: $showAccounts) {
             MailAccountsSheet()
         }
     }

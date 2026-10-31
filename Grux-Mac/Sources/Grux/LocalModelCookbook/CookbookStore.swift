@@ -10,6 +10,9 @@ struct CookbookState: Codable, Equatable {
     var pulledModelIds: [String] = []
     var autoServeOnLaunch: Bool = false
     var lastProfile: HardwareProfile? = nil
+    /// The line the speed check after a download left, nil when the last
+    /// timed model was fast enough (LocalModelSpeedCheck).
+    var speedNote: String? = nil
 
     static let empty = CookbookState()
 
@@ -23,6 +26,7 @@ struct CookbookState: Codable, Equatable {
         pulledModelIds = try c.decodeIfPresent([String].self, forKey: .pulledModelIds) ?? []
         autoServeOnLaunch = try c.decodeIfPresent(Bool.self, forKey: .autoServeOnLaunch) ?? false
         lastProfile = try c.decodeIfPresent(HardwareProfile.self, forKey: .lastProfile)
+        speedNote = try c.decodeIfPresent(String.self, forKey: .speedNote)
     }
 }
 
@@ -67,6 +71,13 @@ final class CookbookStore: ObservableObject {
         load()
         guard state.autoServeOnLaunch != on else { return }
         state.autoServeOnLaunch = on
+        scheduleSave()
+    }
+
+    func noteSpeed(_ note: String?) {
+        load()
+        guard state.speedNote != note else { return }
+        state.speedNote = note
         scheduleSave()
     }
 

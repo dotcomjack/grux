@@ -101,14 +101,12 @@ final class ChromeTabWatcher {
             return ((URL of theTab) as text) & "\n" & ((title of theTab) as text)
         end tell
         """
-        guard let script = NSAppleScript(source: source) else { return nil }
-        var error: NSDictionary?
-        let result = script.executeAndReturnError(&error)
-        if let error = error {
-            logScriptErrorOnce(error)
+        let outcome = ForeignAppScript.runWaiting(source, purpose: "ChromeTabWatcher")
+        if case .failed(let code, let message) = outcome {
+            logScriptErrorOnce(code: code ?? 0, message: message)
             return nil
         }
-        guard let raw = result.stringValue, !raw.isEmpty else { return nil }
+        guard let raw = outcome.stringValue, !raw.isEmpty else { return nil }
         let parts = raw.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
         let url = parts.indices.contains(0) ? String(parts[0]) : ""
         let title = parts.indices.contains(1) ? String(parts[1]) : ""
@@ -126,14 +124,12 @@ final class ChromeTabWatcher {
     // a new failure mode isn't silently swallowed.
     nonisolated private static let scriptErrorFlag = NSLock()
     nonisolated(unsafe) private static var loggedScriptErrorCodes: Set<Int> = []
-    nonisolated private static func logScriptErrorOnce(_ error: NSDictionary) {
-        let code = (error["NSAppleScriptErrorNumber"] as? Int) ?? 0
+    nonisolated private static func logScriptErrorOnce(code: Int, message: String) {
         scriptErrorFlag.lock()
         defer { scriptErrorFlag.unlock() }
         guard loggedScriptErrorCodes.insert(code).inserted else { return }
-        let msg = (error["NSAppleScriptErrorMessage"] as? String) ?? "unknown"
         WakeLog.shared.log(
-            "chromeTabWatcher: AppleScript error code=\(code) msg=\(msg)")
+            "chromeTabWatcher: AppleScript error code=\(code) msg=\(message)")
     }
 
     // MARK: - Domain extraction

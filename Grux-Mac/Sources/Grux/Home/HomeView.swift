@@ -330,10 +330,19 @@ struct HomeView: View {
                                     .font(.system(size: 11, weight: .semibold))
                                     .foregroundStyle(GruxTheme.accentCo)
                                     .frame(width: 14)
-                                Text(item.line)
-                                    .font(GruxType.body)
-                                    .foregroundStyle(GruxTheme.textSecondary)
-                                    .lineLimit(2)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(item.line)
+                                        .font(GruxType.body)
+                                        .foregroundStyle(GruxTheme.textSecondary)
+                                        .lineLimit(2)
+                                    if let detail = item.detail {
+                                        Text(detail)
+                                            .font(GruxType.caption)
+                                            .foregroundStyle(GruxTheme.textTertiary)
+                                            .lineLimit(3)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                }
                             }
                         }
                         .buttonStyle(.plain)

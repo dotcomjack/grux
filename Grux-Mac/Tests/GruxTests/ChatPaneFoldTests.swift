@@ -43,7 +43,7 @@ final class ChatPaneFoldTests: XCTestCase {
         let src = try collapsedSource()
         let button = position(of: foldedButton, in: src)
         let popover = position(
-            of: ".popover(isPresented: $threadsPopover, arrowEdge: .bottom) { ChatThreadsSidebar()", in: src)
+            of: ".gruxPopover(isPresented: $threadsPopover, arrowEdge: .bottom) { ChatThreadsSidebar()", in: src)
         if let button, let popover {
             XCTAssertLessThan(button, popover, "the popover must hang off the folded button")
         }

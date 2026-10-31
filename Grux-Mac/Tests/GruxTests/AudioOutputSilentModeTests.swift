@@ -105,7 +105,8 @@ final class AudioOutputSilentModeTests: XCTestCase {
 
         let music = await MusicTool.play(song: "Some Song", artist: "Some Artist")
         XCTAssertTrue(music.hasPrefix("error: silent mode"), music)
-        XCTAssertTrue(MusicTool.listLibraryTracks(artist: "Some Artist").hasPrefix("error: silent mode"))
+        let listed = await MusicTool.listLibraryTracks(artist: "Some Artist")
+        XCTAssertTrue(listed.hasPrefix("error: silent mode"), listed)
         let probe = await MusicKitPlayer.probe(testStoreID: "1")
         XCTAssertTrue(probe.hasPrefix("STOP: silent mode"), probe)
 

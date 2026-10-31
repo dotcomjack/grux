@@ -58,7 +58,7 @@ enum FoundryViewBridge {
         // exactly like the install-approval reject path.
         dashboard.onReject = { card in
             guard let id = UUID(uuidString: card.id) else { return }
-            if let updated = proposalStore.transition(id: id, to: .rejected) {
+            if let updated = proposalStore.decline(id: id) {
                 FoundryTrustTransitions.recordRejected(proposal: updated, ledger: trustLedger)
             }
         }

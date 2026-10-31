@@ -224,7 +224,9 @@ enum SmokeTest {
 
         // 13. Browser tool AppleScript compiles (syntax valid). We don't
         // actually execute - that would open a Chrome tab mid-test.
-        let sampleScript = NSAppleScript(source: """
+        // Compiling a `tell` block loads Chrome's dictionary and can launch it, so in
+        // headless mode the check is skipped and says why rather than passing or failing.
+        let sampleSource = """
         tell application "Google Chrome"
             if (count of windows) = 0 then
                 return "empty"
@@ -234,14 +236,17 @@ enum SmokeTest {
                 end tell
             end if
         end tell
-        """)
-        var errDict: NSDictionary?
-        let compiled = sampleScript?.compileAndReturnError(&errDict) ?? false
-        record(
-            "Chrome AppleScript compiles (syntax valid, execution not run)",
-            compiled && errDict == nil,
-            "compiled=\(compiled) err=\(errDict?.description ?? "none")"
-        )
+        """
+        if let why = ForeignAppScript.refusal() {
+            lines.append("[SKIP] Chrome AppleScript compiles - \(why)")
+        } else {
+            let errDict = ForeignAppScript.compileError(sampleSource)
+            record(
+                "Chrome AppleScript compiles (syntax valid, execution not run)",
+                errDict == nil,
+                "compiled=\(errDict == nil) err=\(errDict?.description ?? "none")"
+            )
+        }
 
         // 14. Coach sanitizer strips JSON envelopes, code fences, and
         // `{speech: ...}` wrappers that Claude sometimes emits around what

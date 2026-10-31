@@ -865,7 +865,7 @@ private struct ClusterEnrollChip: View {
             showSheet = true
         }
         .help("Give \(cluster.label) a name. Future meetings will auto-label this voice.")
-        .sheet(isPresented: $showSheet) {
+        .gruxSheet(isPresented: $showSheet) {
             enrollSheet
         }
     }

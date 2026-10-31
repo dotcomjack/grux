@@ -161,6 +161,21 @@ public actor SwarmWorker {
         FileManager.default.fileExists(atPath: NSHomeDirectory() + "/.grux/SILENT")
     }
 
+    // Headless mode (`~/.grux/HEADLESS`) for the agents' own tools, for the same reason:
+    // a workflow's agent step runs `open -a "Google Chrome"` or `osascript` itself, so
+    // the profile is the only door that sees it. Grux points this at its own gate at
+    // launch; the default reads the sentinel.
+    nonisolated(unsafe) public static var isHeadless: () -> Bool = {
+        FileManager.default.fileExists(atPath: NSHomeDirectory() + "/.grux/HEADLESS")
+    }
+
+    // What a headless profile will not start, beside refusing every Apple event: the
+    // programs that open or script another app. GruxShellCore's
+    // `ShellAppleEvents.appOpeningPrograms` is the same list (ForeignAppScriptTests).
+    static let appOpeningPrograms = [
+        "/usr/bin/open", "/usr/bin/osascript", "/usr/bin/shortcuts", "/usr/bin/automator",
+    ]
+
     // What a silent profile denies. `com.apple.audio.audiohald` is the one that
     // matters on current macOS: measured 2026-09-27, `say -a ?` lists no output
     // device once it is denied (coreaudiod alone changed nothing). The rest cover
@@ -197,7 +212,8 @@ public actor SwarmWorker {
     static func sandboxDecision(
         writableRoot: String,
         protectedRoots: [String] = protectedBuildRoots(),
-        silent: Bool = isSilent()
+        silent: Bool = isSilent(),
+        headless: Bool = isHeadless()
     ) -> SandboxDecision {
         // Resolve symlinks so a carve-out under a denied root still matches
         // by canonical path. Falls back to the raw path if resolution fails.
@@ -279,6 +295,14 @@ public actor SwarmWorker {
         \(Self.playerBundleIDs.map { "    (appleevent-destination \(sbplLiteral($0)))" }.joined(separator: "\n")))
         """
 
+        // Headless mode: no Apple event to any app, and nothing that opens one.
+        let headlessBlock = !headless ? "" : """
+
+        (deny appleevent-send)
+        (deny process-exec
+        \(Self.appOpeningPrograms.map { "    (literal \(sbplLiteral($0)))" }.joined(separator: "\n")))
+        """
+
         // Allow block: always allow the temp dir. Add the project root only
         // when mayCarve. The deny block follows so protected roots always win.
         let carveLine = mayCarve ? "\n    (subpath \(sbplLiteral(canonicalRoot)))" : ""
@@ -286,7 +310,7 @@ public actor SwarmWorker {
         (version 1)
         (allow default)
         (allow file-write*\(carveLine)
-            (subpath \(sbplLiteral(tmpDir))))\(silenceBlock)\(denyBlock)
+            (subpath \(sbplLiteral(tmpDir))))\(silenceBlock)\(headlessBlock)\(denyBlock)
         """
         return SandboxDecision(
             profile: profile,

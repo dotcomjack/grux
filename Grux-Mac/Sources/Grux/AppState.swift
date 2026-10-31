@@ -32,6 +32,10 @@ final class AppState: ObservableObject {
     @Published var config: GruxConfig = .default
     @Published var watching: Bool = false
     @Published var lastTick: Date?
+    /// What the last focus tick found missing, or nil when it sampled (or has
+    /// not run yet). Written only by `FocusWatcher.tick`, read by the Focus
+    /// Log's empty line, so the pane says what the watcher really did.
+    @Published var focusSkip: FocusWatcher.Skip?
     @Published var lastVerdict: FocusVerdict?
     @Published var lastActiveApp: String = ""
     @Published var lastWindowTitle: String = ""
@@ -128,7 +132,13 @@ final class AppState: ObservableObject {
     /// Settings and reopening it from the gear a moment later opens plainly
     /// rather than at the old section (PR 40 review). A Settings that only saw
     /// the change, such as a closed window kept alive, does not spend it.
-    func takeSettingsRequest(now: Date = Date(), appearing: Bool = false) -> String? {
+    func takeSettingsRequest(now: Date = Date(), appearing: Bool = false, viewID: UUID? = nil) -> String? {
+        // A handed-back link nobody took within the window is dropped, so a
+        // later plain open never lands on it.
+        if let back = handedBackAt {
+            handedBackAt = nil
+            if now.timeIntervalSince(back) >= Self.settingsRequestWindow { requestedSettingsTab = nil }
+        }
         var tag: String?
         if let tab = requestedSettingsTab, !tab.isEmpty {
             requestedSettingsTab = nil
@@ -138,8 +148,44 @@ final class AppState: ObservableObject {
                   now.timeIntervalSince(taken.at) < Self.settingsRequestWindow {
             tag = taken.tag
         }
-        if appearing, tag != nil { takenSettingsRequest = nil }
+        if appearing, let tag {
+            takenSettingsRequest = nil
+            if let viewID { spentSettingsRequest = (tag, now, viewID) }
+        }
         return tag
+    }
+
+    /// Settings views on screen or in a pane right now (D52).
+    private(set) var liveSettingsViews = 0
+    /// The deep link a Settings that appeared spent, when, and which view.
+    private var spentSettingsRequest: (tag: String, at: Date, viewID: UUID)?
+
+    /// When the most recent Settings view appeared, and when a link was last
+    /// handed back (wave 13 round 2).
+    private var lastSettingsAppearedAt: Date?
+    private var handedBackAt: Date?
+
+    func settingsViewAppeared(now: Date = Date()) {
+        liveSettingsViews += 1
+        lastSettingsAppearedAt = now
+    }
+
+    /// D52: the first pane opened beside the panel builds its Settings twice
+    /// (measured: the first view spends the link, a second appears 0.7 s later
+    /// with none and shows General, then the first goes). A Settings that goes
+    /// away while another is alive, within `settingsRequestWindow` of spending
+    /// the link, hands it back, and the survivor's onChange applies it. The
+    /// last Settings closing hands nothing back, so the gear opens plainly.
+    func settingsViewDisappeared(viewID: UUID, now: Date = Date()) {
+        liveSettingsViews = max(0, liveSettingsViews - 1)
+        guard let spent = spentSettingsRequest, spent.viewID == viewID else { return }
+        spentSettingsRequest = nil
+        guard liveSettingsViews > 0, now.timeIntervalSince(spent.at) < Self.settingsRequestWindow else { return }
+        // Only a replacement: a Settings that appeared after the link was
+        // spent. One already open (the pane under a closing window) keeps its place.
+        guard let appeared = lastSettingsAppearedAt, appeared > spent.at else { return }
+        handedBackAt = now
+        requestedSettingsTab = spent.tag
     }
     // A section inside a tab, for a folded child with no key of its own:
     // `fire-open-tab integrations:webhooks` opens Integrations scrolled to
@@ -176,10 +222,11 @@ final class AppState: ObservableObject {
     // Phase 1 (Model Foundation) - single switch that routes chat through a
     // discovered local model instead of Anthropic. Read by ModelRegistry.active()
     // on every send(). PERSISTED into GruxConfig: the
-    // mode survives relaunch. Safety against the flaky-server case that originally
-    // motivated keeping it transient - ModelRegistry.active() falls back to
-    // Anthropic whenever no local server is discovered, so a persisted true with
-    // Ollama down degrades to cloud rather than stranding the user offline. Flipping it
+    // mode survives relaunch. With it on and no local server discovered, the
+    // route resolves to Anthropic but ChatReadiness reports
+    // .offlinePinnedButNoLocalModel and ChatService refuses the send: the person
+    // chose local, so chat waits for it rather than quietly using the cloud
+    // (OfflineModeCaption says the same in Settings). Flipping it
     // on re-runs best-effort local discovery via the didSet. Restores are applied
     // through `isRestoringState` so launch doesn't emit a toggle event or re-save.
     @Published var offlineMode: Bool = false {
@@ -244,8 +291,19 @@ final class AppState: ObservableObject {
     var elevenLabsKey: String { KeychainStore.get(.elevenLabsApiKey) }
     var braveKey: String { KeychainStore.get(.braveApiKey) }
 
+    /// The config the test process runs on (D40): the local model address is
+    /// pinned to `Persistence.testLocalModelBaseURL` unless the live Ollama
+    /// tests asked for the real one.
+    static func pinnedForTests(_ cfg: GruxConfig, environment: [String: String]) -> GruxConfig {
+        guard environment["GRUX_OLLAMA_LIVE"] != "1" else { return cfg }
+        var pinned = cfg
+        pinned.ollamaBaseURL = Persistence.testLocalModelBaseURL
+        return pinned
+    }
+
     func load() {
-        let cfg = Persistence.load(GruxConfig.self, from: Persistence.configURL, fallback: .default)
+        var cfg = Persistence.load(GruxConfig.self, from: Persistence.configURL, fallback: .default)
+        if Persistence.isUnderTest { cfg = Self.pinnedForTests(cfg, environment: ProcessInfo.processInfo.environment) }
         self.config = cfg
         // Restore the persisted offline switch without re-saving or emitting a
         // toggle event. discoverLocal() still runs (unconditionally below in init),
@@ -301,7 +359,8 @@ final class AppState: ObservableObject {
     private func applyConfigFromDisk(_ data: Data) -> Bool {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        guard let cfg = try? decoder.decode(GruxConfig.self, from: data) else { return false }
+        guard var cfg = try? decoder.decode(GruxConfig.self, from: data) else { return false }
+        if Persistence.isUnderTest { cfg = Self.pinnedForTests(cfg, environment: ProcessInfo.processInfo.environment) }
         config = cfg
         let switched = offlineMode != cfg.offlineMode
         isRestoringState = true

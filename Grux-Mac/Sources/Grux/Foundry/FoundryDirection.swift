@@ -38,6 +38,8 @@ struct FoundryBuildReadiness: Equatable {
     var buildInFlight: Bool
     var escalatedJobId: String?
     var approvalPending: Bool
+    /// Why no build may start on this Mac now (one at a time, disk), or nil.
+    var buildHold: String? = nil
 }
 
 enum FoundryPrimaryAction: Equatable {
@@ -64,6 +66,8 @@ enum FoundryPrimaryAction: Equatable {
     case shipped
     case notPursued
     case rolledBack
+    /// Another upgrade is building, or the disk is short: the reason, in words.
+    case held(reason: String)
 
     /// The button label, or the status line when nothing is clickable.
     var title: String {
@@ -80,6 +84,7 @@ enum FoundryPrimaryAction: Equatable {
         case .shipped: return "Shipped"
         case .notPursued: return "Not pursued"
         case .rolledBack: return "Rolled back"
+        case .held: return "Waiting to build"
         }
     }
 
@@ -99,6 +104,7 @@ enum FoundryPrimaryAction: Equatable {
         case .shipped: return "Installed behind a 24 hour rollback"
         case .notPursued: return ""
         case .rolledBack: return "Reverted by the rollback keeper"
+        case .held(let reason): return reason
         }
     }
 
@@ -107,7 +113,7 @@ enum FoundryPrimaryAction: Equatable {
         switch self {
         case .build, .enableAndBuild, .signIn: return true
         case .checkingSignIn, .noPaidPlan, .installCLI, .noSource, .inFlight,
-             .awaitingApproval, .shipped, .notPursued, .rolledBack: return false
+             .awaitingApproval, .shipped, .notPursued, .rolledBack, .held: return false
         }
     }
 }
@@ -163,7 +169,16 @@ enum FoundryDirection {
         }
         guard let power = powerLine(subscriptionType: r.subscriptionType) else { return .noPaidPlan }
         guard r.sourceAvailable else { return .noSource }
+        if let hold = r.buildHold { return .held(reason: heldReason(hold)) }
         return r.foundryEnabled ? .build(power: power) : .enableAndBuild(power: power)
+    }
+
+    /// The engine's "not building: ..." line, as the card's sentence.
+    static func heldReason(_ hold: String) -> String {
+        var line = hold
+        if line.hasPrefix("not building: ") { line.removeFirst("not building: ".count) }
+        guard let first = line.first else { return line }
+        return first.uppercased() + line.dropFirst()
     }
 }
 
@@ -171,12 +186,13 @@ enum FoundryDirection {
 
 extension FoundryFormat {
 
-    /// "About $8 of your subscription". Numeral with the symbol, never words,
-    /// and never "estimated (subscription powered)", which is engine speak.
+    /// "About $8 worth of usage, counted against your subscription". Numeral with the
+    /// symbol, never words, and never "estimated (subscription powered)", which is engine
+    /// speak. Not "$8 of your subscription", which read as a price on a flat plan (D50).
     static func costLine(usd: Double) -> String {
-        guard usd > 0 else { return "No measurable subscription cost" }
-        if usd < 1 { return "Under $1 of your subscription" }
-        return "About $\(Int(usd.rounded())) of your subscription"
+        guard usd > 0 else { return "No measurable usage" }
+        let amount = usd < 1 ? "Under $1" : "About $\(Int(usd.rounded()))"
+        return "\(amount) worth of usage, counted against your subscription"
     }
 
     /// "Medium risk", "Protected area".

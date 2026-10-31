@@ -219,7 +219,7 @@ final class ConnectAModelInSettingsTests: XCTestCase {
         XCTAssertTrue(action.contains("requestedSettingsTab = \"connect\""))
         XCTAssertTrue(action.contains("WindowOpener.openSettings()"), "Connect a model no longer opens Settings")
         let settings = try macSource("Sources/Grux/SettingsView.swift")
-        XCTAssertTrue(settings.contains("guard let tab = state.takeSettingsRequest(appearing: appearing) else { return }"),
+        XCTAssertTrue(settings.contains("guard let tab = state.takeSettingsRequest(appearing: appearing, viewID: viewID) else { return }"),
                       "Settings reads the request without the hand-off between two live Settings")
     }
 

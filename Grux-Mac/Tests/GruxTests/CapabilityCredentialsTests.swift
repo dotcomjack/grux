@@ -61,4 +61,19 @@ final class CapabilityCredentialsTests: XCTestCase {
         XCTAssertNil(SettingsSearchRegistry.entries.first { $0.id == "data.fal" })
         XCTAssertEqual(SettingsTabAliases.resolve("models").pane, .models)
     }
+
+    /// D49 (sense pass 3): the header said "All of them are empty until you paste one" on a Mac
+    /// with a key set. It states how many are set, and claims empty only when none is.
+    func testTheHeaderSaysHowManyKeysAreSet() {
+        let none = CapabilityCredentialsSection.headerLine(configured: 0, offered: 6)
+        XCTAssertTrue(none.contains("None is set yet"), none)
+        for k in [1, 5, 6] {
+            let line = CapabilityCredentialsSection.headerLine(configured: k, offered: 6)
+            XCTAssertTrue(line.contains("\(k) of 6 set"), line)
+            XCTAssertFalse(line.lowercased().contains("empty") || line.contains("None"), line)
+        }
+        for line in [none, CapabilityCredentialsSection.headerLine(configured: 2, offered: 6)] {
+            XCTAssertTrue(line.contains("Keychain"), line)
+        }
+    }
 }

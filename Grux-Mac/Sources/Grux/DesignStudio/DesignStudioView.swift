@@ -465,6 +465,7 @@ struct DesignStudioView: View {
             Text(Self.estimateText(estimate))
                 .font(GruxTheme.Font.microCaps)
                 .foregroundStyle(GruxTheme.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -717,13 +718,14 @@ struct DesignStudioView: View {
     }
 
     // The estimator's label already carries the amount plus the word "estimated"
-    // (Foundry labeling rule). Render it once, name its route, and list any
-    // cheaper alternatives inline. Never re-add "estimated" or a second figure.
-    private static func estimateText(_ estimate: DesignRunEstimate) -> String {
+    // (Foundry labeling rule). Render it once, name its route, and list the
+    // other routes after it as such. Never re-add "estimated" or a second figure.
+    // D34: the others used to follow with the same " | " that joined them, so
+    // "API key | subscription" read as one choice.
+    static func estimateText(_ estimate: DesignRunEstimate) -> String {
         var out = "\(estimate.primary.label), \(estimate.primary.route.displayName)"
         if !estimate.alternatives.isEmpty {
-            let alts = estimate.alternatives.map { $0.label }.joined(separator: " | ")
-            out += " | \(alts)"
+            out += ". Other routes: " + estimate.alternatives.map { $0.label }.joined(separator: "; ")
         }
         return out
     }

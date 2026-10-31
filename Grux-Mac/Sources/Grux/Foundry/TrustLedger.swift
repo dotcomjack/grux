@@ -154,8 +154,80 @@ final class TrustLedger: ObservableObject {
         // ("Security/SecurityPolicy.swift") and bare-segment references that
         // Claude Code prompts and git diffs routinely use without it.
         "sources/grux/security/",
-        "/security/"
+        "/security/",
+        // The shell's own safety checks: the command gate, the trust ceiling,
+        // the headless guard, the output guard, silence and the foreign-app
+        // matcher. Measured 2026-10-23: a worker on an fs-audit proposal
+        // edited ShellSafety.swift to skip quoted text, which `bash -c '...'`
+        // and `eval "..."` run. Loosening these is never Grux's call alone.
+        "shellsafety.swift",
+        "shelltrustceiling.swift",
+        "shellappleevents.swift",
+        "shelloutputguard.swift",
+        "shellsilence.swift",
+        "foreignappscript.swift",
+        // What calls or configures those checks: a gate nobody calls guards
+        // nothing.
+        "shellsession.swift",
+        "shelldispatcher.swift",
+        "shelltool/shelltool.swift",
+        "filesystemtool.swift"
     ]
+
+    // Protected as a CHANGE, never as words in a proposal: Foundry's own rails,
+    // so no upgrade rewrites what grades, builds or installs the next one.
+    // Proposal prompts routinely cite these files as the pattern to follow
+    // ("see Sources/Grux/Foundry/ProposalStore.swift"), so matching their
+    // text would pin every proposal; what a build changed is what is graded.
+    // The rest of Foundry (its views, signals, synthesis) stays open.
+    static let protectedChangeMarkers: [String] = [
+        "sources/grux/foundry/trustledger.swift",
+        "sources/grux/foundry/foundryengine.swift",
+        "sources/grux/foundry/foundrygovernor.swift",
+        "sources/grux/foundry/foundryapprovals.swift",
+        "sources/grux/foundry/proposalstore.swift",
+        "sources/grux/foundry/rdverifier.swift",
+        "sources/grux/foundry/rdworker.swift",
+        "sources/grux/foundry/gruxupdater.swift",
+        "sources/grux/foundry/livetreetripwire.swift",
+        "sources/grux/foundry/sourcecheckoutwatch.swift",
+        // What build.sh runs or reads on the way to a signed app (the
+        // notices generator, the signing identity picker, the leak gate) and
+        // SwiftPM's own configuration (mirrors can swap a dependency).
+        "grux-mac/scripts/",
+        "grux-mac/tools/",
+        "/.swiftpm/"
+    ]
+
+    // Exact file names, anywhere: what decides which files are built (the
+    // package manifest can exclude a file), the script install runs, and the
+    // entitlements the app is signed with. Exact so SkillPackage.swift or
+    // scripts/rebuild.sh stay open.
+    static let protectedChangeFilenames: [String] = [
+        "package.swift",
+        "package.resolved",
+        "build.sh",
+        "grux.entitlements",
+        "info.plist"
+    ]
+
+    // A versioned manifest (Package@swift-6.swift) replaces Package.swift for
+    // that toolchain.
+    static let protectedChangeFilenamePrefixes: [String] = [
+        "package@swift"
+    ]
+
+    /// A path a built change may not touch without the person: every
+    /// protected path, plus the Foundry rails and the build's own inputs.
+    nonisolated static func isProtectedChange(_ path: String) -> Bool {
+        if isProtectedPath(path) { return true }
+        var p = path.lowercased().trimmingCharacters(in: .whitespaces)
+        while p.contains("//") { p = p.replacingOccurrences(of: "//", with: "/") }
+        if protectedChangeMarkers.contains(where: { p.contains($0) }) { return true }
+        let leaf = p.split(separator: "/").last.map(String.init) ?? p
+        return protectedChangeFilenames.contains(leaf)
+            || protectedChangeFilenamePrefixes.contains(where: { leaf.hasPrefix($0) })
+    }
 
     // Known Security-module filenames with no individual marker. A touched
     // path ending in one of these is protected even when it carries no

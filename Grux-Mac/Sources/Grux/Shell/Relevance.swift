@@ -18,6 +18,8 @@ struct PanelItem: Equatable, Identifiable {
     let title: String
     let detail: String
     let action: PanelAction
+    /// A second, smaller control beside the row ("Not now"). Only the update offer has one.
+    var dismiss: PanelAction? = nil
 }
 
 enum PanelAction: Equatable {
@@ -37,6 +39,12 @@ enum PanelAction: Equatable {
     case revealClaudeSettings
     /// Chat has no model: open Settings at the model key, as Chat's own notice does.
     case connectModel
+    /// Open the newest release's disk image in the browser (withheld when headless).
+    case downloadUpdate
+    /// A Homebrew install: copy `brew upgrade --cask grux` for the person to run.
+    case copyBrewUpgrade
+    /// Not now: hide this version's offer (`UpdateChecker.notNow`).
+    case dismissUpdate(version: String)
 }
 
 /// A work order stopped at one of its three reviews.
@@ -86,6 +94,8 @@ struct RelevanceState: Equatable {
     /// Chat cannot send anything: no key and no local model it may use
     /// (`ChatReadiness`). True after "Skip for now" on the model step.
     var chatNeedsModel: Bool = false
+    /// A newer Grux AI on GitHub's release page that the person has not said Not now to.
+    var updateOffer: UpdateOffer? = nil
 }
 
 enum Relevance {
@@ -151,6 +161,14 @@ enum Relevance {
         }
 
         // suggested
+        // A newer version leads the suggestions, so a full list does not cut it off.
+        if let offer = s.updateOffer {
+            out.append(PanelItem(id: "update.\(offer.version)", cls: .suggested, icon: "arrow.down.circle",
+                                 title: "Grux AI \(offer.version) is available",
+                                 detail: offer.viaHomebrew ? UpdateCheck.brewCommand : "Download",
+                                 action: offer.viaHomebrew ? .copyBrewUpgrade : .downloadUpdate,
+                                 dismiss: .dismissUpdate(version: offer.version)))
+        }
         // Chat's own gap is the row above when it is the model; never both.
         for g in s.setupGaps where (s.hasBrand || !g.brandScoped) && !(s.chatNeedsModel && g.featureId == "chat") {
             out.append(PanelItem(id: "setup.\(g.featureId)", cls: .suggested, icon: "circle.dotted",

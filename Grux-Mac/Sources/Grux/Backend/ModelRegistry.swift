@@ -492,7 +492,7 @@ final class ModelRegistry: ObservableObject {
             // `tags.contains(picked)` IS LOAD BEARING and it is deliberately
             // not folded into the pure function. The hardware pick is very
             // often a model the user has never pulled: a 64 GB Mac scores
-            // qwen3.5:35b as the headline whether or not those 24 GB were ever
+            // gemma4:26b as the headline whether or not those 18 GB were ever
             // downloaded. Writing an uninstalled tag into `offlineLLMModel`
             // would leave chat pointing at a model the server answers 404 for,
             // so the next turn breaks and the user has no idea why the field

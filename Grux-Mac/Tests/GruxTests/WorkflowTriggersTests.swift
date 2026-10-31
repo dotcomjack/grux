@@ -53,7 +53,8 @@ final class WorkflowTriggersTests: XCTestCase {
         let deadline = Date().addingTimeInterval(20)
         while Date() < deadline {
             if let run = engine.run(id: id) ?? engine.recentRuns.first(where: { $0.id == id }), run.status.isTerminal { return run }
-            try await Task.sleep(nanoseconds: 20_000_000)
+            // 1 ms, not 20: settles poll hundreds of times a class, and the 20 ms naps added up to seconds.
+            try await Task.sleep(nanoseconds: 1_000_000)
         }
         XCTFail("the run did not finish"); throw CancellationError()
     }

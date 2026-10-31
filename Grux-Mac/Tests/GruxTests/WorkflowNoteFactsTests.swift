@@ -32,7 +32,8 @@ final class WorkflowNoteFactsTests: XCTestCase {
         let deadline = Date().addingTimeInterval(20)
         while Date() < deadline {
             if let run = current(id), run.status.isTerminal || run.status == .waitingForApproval { return run }
-            try await Task.sleep(nanoseconds: 20_000_000)
+            // 1 ms, not 20: settles poll hundreds of times a class, and the 20 ms naps added up to seconds.
+            try await Task.sleep(nanoseconds: 1_000_000)
         }
         return try XCTUnwrap(current(id))
     }

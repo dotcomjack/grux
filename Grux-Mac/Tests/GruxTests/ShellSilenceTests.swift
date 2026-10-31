@@ -182,28 +182,35 @@ final class ShellBlockedKindTests: XCTestCase {
         XCTAssertEqual(GruxControlTools.shellBlockedKind(reason: "cd would leave rootDir"), "containment")
         let silent = ShellSilence.refusal(for: "afplay x.aiff", silent: true)
         XCTAssertEqual(GruxControlTools.shellBlockedKind(reason: silent ?? ""), "silent")
+        let headless = ShellAppleEvents.refusal(for: "osascript -e 'return 1'", headless: true)
+        XCTAssertEqual(GruxControlTools.shellBlockedKind(reason: headless ?? ""), "headless")
     }
 }
 
-/// A macro's AppleScript step runs in-process, not through a shell, so it is asked too.
+/// A macro's AppleScript step runs in its own osascript process, not through a shell, so it is asked too.
 /// The script here only returns a string, so a broken gate still makes no sound.
 final class AppleScriptSilenceTests: XCTestCase {
     override func tearDown() {
         AudioOutput.soundAllowedUnderTest = false
+        WindowFacade.headlessUnderTest = nil
         try? FileManager.default.removeItem(at: AudioOutput.logURL)
         super.tearDown()
     }
 
-    func test_anAppleScriptThatWouldMakeSoundIsRefusedInSilentMode() throws {
+    func test_anAppleScriptThatWouldMakeSoundIsRefusedInSilentMode() async throws {
         XCTAssertTrue(AudioOutput.isSilent)
-        let answer = AppleScriptRunner.run(source: "return \"play the sound\"")
+        let answer = await AppleScriptRunner.run(source: "return \"play the sound\"")
         XCTAssertTrue(answer.contains("silent mode"), answer)
         let lines = try String(contentsOf: AudioOutput.logURL, encoding: .utf8)
         XCTAssertTrue(lines.contains("\"kind\":\"shell\""), lines)
         XCTAssertTrue(lines.contains("\"source\":\"applescript\""), lines)
     }
 
-    func test_aQuietAppleScriptStillRuns() {
-        XCTAssertEqual(AppleScriptRunner.run(source: "return \"hello\""), "ok: hello")
+    func test_aQuietAppleScriptStillRuns() async {
+        // Headless mode refuses every script (ForeignAppScriptTests); this one only
+        // returns a string and reaches no app, so it runs with headless off to check silence alone.
+        WindowFacade.headlessUnderTest = false
+        let answer = await AppleScriptRunner.run(source: "return \"hello\"")
+        XCTAssertEqual(answer, "ok: hello")
     }
 }

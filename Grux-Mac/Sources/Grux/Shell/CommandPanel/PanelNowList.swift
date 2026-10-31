@@ -25,6 +25,7 @@ struct PanelNowList: View {
                 .padding(.vertical, GruxSpacing.s)
             } else {
                 ForEach(items) { item in
+                    HStack(spacing: GruxSpacing.xs) {
                     Button { onAction(item.action) } label: {
                         HStack(spacing: GruxSpacing.s) {
                             Image(systemName: item.icon)
@@ -51,6 +52,15 @@ struct PanelNowList: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(item.title)
+                    // The one row with a second choice (the update offer's Not now).
+                    if let dismiss = item.dismiss {
+                        Button(PanelCopy.notNow) { onAction(dismiss) }
+                            .buttonStyle(.plain)
+                            .font(GruxType.caption)
+                            .foregroundStyle(GruxTheme.textTertiary)
+                            .accessibilityLabel(PanelCopy.notNowLabel(item.title))
+                    }
+                    }
                 }
             }
         }
@@ -77,7 +87,10 @@ struct PanelNowList: View {
 enum RenderedNow {
     static var fileURL: URL { Persistence.gruxDir.appendingPathComponent("rendered-now.txt") }
     static func text(_ items: [PanelItem]) -> String {
-        items.map { "\($0.cls) | \($0.title) | \($0.detail) | \($0.action)\n" }.joined()
+        items.map { item in
+            let dismiss = item.dismiss.map { " | \(PanelCopy.notNow): \($0)" } ?? ""
+            return "\(item.cls) | \(item.title) | \(item.detail) | \(item.action)\(dismiss)\n"
+        }.joined()
     }
     static func note(_ items: [PanelItem]) {
         try? text(items).write(to: fileURL, atomically: true, encoding: .utf8)

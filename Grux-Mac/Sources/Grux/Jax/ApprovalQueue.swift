@@ -92,7 +92,8 @@ struct PendingApproval: Codable, Identifiable, Equatable {
         createdAt = (try? c.decode(Date.self, forKey: .createdAt)) ?? Date()
         urgent = (try? c.decode(Bool.self, forKey: .urgent)) ?? false
         persona = (try? c.decode(GatePersona.self, forKey: .persona)) ?? .none
-        reason = (try? c.decode(String.self, forKey: .reason)) ?? ""
+        let stored = (try? c.decode(String.self, forKey: .reason)) ?? ""
+        reason = DecisionGate.earlierAsksFirstReasons.contains(stored) ? DecisionGate.asksFirstReason : stored
         state = (try? c.decode(State.self, forKey: .state)) ?? .pending
         resolvedAt = try? c.decodeIfPresent(Date.self, forKey: .resolvedAt)
         risk = try? c.decodeIfPresent(ApprovalRisk.self, forKey: .risk)
@@ -184,7 +185,80 @@ final class ApprovalQueue: ObservableObject {
         if let data = try? Data(contentsOf: storeURL),
            let arr = try? dec.decode([PendingApproval].self, from: data) {
             items = arr.map { var item = $0; item.action = Self.namedForPerson(item.action); return item }
+            // The CLI reads this file as it is, so an item the decode reworded
+            // or a fold dropped is written back once.
+            let reworded = (try? JSONSerialization.jsonObject(with: data) as? [[String: Any]])?
+                .contains { DecisionGate.earlierAsksFirstReasons.contains($0["reason"] as? String ?? "") } ?? false
+            if foldWaitingTwins() || reworded { save() }
         }
+    }
+
+    // MARK: One card per thing asked (D46)
+
+    // What makes two asks the same ask: the gate's own words for it, minus who
+    // was told "pending". Only a residual hold on a tool that creates one of
+    // the person's own notes, contacts or folders folds (wave 12 review, three
+    // rounds): asked twice, the second would only be a duplicate.
+    // A tool nobody classified reaches the gate as an opaque "Run tool" with
+    // its input stamped after the verdict, so a residual hold says nothing
+    // about whether it sends or pays (an MCP `send_email`), and two identical
+    // payments or messages may be meant twice. `create_event` is left out: an
+    // event with attendees sends invitations. `update_note` is left out: an
+    // append asked twice is two lines. An urgent item never folds,
+    // because folding would skip its banner.
+    static let foldableTools: Set<String> = ["create_note", "create_contact", "create_folder"]
+
+    static func sameAskKey(_ item: PendingApproval) -> String? {
+        let action = item.action
+        guard action.kind == .other, !item.urgent, item.reason == DecisionGate.asksFirstReason,
+              let tool = action.detail["__replay_tool"], foldableTools.contains(tool) else { return nil }
+        var detail = action.detail
+        detail[askedInKey] = nil
+        // The input is written in the key order this process hashed, so the
+        // same ask from another session is compared as parsed JSON.
+        if let input = detail["__replay_input"], let parsed = decodeInput(input),
+           let data = try? JSONSerialization.data(withJSONObject: parsed, options: [.sortedKeys]) {
+            detail["__replay_input"] = String(decoding: data, as: UTF8.self)
+        }
+        let pairs = detail.keys.sorted().map { "\($0)=\(detail[$0] ?? "")" }
+        return ([action.summary, action.target, action.brand ?? ""] + pairs).joined(separator: "\u{1F}")
+    }
+
+    // The pending card an ask would duplicate, if one waits.
+    private func waitingTwin(of item: PendingApproval) -> Int? {
+        guard let key = Self.sameAskKey(item) else { return nil }
+        return items.firstIndex { $0.state == .pending && Self.sameAskKey($0) == key }
+    }
+
+    // What a twin still brings to the card kept: who asked, so chat that
+    // asked again hears the outcome, and a raised risk flag, which only adds
+    // caution.
+    private static func absorb(_ twin: PendingApproval, into kept: inout PendingApproval) {
+        if let teller = twin.action.detail[askedInKey], kept.action.detail[askedInKey] == nil {
+            kept.action.detail[askedInKey] = teller
+        }
+        if let risk = twin.risk, kept.risk == nil || (risk.raised && kept.risk?.raised != true) {
+            kept.risk = risk
+        }
+    }
+
+    // Folds pending twins already on disk into the first one asked. Dropping a
+    // twin can only mean one action fewer, never one more. True when any went.
+    private func foldWaitingTwins() -> Bool {
+        var kept: [PendingApproval] = []
+        var firstByKey: [String: Int] = [:]
+        for item in items {
+            guard item.state == .pending, let key = Self.sameAskKey(item) else { kept.append(item); continue }
+            if let idx = firstByKey[key] {
+                Self.absorb(item, into: &kept[idx])
+            } else {
+                firstByKey[key] = kept.count
+                kept.append(item)
+            }
+        }
+        guard kept.count != items.count else { return false }
+        items = kept
+        return true
     }
 
     // The gate queues every knowingly gated tool under its fallback summary
@@ -230,6 +304,11 @@ final class ApprovalQueue: ObservableObject {
             persona: persona,
             reason: reason
         )
+        if let idx = waitingTwin(of: item) {
+            Self.absorb(item, into: &items[idx])
+            save()
+            return items[idx]
+        }
         items.append(item)
         save()
         if urgent { notifyUrgent(item) }
@@ -243,6 +322,11 @@ final class ApprovalQueue: ObservableObject {
     func enqueue(_ incoming: PendingApproval) -> PendingApproval {
         var prepared = incoming
         prepared.action = Self.namedForPerson(prepared.action)
+        if let idx = waitingTwin(of: prepared) {
+            Self.absorb(prepared, into: &items[idx])
+            save()
+            return items[idx]
+        }
         items.append(prepared)
         save()
         if prepared.urgent { notifyUrgent(prepared) }

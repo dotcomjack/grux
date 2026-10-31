@@ -15,6 +15,11 @@ struct SelfUpgradeView: View {
     @ObservedObject private var account = AccountSwitcher.shared
     @ObservedObject private var approvals = FoundryApprovalStore.shared
     @ObservedObject private var appState = AppState.shared
+    @ObservedObject private var testBaseline = RDBaselineStore.shared
+    @ObservedObject private var governor = FoundryGovernor.shared
+    // The rail and the swarm jobs: a card's "Waiting to build" clears the
+    // moment a build leaves (wave 13 round 2).
+    @ObservedObject private var engine = FoundryEngine.shared
 
     private enum Pane: String, CaseIterable, Identifiable {
         case proposals = "Proposals"
@@ -35,6 +40,8 @@ struct SelfUpgradeView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            scheduleBar
+            baselineBar
             Divider()
             switch pane {
             case .proposals: proposalsPane
@@ -87,6 +94,91 @@ struct SelfUpgradeView: View {
         .padding(.vertical, GruxSpacing.s)
     }
 
+    // MARK: - Schedule (F0)
+
+    // Whether self-upgrade is on, and which passes run by themselves. Each switch is
+    // saved in config.json and read by the governor on its next tick, so it takes effect
+    // with no relaunch while the tick runs (the times line says when it does not). Every
+    // pass is off until the person turns it on here.
+    private var scheduleBar: some View {
+        VStack(alignment: .leading, spacing: GruxSpacing.xs) {
+            Text(FoundrySchedule.line(enabled: appState.config.foundryEnabled,
+                                      schedule: appState.config.foundrySchedule))
+                .font(GruxType.caption)
+                .foregroundStyle(GruxTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            // Redrawn each minute so "within a minute" and "today" stay true.
+            TimelineView(.periodic(from: .now, by: 60)) { context in
+                Text(FoundrySchedule.timesLine(
+                    enabled: appState.config.foundryEnabled,
+                    schedule: appState.config.foundrySchedule,
+                    lastRanAt: timeline.entries.filter { $0.kind == .cycle }.map(\.date).max(),
+                    lastNightlyAt: governor.lastNightlyAt,
+                    lastDeepAt: governor.lastDeepAt,
+                    lastOpportunisticAt: governor.lastOpportunisticAt,
+                    paused: GruxUpdater.shared.isAutoLandPaused(),
+                    ticking: governor.isTicking,
+                    running: { if case .running = governor.phase { return true }; return false }(),
+                    limitClearsAt: governor.sessionLimitClearsAt(now: context.date),
+                    now: context.date))
+                    .font(GruxType.caption)
+                    .foregroundStyle(GruxTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: GruxSpacing.m) {
+                scheduleToggle("Nightly, 2 to 6 AM", \.nightly)
+                scheduleToggle("Sundays, 11 PM", \.weeklyDeep)
+                scheduleToggle("When idle on power", \.whenIdle)
+            }
+            .disabled(!appState.config.foundryEnabled)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, GruxSpacing.m)
+        .padding(.bottom, GruxSpacing.s)
+    }
+
+    // MARK: - Test baseline (F4)
+
+    // The bar every upgrade's full test run is graded against, where it came from, and
+    // the one control that sets it: a full run on this Mac's unmodified checkout.
+    private var baselineBar: some View {
+        VStack(alignment: .leading, spacing: GruxSpacing.xs) {
+            HStack(alignment: .firstTextBaseline, spacing: GruxSpacing.s) {
+                Text(RDBaselineStore.line(testBaseline.baseline, measuring: testBaseline.measuring))
+                    .font(GruxType.caption)
+                    .foregroundStyle(GruxTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: GruxSpacing.s)
+                Button(testBaseline.baseline.measuredAt == nil ? "Measure on this Mac" : "Measure again") {
+                    Task { _ = await FoundryEngine.shared.measureBaseline() }
+                }
+                .font(GruxType.caption)
+                .disabled(testBaseline.measuring || !source.available)
+            }
+            if let last = testBaseline.lastMeasurement, last.hasPrefix(RDBaselineStore.refusedPrefix) {
+                Text(String(last.prefix(400)))
+                    .font(GruxType.caption)
+                    .foregroundStyle(GruxTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, GruxSpacing.m)
+        .padding(.bottom, GruxSpacing.s)
+    }
+
+    private func scheduleToggle(_ title: String, _ pass: WritableKeyPath<FoundrySchedule, Bool>) -> some View {
+        Toggle(title, isOn: Binding(
+            get: { appState.config.foundrySchedule[keyPath: pass] },
+            set: { on in
+                appState.config.foundrySchedule[keyPath: pass] = on
+                appState.saveConfig()
+            }
+        ))
+        .toggleStyle(.checkbox)
+        .font(GruxType.caption)
+    }
+
     // MARK: - Pane 1: Proposals
 
     private var proposalsPane: some View {
@@ -94,6 +186,10 @@ struct SelfUpgradeView: View {
             if model.proposals.isEmpty {
                 proposalsEmptyState
             } else {
+                // Once a minute as well, so a disk hold clears after space is
+                // freed; the hold is read once per redraw, not once per card.
+                TimelineView(.periodic(from: .now, by: 60)) { _ in
+                let hold = engine.currentBuildHold()
                 ScrollView {
                     LazyVStack(spacing: GruxSpacing.m) {
                         // Phase C: pending install-approval cards pin to the
@@ -102,7 +198,7 @@ struct SelfUpgradeView: View {
                         ForEach(model.ranked) { card in
                             FoundryProposalCard(
                                 card: card,
-                                action: FoundryDirection.primaryAction(readiness(for: card)),
+                                action: FoundryDirection.primaryAction(readiness(for: card, hold: hold)),
                                 copied: copiedID == card.id,
                                 onPrimary: { runPrimary(for: card) },
                                 onCopyHandoff: { copyHandoff(card) },
@@ -112,6 +208,7 @@ struct SelfUpgradeView: View {
                         }
                     }
                     .padding(GruxSpacing.l)
+                }
                 }
             }
         }
@@ -127,7 +224,7 @@ struct SelfUpgradeView: View {
             : (auth == .signedOut ? "Sign in to Claude and Grux can build them with your subscription." : nil)
         return GruxEmptyState(
             icon: "hammer",
-            line: "No proposals yet. The next sense pass files them here.",
+            line: "No proposals yet. Ask Grux to look for upgrades, and what it finds lands here.",
             detail: detail,
             ctaTitle: appState.config.foundryEnabled ? "Look for upgrades now" : "Turn on self-upgrade",
             ctaAction: {
@@ -144,7 +241,7 @@ struct SelfUpgradeView: View {
 
     // Everything the card's direction depends on, measured here and decided
     // in FoundryDirection.
-    private func readiness(for card: FoundryProposalCardModel) -> FoundryBuildReadiness {
+    private func readiness(for card: FoundryProposalCardModel, hold: String?) -> FoundryBuildReadiness {
         let id = UUID(uuidString: card.id)
         return FoundryBuildReadiness(
             auth: FoundryDirection.authState(checked: account.statusChecked, liveStatus: account.liveStatus),
@@ -155,12 +252,13 @@ struct SelfUpgradeView: View {
             stage: card.stage,
             buildInFlight: id.map { FoundryEngine.shared.isBuilding($0) } ?? false,
             escalatedJobId: id.flatMap { FoundryEngine.shared.escalatedJobId(for: $0) },
-            approvalPending: id.map { pid in approvals.pending.contains(where: { $0.request.proposalId == pid }) } ?? false
+            approvalPending: id.map { pid in approvals.pending.contains(where: { $0.request.proposalId == pid }) } ?? false,
+            buildHold: hold
         )
     }
 
     private func runPrimary(for card: FoundryProposalCardModel) {
-        switch FoundryDirection.primaryAction(readiness(for: card)) {
+        switch FoundryDirection.primaryAction(readiness(for: card, hold: engine.currentBuildHold())) {
         case .build:
             build(card)
         case .enableAndBuild:
@@ -172,38 +270,23 @@ struct SelfUpgradeView: View {
                 _ = await account.signIn()
             }
         case .checkingSignIn, .noPaidPlan, .installCLI, .noSource, .inFlight,
-             .awaitingApproval, .shipped, .notPursued, .rolledBack:
+             .awaitingApproval, .shipped, .notPursued, .rolledBack, .held:
             break
         }
     }
 
-    // The real build path. Accepting a pending card fires the engine's accept
-    // hook, which starts the RDWorker rail; a card accepted earlier whose build
-    // never ran (no source at the time, a relaunch) is kicked directly. The
-    // engine is activated first because Settings says the loop takes effect
-    // on next launch, and a person who just turned it on should not wait.
+    // The real build path, FoundryEngine.startBuild, shared with
+    // ~/.grux/fire-foundry-build so a Mac nobody clicks on builds the same way.
     //
-    // The source is re-measured HERE, at the click, not only when the tab
+    // The source is re-measured there, at the click, not only when the tab
     // appeared: a checkout that moved or vanished in between would otherwise
     // leave a Build it that does nothing, forever. When it is gone the card
     // flips to its "cannot build here" row and the timeline records why, and
     // SourceCheckoutWatch flips it back the moment the checkout returns.
     private func build(_ card: FoundryProposalCardModel) {
         guard let id = UUID(uuidString: card.id) else { return }
-        guard FoundryEngine.resolveRepoRoot() != nil else {
+        if !FoundryEngine.shared.startBuild(id: id) {
             source.markMissing()
-            if let proposal = ProposalStore.shared.proposal(id: id) {
-                FoundryEngine.noteMissingSource(for: proposal)
-            }
-            return
-        }
-        FoundryEngine.shared.activate()
-        if card.status == .pending {
-            model.accept(id: card.id)
-        } else if card.stage == .accepted {
-            Task { @MainActor in
-                await FoundryEngine.shared.buildAccepted(id: id)
-            }
         }
     }
 
@@ -531,7 +614,9 @@ struct FoundryProposalCard: View {
             } else {
                 statusRow
             }
-            HStack(spacing: GruxSpacing.s) {
+            // A flow, not a row: on a 360pt pane the handoff chip and Not now
+            // do not fit side by side, and a row cut the handoff's label.
+            GruxFlow(spacing: GruxSpacing.s, rowSpacing: GruxSpacing.s) {
                 GruxChip(
                     title: copied ? "COPIED" : "COPY HANDOFF FOR YOUR AGENT",
                     systemImage: copied ? "checkmark" : "doc.on.doc",
@@ -545,7 +630,6 @@ struct FoundryProposalCard: View {
                         .accessibilityLabel("Not now")
                         .help("Dismiss this proposal. Two dismissals in a row lower the trust tier for this lane.")
                 }
-                Spacer()
             }
         }
         .padding(.top, GruxSpacing.xs)
@@ -626,6 +710,7 @@ struct FoundryProposalCard: View {
         case .shipped: return "checkmark.seal.fill"
         case .notPursued: return "xmark.circle"
         case .rolledBack: return "arrow.uturn.backward.circle.fill"
+        case .held: return "hourglass"
         }
     }
 
@@ -729,7 +814,7 @@ private struct FoundryTrustTileView: View {
         .onTapGesture {
             if !tile.history.isEmpty { showHistory.toggle() }
         }
-        .popover(isPresented: $showHistory, arrowEdge: .bottom) {
+        .gruxPopover(isPresented: $showHistory, arrowEdge: .bottom) {
             historyPopover
         }
     }

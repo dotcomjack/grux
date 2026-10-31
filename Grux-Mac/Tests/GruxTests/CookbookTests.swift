@@ -148,13 +148,22 @@ final class CookbookTests: XCTestCase {
         XCTAssertNotEqual(Cookbook.fit(of: m, in: p), .tooBig)
     }
 
+    // "Real capacity" used to mean "more than 20 GB of footprint", which is the
+    // bigger-is-better proxy D-COOKBOOK retired: the S1 eval measured gemma4:26b
+    // (19.2 GB) above every larger model on Grux's jobs. So the property is now
+    // that a big machine gets the best measured model of all, rather than one the
+    // small machines are also offered. Grux Local (2026-10-23) went further: its
+    // 4B measured above every larger model, so a 16 GB and a 128 GB Mac now share
+    // the headline, and the property is only that the big machine is not handed
+    // less than the best measured model.
     func test_headline_bigMachine_reachesForRealCapacity() {
         // Mac Studio class: 96 GB GPU budget.
         let p = makeProfile(ramGB: 128, gpuGB: 96)
         let m = try! XCTUnwrap(Cookbook.headline(for: p))
-        XCTAssertGreaterThan(m.estimatedMemoryGB, 20,
-            "a 96 GB budget was offered \(m.id) at \(m.estimatedMemoryGB) GB, which wastes the machine")
-        XCTAssertNotEqual(Cookbook.fit(of: m, in: p), .tooBig)
+        let best = Cookbook.catalog.compactMap(\.measuredQuality).max()
+        XCTAssertEqual(m.measuredQuality, best,
+            "a 96 GB budget was offered \(m.id), not the best measured model, which wastes the machine")
+        XCTAssertEqual(Cookbook.fit(of: m, in: p), .great)
     }
 
     /// The headline must never exceed the budget, at any size. This is the

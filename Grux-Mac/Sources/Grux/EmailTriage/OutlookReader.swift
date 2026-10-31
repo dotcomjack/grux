@@ -50,11 +50,11 @@ enum OutlookReader {
     // Reads up to `limit` unread messages for the given inbox. Tries the live
     // Chrome tab first; if `fixturePath` is non-nil it is used instead (and
     // takes precedence, for deterministic tests).
-    static func readUnread(inbox: SupportInbox, fixturePath: String?, limit: Int = 12) -> [InboxMessage] {
+    static func readUnread(inbox: SupportInbox, fixturePath: String?, limit: Int = 12) async -> [InboxMessage] {
         if let fixturePath, !fixturePath.isEmpty {
             return readFixture(fixturePath)
         }
-        return readLiveTab(inbox: inbox, limit: limit)
+        return await readLiveTab(inbox: inbox, limit: limit)
     }
 
     // MARK: - Fixture
@@ -73,8 +73,8 @@ enum OutlookReader {
 
     // MARK: - Live Chrome tab
 
-    private static func readLiveTab(inbox: SupportInbox, limit: Int) -> [InboxMessage] {
-        guard let tabRef = findWebmailTab(hints: inbox.webmailHostHints) else {
+    private static func readLiveTab(inbox: SupportInbox, limit: Int) async -> [InboxMessage] {
+        guard let tabRef = await findWebmailTab(hints: inbox.webmailHostHints) else {
             WakeLog.shared.log("outlookReader: no open Outlook tab found for \(inbox.rawValue)")
             return []
         }
@@ -100,7 +100,7 @@ enum OutlookReader {
           } catch (e) { return 'ERR:' + e.message; }
         })();
         """
-        let raw = executeJavaScript(js, inTabIndex: tabRef.tabIndex, windowIndex: tabRef.windowIndex)
+        let raw = await executeJavaScript(js, inTabIndex: tabRef.tabIndex, windowIndex: tabRef.windowIndex)
         guard let raw, !raw.isEmpty else {
             WakeLog.shared.log("outlookReader: execute-javascript returned empty (is 'Allow JavaScript from Apple Events' enabled in Chrome?)")
             return []
@@ -116,8 +116,8 @@ enum OutlookReader {
 
     // Walks every Chrome window/tab and returns the first whose URL matches a
     // webmail host hint. 1-based indices (AppleScript convention).
-    private static func findWebmailTab(hints: [String]) -> TabRef? {
-        guard let urls = allTabURLs() else { return nil }
+    private static func findWebmailTab(hints: [String]) async -> TabRef? {
+        guard let urls = await allTabURLs() else { return nil }
         for (wi, tabs) in urls.enumerated() {
             for (ti, url) in tabs.enumerated() {
                 let lower = url.lowercased()
@@ -134,7 +134,7 @@ enum OutlookReader {
     // AppleScript source stays free of literal control characters).
     private static let winSep = "<<GRUXWIN>>"
     private static let tabSep = "<<GRUXTAB>>"
-    private static func allTabURLs() -> [[String]]? {
+    private static func allTabURLs() async -> [[String]]? {
         let source = """
         tell application id "com.google.Chrome"
             set output to ""
@@ -149,7 +149,7 @@ enum OutlookReader {
             return output
         end tell
         """
-        guard let raw = runAppleScript(source) else { return nil }
+        guard let raw = await runAppleScript(source) else { return nil }
         if raw.isEmpty { return [] }
         let windows = raw.components(separatedBy: winSep)
         // Filter empties so a zero-tab window yields [] (not [""]) and the
@@ -158,7 +158,7 @@ enum OutlookReader {
         return windows.map { $0.components(separatedBy: tabSep).filter { !$0.isEmpty } }
     }
 
-    private static func executeJavaScript(_ js: String, inTabIndex tab: Int, windowIndex win: Int) -> String? {
+    private static func executeJavaScript(_ js: String, inTabIndex tab: Int, windowIndex win: Int) async -> String? {
         // Backslash MUST be escaped first. Then quotes. Then collapse every line
         // ending (\r\n, \r, \n) to a space so no raw control char lands inside
         // the AppleScript string literal. (The JS here is statement-terminated,
@@ -174,19 +174,18 @@ enum OutlookReader {
             return (execute tab \(tab) of window \(win) javascript "\(escaped)") as text
         end tell
         """
-        return runAppleScript(source)
+        return await runAppleScript(source)
     }
 
-    private static func runAppleScript(_ source: String) -> String? {
-        guard let script = NSAppleScript(source: source) else { return nil }
-        var err: NSDictionary?
-        let result = script.executeAndReturnError(&err)
-        if let err {
-            let msg = (err["NSAppleScriptErrorMessage"] as? String) ?? "unknown"
-            WakeLog.shared.log("outlookReader: AppleScript error \(msg)")
-            return nil
+    private static func runAppleScript(_ source: String) async -> String? {
+        let outcome = await ForeignAppScript.run(source, purpose: "OutlookReader")
+        switch outcome {
+        case .ok(let result): return result.stringValue
+        case .refused: return nil
+        case .failed(_, let message): WakeLog.shared.log("outlookReader: AppleScript error \(message)")
+        case .timedOut, .busy, .stopped, .behindLongerScript: WakeLog.shared.log("outlookReader: \(outcome.problem ?? "no answer")")
         }
-        return result.stringValue
+        return nil
     }
 
     // Parses the OWA aria/text rows into InboxMessage. aria-labels in OWA tend

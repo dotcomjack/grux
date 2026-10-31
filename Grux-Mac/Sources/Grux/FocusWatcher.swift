@@ -19,6 +19,54 @@ import AppKit
 //   - Cooldown invalidates on app/window switch - new context = fresh check.
 @MainActor
 final class FocusWatcher {
+    /// Why a tick takes no sample, first missing thing first, in the order the
+    /// tick checks. The tick and the Focus Log's empty line both ask this, so
+    /// the pane cannot promise a sample the watcher will never take (wave 8
+    /// review of D3: "the first one lands within the next check" read true
+    /// while no task was set).
+    enum Skip: Equatable, CaseIterable {
+        case screenAnalysisOff, focusOff, firstFrame, exclusions, noScreenAccess, outsideHours, snoozed, noTask, noKey
+
+        var line: String {
+            switch self {
+            case .screenAnalysisOff: return "Screen analysis is off in Settings, General."
+            case .focusOff: return "The Focus feature is turned off."
+            case .firstFrame: return "Setup has a step left: look at the first frame Grux would send."
+            case .exclusions: return "Setup has a step left: confirm which apps are never captured."
+            case .noScreenAccess: return "macOS has not allowed screen recording."
+            case .outsideHours: return "It is outside your active hours."
+            case .snoozed: return "Focus is snoozed."
+            case .noTask: return "No task is set as Now, so there is nothing to compare against."
+            case .noKey: return "Add an Anthropic API key in Settings; the Focus check uses it."
+            }
+        }
+    }
+
+    /// Each input is read only when every check before it passed, as the old
+    /// short-circuit guard did: the Keychain key and the screen preflight are
+    /// never read on a Mac that has not set Focus up (a failed Keychain read
+    /// is not cached, so reading it every tick could keep asking for it).
+    nonisolated static func skipReason(screenAnalysisEnabled: @autoclosure () -> Bool,
+                                       featureOn: @autoclosure () -> Bool,
+                                       firstFrameReviewed: @autoclosure () -> Bool,
+                                       exclusionsConfirmed: @autoclosure () -> Bool,
+                                       screenAccess: @autoclosure () -> Bool,
+                                       withinActiveHours: @autoclosure () -> Bool,
+                                       snoozed: @autoclosure () -> Bool,
+                                       hasTask: @autoclosure () -> Bool,
+                                       hasKey: @autoclosure () -> Bool) -> Skip? {
+        if !screenAnalysisEnabled() { return .screenAnalysisOff }
+        if !featureOn() { return .focusOff }
+        if !firstFrameReviewed() { return .firstFrame }
+        if !exclusionsConfirmed() { return .exclusions }
+        if !screenAccess() { return .noScreenAccess }
+        if !withinActiveHours() { return .outsideHours }
+        if snoozed() { return .snoozed }
+        if !hasTask() { return .noTask }
+        if !hasKey() { return .noKey }
+        return nil
+    }
+
     static let shared = FocusWatcher()
     private var timer: Timer?
     private var running = false
@@ -55,6 +103,8 @@ final class FocusWatcher {
         guard !running else { return }
         running = true
         AppState.shared.watching = true
+        // The last run's reason is not this run's: the first tick says anew.
+        AppState.shared.focusSkip = nil
         // ONE OWNER FOR THE OFF SWITCH, which is the whole fix.
         //
         // The menu bar read "Watching", the person clicked it, it read "Paused", and capture
@@ -169,27 +219,31 @@ final class FocusWatcher {
         // The two steps are UserDefaults reads and are what actually gate a fresh Mac. They
         // are read here rather than resolved through FeatureRegistry.state on purpose: that
         // would resolve `key.anthropic` from the Keychain on every cadence tick.
-        guard state.config.screenAnalysisEnabled,
-              FeatureSelection.isOn("focus"),
-              CapabilityResolver.isSatisfied(.stepFirstFrameReviewed),
-              CapabilityResolver.isSatisfied(.stepCaptureExclusionsConfirmed),
-              ScreenCapturer.shared.hasPermission(),
-              state.isWithinActiveHours(),
-              !state.isSnoozed(),
-              let current = state.currentTask
-        else {
+        // One gate, in this order. Its answer is published as `focusSkip`, which
+        // is what the Focus Log's empty line reads, so the pane says what this
+        // tick really did.
+        let skip = Self.skipReason(screenAnalysisEnabled: state.config.screenAnalysisEnabled,
+                                   featureOn: FeatureSelection.isOn("focus"),
+                                   firstFrameReviewed: CapabilityResolver.isSatisfied(.stepFirstFrameReviewed),
+                                   exclusionsConfirmed: CapabilityResolver.isSatisfied(.stepCaptureExclusionsConfirmed),
+                                   screenAccess: ScreenCapturer.shared.hasPermission(),
+                                   withinActiveHours: state.isWithinActiveHours(),
+                                   snoozed: state.isSnoozed(),
+                                   hasTask: state.currentTask != nil,
+                                   hasKey: !state.anthropicKey.isEmpty)
+        if state.focusSkip != skip { state.focusSkip = skip }
+        if let skip {
+            // Once per launch, not once per tick. A line every eight seconds is
+            // how a log stops being read.
+            if skip == .noKey, !Self.loggedMissingKey {
+                Self.loggedMissingKey = true
+                NSLog("[Grux] focus: no Anthropic key set, screen analysis idle until one is added in Settings.")
+            }
             state.lastTick = Date()
             scheduleNext(after: interval)
             return
         }
-
-        guard !state.anthropicKey.isEmpty else {
-            // Once per launch, not once per tick. A line every eight seconds is
-            // how a log stops being read.
-            if !Self.loggedMissingKey {
-                Self.loggedMissingKey = true
-                NSLog("[Grux] focus: no Anthropic key set, screen analysis idle until one is added in Settings.")
-            }
+        guard let current = state.currentTask else {
             state.lastTick = Date()
             scheduleNext(after: interval)
             return

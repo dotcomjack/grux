@@ -110,7 +110,7 @@ struct HowItWorksStep: View {
 
             VStack(alignment: .leading, spacing: 10) {
                 point("What stays here",
-                      "Your notes, mail, contacts and files are read on this Mac. What goes to a model is the text of what you asked and the context it needs, and the capture layer redacts before anything is sent.")
+                      "Your notes, mail, contacts and files are read on this Mac. What goes to a model is the text of what you asked and the context it needs, and the capture layer redacts before anything is sent. Once a day Grux checks GitHub's public release page for a new version; it sends nothing about you, and Settings, General turns it off.")
                 point("Most tabs need nothing",
                       "The majority of Grux works the moment it has a model key. Where a tab does need something, it says so on the tab, in place, and never as an error.")
                 point("Core and labs",

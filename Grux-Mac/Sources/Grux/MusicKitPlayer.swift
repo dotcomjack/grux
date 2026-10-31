@@ -30,6 +30,9 @@ enum MusicKitPlayer {
         return status == .authorized
     }
 
+    /// Authorized already, read without asking (no prompt).
+    static var authorizedWithoutAsking: Bool { MusicAuthorization.currentStatus == .authorized }
+
     /// Play an owned-library track by title (+ optional artist). Returns
     /// "<title> by <artist>" on success, nil on no-match / failure.
     static func playLibrary(song: String, artist: String) async -> String? {
@@ -87,6 +90,10 @@ enum MusicKitPlayer {
         out.append("currentStatus=\(cur)")
         var status = cur
         if cur != .authorized {
+            // Asking would put the permission prompt on a screen nobody is watching.
+            if let why = ForeignAppScript.refuse("MusicKitPlayer.probe") {
+                return out.joined(separator: " | ") + " | STOP: not authorized, and \(why)"
+            }
             status = await MusicAuthorization.request()
             out.append("afterRequest=\(status)")
         }

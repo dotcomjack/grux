@@ -331,14 +331,14 @@ struct FoldersManagementView: View {
             list
         }
         .onAppear(perform: refresh)
-        .sheet(item: $editing) { folder in
+        .gruxSheet(item: $editing) { folder in
             FolderEditSheet(existing: folder) { name, desc, color, icon in
                 _ = store.update(id: folder.id, name: name, description: desc, colorHex: color, icon: icon)
                 refresh()
                 showToast("Updated '\(name)'")
             }
         }
-        .sheet(isPresented: $creating) {
+        .gruxSheet(isPresented: $creating) {
             FolderEditSheet { name, desc, color, icon in
                 if let created = store.create(name: name, description: desc, colorHex: color, icon: icon) {
                     showToast("Created '\(created.name)'")

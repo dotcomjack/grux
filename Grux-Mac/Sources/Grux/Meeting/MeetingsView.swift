@@ -91,7 +91,7 @@ struct MeetingsView: View {
             }
         }
         .background(Color.black.opacity(0.05))
-        .sheet(isPresented: $creatingFolder) {
+        .gruxSheet(isPresented: $creatingFolder) {
             FolderEditSheet { name, desc, color, icon in
                 if let created = folderStore.create(name: name, description: desc, colorHex: color, icon: icon) {
                     folderSelection = .folder(created.id)
@@ -812,7 +812,7 @@ private struct SpeakerChip: View {
                 .fill(isIdentified ? Color.purple.opacity(0.18) : Color.secondary.opacity(0.12))
         )
         .foregroundStyle(isIdentified ? Color.purple : .secondary)
-        .sheet(isPresented: $showEnrollSheet) {
+        .gruxSheet(isPresented: $showEnrollSheet) {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Enroll \(label)")
                     .font(.headline)

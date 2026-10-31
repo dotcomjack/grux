@@ -35,11 +35,17 @@ struct CookbookView: View {
                 // current" belongs next to the list it is about, not at the bottom
                 // where nobody scrolls to find out they were told last year's model.
                 registryBanner
+                // Why the default is not the top of the list, when the speed
+                // check after a download kept a faster model.
+                if let note = store.state.speedNote {
+                    noticeCard(title: "Kept the faster model", body: note, tone: GruxTheme.accentPrimary)
+                }
                 if let profile {
                     // Scored ONCE per render and shared by the card, the two
                     // sections and every badge, so they cannot disagree about
                     // which budget they were talking about.
-                    let live = Cookbook.listing(for: profile, headroom: load.headroom)
+                    let live = Cookbook.listing(for: profile, headroom: load.headroom,
+                                                ollamaVersion: ollama.serverVersion)
                     hardwareCard(profile, live)
                     serverCard
                     modelList(live)
@@ -377,6 +383,20 @@ struct CookbookView: View {
             ForEach(live.fitting) { model in
                 modelRow(model, fit: live.fit(of: model))
             }
+            // D25: fits, but this Mac's Ollama is too old to run it, so no Pull.
+            if !live.needsNewerOllama.isEmpty {
+                GruxSectionLabel("NEEDS A NEWER OLLAMA")
+                    .padding(.top, GruxSpacing.xs)
+                Text(Cookbook.needsNewerOllamaNote)
+                    .font(.caption)
+                    .foregroundStyle(GruxTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                ForEach(live.needsNewerOllama) { model in
+                    modelRow(model, fit: live.fit(of: model),
+                             needsOllama: Cookbook.needsNewerOllamaLine(model, have: live.ollamaVersion))
+                        .opacity(0.55)
+                }
+            }
             if !live.tooBig.isEmpty {
                 GruxSectionLabel("TOO BIG FOR THIS MAC")
                     .padding(.top, GruxSpacing.xs)
@@ -388,27 +408,39 @@ struct CookbookView: View {
         }
     }
 
-    private func modelRow(_ model: CookbookModel, fit: ModelFit) -> some View {
+    private func modelRow(_ model: CookbookModel, fit: ModelFit, needsOllama: String? = nil) -> some View {
         let installed = ollama.isInstalled(model.id)
         let selected = state.config.offlineLLMModel == model.id
         return VStack(alignment: .leading, spacing: GruxSpacing.xs + 2) {
-            HStack(spacing: GruxSpacing.s) {
-                Text(model.displayName).font(GruxType.title)
-                Text(model.parameterLabel)
-                    .font(GruxType.mono).foregroundStyle(.secondary)
-                fitBadge(fit)
-                if model.supportsTools {
-                    Text("TOOLS")
-                        .font(GruxType.microCaps).kerning(1.0)
-                        .foregroundStyle(GruxTheme.accentCo)
-                        .padding(.horizontal, GruxSpacing.xs + 2).padding(.vertical, 2)
-                        .background(Capsule().stroke(GruxTheme.accentCo.opacity(0.5), lineWidth: 0.8))
+            // The control under the name on a narrow pane, where sharing the
+            // row cut it to "PU..." and "US...".
+            GruxTitleActions {
+                HStack(spacing: GruxSpacing.s) {
+                    Text(model.displayName).font(GruxType.title)
+                    Text(model.parameterLabel)
+                        .font(GruxType.mono).foregroundStyle(.secondary)
+                    fitBadge(fit)
+                    if model.supportsTools {
+                        Text("TOOLS")
+                            .font(GruxType.microCaps).kerning(1.0)
+                            .foregroundStyle(GruxTheme.accentCo)
+                            .padding(.horizontal, GruxSpacing.xs + 2).padding(.vertical, 2)
+                            .background(Capsule().stroke(GruxTheme.accentCo.opacity(0.5), lineWidth: 0.8))
+                    }
                 }
-                Spacer()
-                rowControls(model, fit: fit, installed: installed, selected: selected)
+            } actions: {
+                // No Pull for a model this Ollama cannot run; one already here
+                // keeps Use and Selected.
+                if needsOllama == nil || installed || selected {
+                    rowControls(model, fit: fit, installed: installed, selected: selected)
+                }
             }
             Text(model.strengths)
                 .font(.caption).foregroundStyle(.secondary)
+            if let needsOllama {
+                Text(needsOllama)
+                    .font(.caption).foregroundStyle(GruxTheme.warnAmber)
+            }
             HStack(spacing: GruxSpacing.l) {
                 statChip("Tag", model.id)
                 statChip("Disk", String(format: "%.1f GB", model.diskGB))

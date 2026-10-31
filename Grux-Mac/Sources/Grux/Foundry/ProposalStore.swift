@@ -130,6 +130,17 @@ final class ProposalStore: ObservableObject {
         return proposals[idx]
     }
 
+    // The person said no: rejected, and remembered as theirs, also when
+    // Grux had already rejected it (a refused install after a failed run).
+    @discardableResult
+    func decline(id: UUID) -> UpgradeProposal? {
+        guard let idx = proposals.firstIndex(where: { $0.id == id }) else { return nil }
+        guard proposals[idx].status == .rejected || transition(id: id, to: .rejected) != nil else { return nil }
+        proposals[idx].declinedByPerson = true
+        scheduleSave()
+        return proposals[idx]
+    }
+
     // MARK: - Ranking
 
     // Ranked proposal book: expected gain descending, then risk

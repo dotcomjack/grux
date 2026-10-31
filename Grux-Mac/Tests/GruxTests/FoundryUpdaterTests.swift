@@ -183,11 +183,13 @@ final class FoundryUpdaterTests: XCTestCase {
     func testSelfInstallArchivesArmsWatchAndSpawnsRunner() throws {
         let updater = makeUpdater()
         let proposal = fileVerifyingProposal()
-        // Stage a build.sh in the fake worktree.
+        // Stage build.sh where a real checkout keeps it: the worktree is the
+        // repo root, and build.sh lives in its Grux-Mac package.
         let worktree = root.appendingPathComponent("worktree", isDirectory: true)
         try FileManager.default.createDirectory(at: worktree, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: worktree.appendingPathComponent("Grux-Mac"), withIntermediateDirectories: true)
         try "#!/bin/bash\nexit 0\n".data(using: .utf8)!
-            .write(to: worktree.appendingPathComponent("build.sh"))
+            .write(to: worktree.appendingPathComponent("Grux-Mac/build.sh"))
 
         var spawned: URL?
         var spawnedArgs: [String]?
@@ -216,8 +218,9 @@ final class FoundryUpdaterTests: XCTestCase {
         let updater = makeUpdater()
         let worktree = root.appendingPathComponent("worktree", isDirectory: true)
         try FileManager.default.createDirectory(at: worktree, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: worktree.appendingPathComponent("Grux-Mac"), withIntermediateDirectories: true)
         try "#!/bin/bash\nexit 0\n".data(using: .utf8)!
-            .write(to: worktree.appendingPathComponent("build.sh"))
+            .write(to: worktree.appendingPathComponent("Grux-Mac/build.sh"))
         updater.installRunner = { _, _ in }
 
         let a = fileVerifyingProposal()
@@ -241,6 +244,30 @@ final class FoundryUpdaterTests: XCTestCase {
         XCTAssertEqual(updater.archiveSlots().count, archivesAfterA,
                        "the unproven build was never archived as a rollback target")
         XCTAssertNotEqual(proposalStore.proposal(id: b.id)?.status, .landed)
+    }
+
+    // The worktree is the repo root and build.sh lives in Grux-Mac. A build.sh
+    // at the root is not the one a checkout builds with (and a worker could
+    // add one), so it never counts.
+    func testSelfInstallIgnoresABuildScriptAtTheWorktreeRoot() throws {
+        let updater = makeUpdater()
+        let proposal = fileVerifyingProposal()
+        let worktree = root.appendingPathComponent("worktree-root-script", isDirectory: true)
+        try FileManager.default.createDirectory(at: worktree, withIntermediateDirectories: true)
+        try "#!/bin/bash\nexit 0\n".data(using: .utf8)!.write(to: worktree.appendingPathComponent("build.sh"))
+        var ran = false
+        updater.installRunner = { _, _ in ran = true }
+        XCTAssertThrowsError(try updater.selfInstall(fromWorktree: worktree, proposal: proposal, alreadyVerifiedGreen: true)) { error in
+            guard case GruxUpdaterError.buildScriptMissing(let path) = error else {
+                return XCTFail("expected buildScriptMissing, got \(error)")
+            }
+            XCTAssertTrue(path.hasSuffix("Grux-Mac/build.sh"), path)
+        }
+        XCTAssertFalse(ran)
+    }
+
+    func testTheInstallScriptBuildsFromTheGruxMacPackage() {
+        XCTAssertTrue(GruxUpdater.installScriptTemplate.contains("cd \"$WORKTREE/Grux-Mac\" || revert"))
     }
 
     func testSelfInstallThrowsWhenBuildScriptMissing() {

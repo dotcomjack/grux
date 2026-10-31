@@ -31,12 +31,15 @@ final class FoundryEngine: ObservableObject {
     // Escalated swarm jobs in flight: AgentJob id -> proposal id. Terminal
     // job states route back onto the verify rail via the lifecycle
     // notification AgentService posts.
-    private(set) var escalatedJobs: [String: UUID] = [:]
+    // Published, with `building`, so Self-Upgrade's cards redraw the moment a
+    // build leaves the rail (wave 13 round 2: "Waiting to build" outlived it).
+    @Published private(set) var escalatedJobs: [String: UUID] = [:]
     // Proposals currently on the rail; guards double-kicks from a cycle
     // overlapping a manual Accept.
-    private var building: Set<UUID> = []
+    @Published private var building: Set<UUID> = []
     private var activated = false
     private var lifecycleObserver: NSObjectProtocol?
+    private var jobsWatch: AnyCancellable?
 
     // MARK: - Persisted engine state
 
@@ -93,13 +96,18 @@ final class FoundryEngine: ObservableObject {
         return validatedCheckout(at: source.path)
     }
 
+    // Accepts the repo root or its Grux-Mac package folder: build.sh runs
+    // from Grux-Mac and records that folder, so the root is one level up.
     nonisolated static func validatedCheckout(at path: String) -> URL? {
         let fm = FileManager.default
-        let root = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
-        guard fm.fileExists(atPath: root.appendingPathComponent("Grux-Mac/Package.swift").path),
-              fm.fileExists(atPath: root.appendingPathComponent(".git").path)
-        else { return nil }
-        return root
+        let given = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
+        let candidates = given.lastPathComponent == "Grux-Mac"
+            ? [given.deletingLastPathComponent(), given]
+            : [given]
+        return candidates.first { root in
+            fm.fileExists(atPath: root.appendingPathComponent("Grux-Mac/Package.swift").path)
+                && fm.fileExists(atPath: root.appendingPathComponent(".git").path)
+        }
     }
 
     // MARK: - Activation (GruxApp launch path)
@@ -145,6 +153,22 @@ final class FoundryEngine: ObservableObject {
                 }
             }
         }
+        // A job that ended while Grux was not running posts no notification
+        // (restore marks an orphan failed and saves it), so the job list is
+        // watched too: any escalation whose job is seen ended is routed the
+        // same way. escalatedJobChanged drops the entry first, so a job seen
+        // both ways routes once.
+        if jobsWatch == nil {
+            jobsWatch = AgentService.shared.$jobs.sink { [weak self] jobs in
+                let statuses = Dictionary(jobs.map { ($0.id, $0.status) }, uniquingKeysWith: { a, _ in a })
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    for settled in Self.settledEscalations(self.escalatedJobs, jobs: statuses) {
+                        await self.escalatedJobChanged(jobId: settled.jobId, statusRaw: settled.status)
+                    }
+                }
+            }
+        }
 
         // Approval -> install. The worktree resolves from the handle the
         // build pass recorded; a missing handle parks the proposal and logs.
@@ -176,6 +200,13 @@ final class FoundryEngine: ObservableObject {
     // Kicks a manual cycle through the governor (which still honors the
     // session-limit yield and the one-cycle-at-a-time rule) and returns a
     // status line the chat tool can speak back.
+    // "Grux, upgrade yourself" with self-upgrade off used to answer
+    // "started" while nothing ran: the engine is only activated when the
+    // setting is on, so the governor had no cycle to run. Say so instead.
+    nonisolated static func manualCycleRefusal(foundryEnabled: Bool) -> String? {
+        foundryEnabled ? nil : "not started: self-upgrade is off. Turn it on in Self-Upgrade (or Settings), then ask again."
+    }
+
     func triggerManualCycle() -> String {
         switch FoundryGovernor.shared.phase {
         case .running(let pass):
@@ -201,12 +232,20 @@ final class FoundryEngine: ObservableObject {
 
         // Sense: refresh the signal book, then synthesize proposals from it.
         let report = await SignalHarvester.standard().harvest()
+        // Synthesize: this pass's signals become proposals on the pane.
+        let filed = SignalProposalFiler.file(from: report.signals, into: .shared)
+        for proposal in filed {
+            FoundryViewBridge.mirror(action: .proposed, proposal: proposal,
+                                     detail: proposal.evidence.first?.display ?? proposal.estCostLabel)
+        }
         FoundryTimelineStore.shared.append(FoundryTimelineEntry(
             kind: .cycle,
             title: "\(pass.displayName) ran",
-            detail: "Harvested \(report.signals.count) signal\(report.signals.count == 1 ? "" : "s")"
-                + (report.sourceErrors.isEmpty ? "." : "; \(report.sourceErrors.count) source error(s).")
+            detail: SignalProposalFiler.cycleDetail(signals: report.signals.count,
+                                                    sourceErrors: report.sourceErrors.count,
+                                                    filed: filed.count)
         ))
+        WakeLog.shared.log("foundry: \(pass.rawValue) cycle harvested \(report.signals.count) signal(s), filed \(filed.count) proposal(s)")
 
         // Synthesize: the signals become proposals. Before 2026-10-30 this
         // stage did not exist and the harvest above went nowhere.
@@ -234,6 +273,12 @@ final class FoundryEngine: ObservableObject {
             // filing new builds immediately.
             if case .yielded(let reason) = FoundryGovernor.shared.phase {
                 WakeLog.shared.log("foundry: cycle standing down (\(reason))")
+                break
+            }
+            // One build at a time: an escalated build is still running when
+            // buildAndVerify returns, so the rest wait for the next pass.
+            if let hold = currentBuildHold() {
+                WakeLog.shared.log("foundry: cycle standing down (\(hold))")
                 break
             }
             await buildAndVerify(proposal)
@@ -274,10 +319,142 @@ final class FoundryEngine: ObservableObject {
         await buildAndVerify(proposal)
     }
 
+    // MARK: - Build it, without a click
+
+    /// What ~/.grux/fire-foundry-build asks for: a build of one proposal, or a
+    /// refusal that says why in a line wake.log can carry.
+    enum BuildRequest: Equatable {
+        case build(UUID)
+        case refuse(String)
+    }
+
+    /// The shortest id start the trigger accepts, so a stray character never builds.
+    nonisolated static let buildTokenMinimum = 4
+
+    /// Decides from plain values, in the order a person would have to clear them:
+    /// self-upgrade on, a usable name, exactly one proposal, one with a build still
+    /// to run and not already on the rail. Never guesses between two proposals.
+    nonisolated static func resolveBuildRequest(
+        token: String, proposals: [UpgradeProposal], foundryEnabled: Bool, inFlight: Set<UUID>,
+        baselineMeasuring: Bool = false, hold: String? = nil
+    ) -> BuildRequest {
+        guard foundryEnabled else {
+            return .refuse("not building: self-upgrade is off. Turn it on in Self-Upgrade (or Settings), then ask again.")
+        }
+        guard !baselineMeasuring else {
+            return .refuse("not building: the test baseline is being measured on this Mac. Ask again when it finishes.")
+        }
+        let name = token.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard name.count >= buildTokenMinimum else {
+            return .refuse("not building: name a proposal by its id (the first 8 characters are enough).")
+        }
+        let matches = proposals.filter { $0.id.uuidString.hasPrefix(name) }
+        guard let proposal = matches.first else {
+            return .refuse("not building: no proposal id starts with \(name).")
+        }
+        guard matches.count == 1 else {
+            return .refuse("not building: \(matches.count) proposals start with \(name); give more of the id.")
+        }
+        guard !inFlight.contains(proposal.id) else {
+            return .refuse("not building: '\(proposal.title)' is already building.")
+        }
+        switch proposal.status {
+        case .proposed, .accepted:
+            // Refused before anything is accepted, so nothing waits for a pass.
+            if let hold { return .refuse(hold + " Ask again later.") }
+            return .build(proposal.id)
+        case .building, .verifying, .landed, .rejected, .rolledBack:
+            return .refuse("not building: '\(proposal.title)' is \(proposal.status.displayName), with no build left to run.")
+        }
+    }
+
+    /// ~/.grux/fire-foundry-build: Build it for a Mac nobody can click on.
+    /// Returns the line wake.log records.
+    func buildRequested(token: String) -> String {
+        let request = Self.resolveBuildRequest(
+            token: token,
+            proposals: ProposalStore.shared.proposals,
+            foundryEnabled: AppState.shared.config.foundryEnabled,
+            inFlight: Self.inFlightProposals(building: building, escalated: escalatedJobs),
+            baselineMeasuring: RDBaselineStore.shared.measuring,
+            hold: currentBuildHold()
+        )
+        switch request {
+        case .refuse(let why):
+            return why
+        case .build(let id):
+            let title = ProposalStore.shared.proposal(id: id)?.title ?? id.uuidString
+            return startBuild(id: id)
+                ? "building '\(title)'"
+                : "not building '\(title)': no source checkout on this Mac."
+        }
+    }
+
+    /// The one path Build it takes, from the Self-Upgrade card and from
+    /// ~/.grux/fire-foundry-build. A proposed card is accepted, whose hook
+    /// starts the RDWorker rail; one accepted earlier whose build never ran (no
+    /// source at the time, a relaunch) is kicked directly. The engine is
+    /// activated first because Settings says the loop takes effect on next
+    /// launch, and a person who just turned it on should not wait. False when
+    /// there is no source checkout; the timeline then says so.
+    @discardableResult
+    func startBuild(id: UUID) -> Bool {
+        guard Self.resolveRepoRoot() != nil else {
+            if let proposal = ProposalStore.shared.proposal(id: id) {
+                Self.noteMissingSource(for: proposal)
+            }
+            return false
+        }
+        // The card shows the hold in place of Build it; a tap that raced it is
+        // not accepted into a build that cannot run (wave 13 review).
+        if let hold = currentBuildHold() {
+            WakeLog.shared.log("foundry: Build it: \(hold)")
+            return true
+        }
+        activate()
+        switch ProposalStore.shared.proposal(id: id)?.status {
+        case .proposed:
+            FoundryDashboardModel.shared.accept(id: id.uuidString)
+        case .accepted:
+            Task { @MainActor [weak self] in await self?.buildAccepted(id: id) }
+        default:
+            break
+        }
+        return true
+    }
+
+    // MARK: - Test baseline (F4)
+
+    /// Measures this Mac's test baseline on the source checkout itself: the bar every
+    /// upgrade's full-suite gate is graded against. Self-Upgrade's Measure on this Mac
+    /// and ~/.grux/fire-foundry-measure-baseline call it. Never while an upgrade is on
+    /// the build rail, and no build starts while it runs: one suite at a time per Mac.
+    func measureBaseline() async -> String {
+        guard let repoRoot = Self.resolveRepoRoot() else {
+            return RDBaselineStore.shared.refuse("Grux cannot find its source checkout on this Mac.")
+        }
+        return await RDBaselineStore.shared.measure(
+            repoRoot: repoRoot,
+            suite: AppState.shared.config.foundrySuiteCommand ?? .swiftTest,
+            canMeasure: { [building, escalatedJobs] in
+                Self.canMeasureBaseline(building: building,
+                                        escalatedJobs: Self.liveEscalations(escalatedJobs, jobs: Self.agentJobStatuses()))
+            }
+        )
+    }
+
     // MARK: - Build rail (RDWorker -> RDVerifier -> approval/install)
 
     func buildAndVerify(_ proposal: UpgradeProposal) async {
         guard !building.contains(proposal.id) else { return }
+        if let hold = currentBuildHold() {
+            WakeLog.shared.log("foundry: '\(proposal.title)' \(hold) It stays accepted for the next pass.")
+            return
+        }
+        guard !RDBaselineStore.shared.measuring else {
+            WakeLog.shared.log("foundry: not building '\(proposal.title)' while the test baseline is being measured; it stays accepted for the next pass")
+            return
+        }
         guard let repoRoot = Self.resolveRepoRoot() else {
             WakeLog.shared.log("foundry: no repo root found (set GRUX_REPO_ROOT); skipping build of '\(proposal.title)'")
             Self.noteMissingSource(for: proposal)
@@ -338,18 +515,20 @@ final class FoundryEngine: ObservableObject {
     // legal escape from .building / .verifying) and drop the dead handle.
     func reconcileStaleHandles() async {
         let fm = FileManager.default
-        for (id, handle) in handles {
-            guard !fm.fileExists(atPath: handle.worktreePath) else { continue }
+        let stranded = Self.strandedProposals(
+            proposals: ProposalStore.shared.proposals,
+            handles: handles,
+            escalated: escalatedJobs,
+            inFlight: building,
+            worktreeExists: { fm.fileExists(atPath: $0) }
+        )
+        for (id, handle) in handles where !fm.fileExists(atPath: handle.worktreePath) {
             handles.removeValue(forKey: id)
-            persistEngineState()
-            guard let proposal = ProposalStore.shared.proposal(id: id),
-                  proposal.status == .building || proposal.status == .verifying else { continue }
+        }
+        persistEngineState()
+        for (id, reason) in stranded {
             if let updated = ProposalStore.shared.transition(id: id, to: .rejected) {
-                FoundryViewBridge.mirror(
-                    action: .rejected,
-                    proposal: updated,
-                    detail: "Worktree no longer on disk (run interrupted or checkout removed). Re-file to retry."
-                )
+                FoundryViewBridge.mirror(action: .rejected, proposal: updated, detail: reason)
             }
         }
 
@@ -357,11 +536,13 @@ final class FoundryEngine: ObservableObject {
         // no escalated job and no build in this process: nothing is running for
         // it and nothing ever will. Measured 2026-10-30: 13 proposals had sat in
         // .building since 2026-06-12, each card reading "building" for months.
-        let stranded = Self.strandedProposalIDs(
+        // (release/3.2: the pass above already rejects these with its own
+        // reason, so this one finds nothing new; kept as the second net.)
+        let untracked = Self.strandedProposalIDs(
             ProposalStore.shared.proposals,
             tracked: Set(handles.keys).union(escalatedJobs.values).union(building)
         )
-        for id in stranded {
+        for id in untracked {
             if let updated = ProposalStore.shared.transition(id: id, to: .rejected) {
                 FoundryViewBridge.mirror(
                     action: .rejected,
@@ -380,6 +561,30 @@ final class FoundryEngine: ObservableObject {
             .map(\.id)
     }
 
+    // A proposal mid build or verify that nothing can ever finish: its
+    // worktree is gone, or no handle was ever recorded for it (a run cut off
+    // before the build pass returned, or engine state from another Mac).
+    // Without the second case such a proposal read Building forever.
+    // A build on the rail now or owned by a swarm job is never stranded.
+    nonisolated static func strandedProposals(
+        proposals: [UpgradeProposal],
+        handles: [UUID: RDRunHandle],
+        escalated: [String: UUID],
+        inFlight: Set<UUID>,
+        worktreeExists: (String) -> Bool
+    ) -> [(id: UUID, reason: String)] {
+        let owned = Set(escalated.values)
+        return proposals.compactMap { p in
+            guard p.status == .building || p.status == .verifying,
+                  !inFlight.contains(p.id), !owned.contains(p.id) else { return nil }
+            guard let handle = handles[p.id] else {
+                return (p.id, "Build was cut off before Grux recorded where it was working, so it can never finish. The next self-upgrade pass files it again if the problem is still there.")
+            }
+            guard !worktreeExists(handle.worktreePath) else { return nil }
+            return (p.id, "Worktree no longer on disk (run interrupted or checkout removed). The next self-upgrade pass files it again if the problem is still there.")
+        }
+    }
+
     private func rejectStrandedBuild(proposal: UpgradeProposal, detail: String) async {
         if let updated = ProposalStore.shared.transition(id: proposal.id, to: .rejected) {
             FoundryViewBridge.mirror(action: .rejected, proposal: updated, detail: detail)
@@ -392,9 +597,31 @@ final class FoundryEngine: ObservableObject {
 
     // Shared verify pipeline: headless successes come here directly, and
     // escalated swarm jobs come here when their AgentJob reaches .done.
+    // Records protected paths (which pins the proposal, one way) and, when the
+    // change may not go on, rejects it with the reason. True when refused.
+    private func refuseBuiltChange(_ change: BuiltChange, proposalId: UUID, branch: String) -> Bool {
+        if case .protected(let paths) = change {
+            ProposalStore.shared.update(id: proposalId, touchedPaths: paths)
+        }
+        guard let refusal = Self.builtChangeRefusal(change, branch: branch) else { return false }
+        let title = ProposalStore.shared.proposal(id: proposalId)?.title ?? proposalId.uuidString
+        WakeLog.shared.log("foundry: '\(title)': \(refusal)")
+        if let updated = ProposalStore.shared.transition(id: proposalId, to: .rejected) {
+            FoundryViewBridge.mirror(action: .rejected, proposal: updated, detail: refusal)
+        }
+        return true
+    }
+
     private func verifyAndRoute(proposal: UpgradeProposal, handle: RDRunHandle) async {
+        // One suite at a time: a swarm job that finished while the baseline is
+        // being measured waits for the measure before running its full suite.
+        while RDBaselineStore.shared.measuring {
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+        }
         let verifier = RDVerifier.standard(
             baseline: RDBaselineStore.shared.baseline,
+            suite: AppState.shared.config.foundrySuiteCommand ?? .swiftTest,
+            suiteProblem: AppState.shared.config.foundrySuiteCommandProblem,
             baseRef: handle.baseRef ?? "main"
         )
         let report = await verifier.verify(
@@ -403,6 +630,15 @@ final class FoundryEngine: ObservableObject {
         )
         RDVerifier.attach(report, proposalStore: .shared, verificationStore: .shared)
         if report.passed {
+            // Grade what the build changed before it can reach approval or
+            // auto-land. Recording protected paths pins the proposal (one way),
+            // so every later rail sees it as protected too.
+            let change = await Self.readBuiltChange(
+                worktree: URL(fileURLWithPath: handle.worktreePath),
+                baseRef: handle.baseRef ?? "main",
+                runner: RDLiveProcessRunner()
+            )
+            if refuseBuiltChange(change, proposalId: proposal.id, branch: handle.branch) { return }
             routePassedVerify(proposalId: proposal.id)
         } else {
             // Failed verify: reject, demote-track via the ledger, keep
@@ -419,6 +655,19 @@ final class FoundryEngine: ObservableObject {
     }
 
     // MARK: - Escalated swarm jobs (terminal-state routing)
+
+    /// What Self-Upgrade's timeline says when an escalated build ends without a build to
+    /// verify. An expired Claude sign-in says so and what to do; any other failure keeps
+    /// the job's own words (D26: it used to say only "ended failed; nothing to verify").
+    nonisolated static func escalationFailureReason(job: AgentJob?, jobId: String, statusRaw: String) -> String {
+        if let job, job.failedOnSignIn {
+            return "The build could not start: Claude's sign-in on this Mac has expired. Sign in again (Claude sign-in, at the top of Now), then build it again."
+        }
+        var words = (job?.errorMessage ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        while words.hasSuffix(".") { words.removeLast() }
+        guard !words.isEmpty else { return "Escalated swarm job \(jobId) ended \(statusRaw); nothing to verify." }
+        return "Escalated swarm job \(jobId) ended \(statusRaw): \(words). Nothing to verify."
+    }
 
     func escalatedJobChanged(jobId: String, statusRaw: String) async {
         guard let proposalId = escalatedJobs[jobId],
@@ -447,6 +696,9 @@ final class FoundryEngine: ObservableObject {
             }
             ProposalStore.shared.transition(id: proposalId, to: .verifying)
             WakeLog.shared.log("foundry: swarm job \(jobId) done; verifying '\(proposal.title)'")
+            // On the rail for the verify, so no baseline measure starts under it.
+            building.insert(proposalId)
+            defer { building.remove(proposalId) }
             await verifyAndRoute(proposal: proposal, handle: handle)
         case .failed, .cancelled:
             escalatedJobs.removeValue(forKey: jobId)
@@ -455,7 +707,9 @@ final class FoundryEngine: ObservableObject {
                 FoundryViewBridge.mirror(
                     action: .rejected,
                     proposal: updated,
-                    detail: "Escalated swarm job \(jobId) ended \(statusRaw); nothing to verify."
+                    detail: Self.escalationFailureReason(
+                        job: AgentService.shared.jobs.first(where: { $0.id == jobId }),
+                        jobId: jobId, statusRaw: statusRaw)
                 )
             }
             // Nothing verified landed on the branch: abandon removes the
@@ -497,6 +751,241 @@ final class FoundryEngine: ObservableObject {
     // (lane, domain) pair has actually climbed the ladder, and a mid-build
     // demotion (rollback / two rejections) routes the proposal back to a
     // manual approval card instead of honoring the frozen field.
+    static func agentJobStatuses() -> [String: AgentJob.Status] {
+        Dictionary(AgentService.shared.jobs.map { ($0.id, $0.status) }, uniquingKeysWith: { a, _ in a })
+    }
+
+    /// F5: a build needs this much free space (a worktree, a release build and a
+    /// full suite). Decimal GB, the unit Finder shows, so the line below never
+    /// says "3.9 GB free" of a disk Finder calls 4.2 GB (wave 13 review).
+    nonisolated static let minimumFreeBytesToBuild: Int64 = 4 * 1_000_000_000
+
+    /// F5: why no new build may start now, or nil. One Foundry build at a time
+    /// per Mac: none while one is on the rail (building or verifying) or an
+    /// escalated swarm job is alive, and none on a nearly full disk. A free
+    /// space that cannot be read holds too.
+    nonisolated static func buildHold(building: Set<UUID>, liveEscalations: [String: UUID],
+                                      freeBytes: Int64?) -> String? {
+        if !building.isEmpty || !liveEscalations.isEmpty {
+            return "not building: another upgrade is building, and one builds at a time on this Mac."
+        }
+        guard let freeBytes else {
+            return "not building: Grux could not read how much disk space is free."
+        }
+        guard freeBytes >= minimumFreeBytesToBuild else {
+            // Rounded down, so a Mac just under the floor never reads "4.0 GB free".
+            let free = (Double(freeBytes) / 1_000_000_000 * 10).rounded(.down) / 10
+            let need = minimumFreeBytesToBuild / 1_000_000_000
+            return "not building: this Mac has \(String(format: "%.1f", free)) GB free and a build needs \(need) GB."
+        }
+        return nil
+    }
+
+    /// The hold for this Mac now, read from the rail, the swarm jobs and the
+    /// volume the source checkout (and its sibling worktrees) live on.
+    func currentBuildHold() -> String? {
+        let volume = Self.resolveRepoRoot() ?? URL(fileURLWithPath: NSHomeDirectory())
+        return Self.buildHold(building: building,
+                              liveEscalations: Self.holdingEscalations(escalatedJobs, jobs: Self.agentJobStatuses(),
+                                                                       routing: activated),
+                              freeBytes: OllamaDiskCheck.availableCapacityBytes(at: volume))
+    }
+
+    /// One suite at a time per Mac: no measuring while a build is on the rail
+    /// or an escalated swarm job may reach its verify (which runs the full suite).
+    nonisolated static func canMeasureBaseline(building: Set<UUID>, escalatedJobs: [String: UUID]) -> Bool {
+        building.isEmpty && escalatedJobs.isEmpty
+    }
+
+    /// The escalations whose swarm job is still alive (queued, running,
+    /// waiting or paused). One that ended while Grux was not running, or whose
+    /// job is gone, holds nothing.
+    /// The escalations that hold the rail: every one whose job the store still
+    /// has, ended or not. One that just ended is still being routed (its
+    /// verify runs the full suite), and escalatedJobChanged drops the entry
+    /// once it is. A job the store no longer has holds nothing, so a lost job
+    /// never blocks builds for good (wave 13 review).
+    nonisolated static func holdingEscalations(_ escalated: [String: UUID], jobs: [String: AgentJob.Status],
+                                               routing: Bool) -> [String: UUID] {
+        // An ended job holds only while an activated engine will route it;
+        // with self-upgrade off nothing ever would (wave 13 round 2).
+        escalated.filter { jobId, _ in
+            guard let status = jobs[jobId] else { return false }
+            return !status.isTerminal || routing
+        }
+    }
+
+    /// Proposals with a build under way: on the rail, or owned by a swarm job.
+    nonisolated static func inFlightProposals(building: Set<UUID>, escalated: [String: UUID]) -> Set<UUID> {
+        building.union(escalated.values)
+    }
+
+    nonisolated static func liveEscalations(_ escalated: [String: UUID], jobs: [String: AgentJob.Status]) -> [String: UUID] {
+        escalated.filter { jobId, _ in jobs[jobId].map { !$0.isTerminal } ?? false }
+    }
+
+    /// Escalations whose job is known to have ended, with its status, for the
+    /// same routing a lifecycle notification gets. App restore marks an orphan
+    /// failed without posting one, so without this its proposal never settles.
+    nonisolated static func settledEscalations(_ escalated: [String: UUID], jobs: [String: AgentJob.Status]) -> [(jobId: String, status: String)] {
+        escalated.keys.sorted().compactMap { jobId in
+            guard let status = jobs[jobId], status.isTerminal else { return nil }
+            return (jobId, status.rawValue)
+        }
+    }
+
+    // MARK: - What the build changed (graded before any route)
+
+    /// Every path a verified build changed, graded with the protected-zone rule.
+    /// The proposal was graded before the build; this grades what the worker
+    /// actually wrote, which is what lands.
+    enum BuiltChange: Equatable {
+        /// Clear of every protected zone; every changed path, sorted.
+        case clear([String])
+        /// The protected paths among the changes, sorted.
+        case protected([String])
+        /// The change could not be read, so it cannot be graded.
+        case unreadable(String)
+    }
+
+    /// Every file that differs from the recorded base commit (the fork point,
+    /// or "main" for a handle that predates it), read from the files
+    /// themselves: each file on disk that git tracks, would add, or ignores
+    /// under Sources (SwiftPM compiles those too) is hashed with no filters and
+    /// compared to the base commit's blob, and a base file missing from disk is
+    /// a deletion. Install builds the worktree as it stands, so this is what
+    /// ships, and nothing the worker can set in git (index flags, a clean
+    /// filter, an fsmonitor, a stat that did not move) hides an edit. Any git
+    /// failure is unreadable, never clear.
+    nonisolated static func readBuiltChange(worktree: URL, baseRef: String, runner: any RDProcessRunning) async -> BuiltChange {
+        // The work tree is named here, not read from config: core.worktree (in a
+        // linked worktree, config.worktree, both in the shared .git) would point
+        // every listing at another folder and hide what the worker added.
+        func git(_ args: [String], stdin: String? = nil) async -> RDProcessOutput {
+            await runner.run(executable: "git",
+                             arguments: ["--work-tree=\(worktree.path)",
+                                         "-c", "core.quotePath=false", "-c", "core.fsmonitor=false"] + args,
+                             currentDirectory: worktree, stdin: stdin, timeoutSeconds: 120)
+        }
+        func records(_ out: RDProcessOutput) -> [String] {
+            out.stdout.split(separator: "\0", omittingEmptySubsequences: true).map(String.init)
+        }
+        // The base commit's files: "<mode> <type> <sha>\t<path>" per record.
+        let tree = await git(["ls-tree", "-r", "-z", "--full-tree", baseRef])
+        guard tree.exitCode == 0 else {
+            return .unreadable("git ls-tree \(baseRef) exited \(tree.exitCode): \(tree.stderr.prefix(300))")
+        }
+        var base: [String: (mode: String, sha: String)] = [:]
+        for record in records(tree) {
+            guard let tab = record.firstIndex(of: "\t") else { continue }
+            let meta = record[..<tab].split(separator: " ")
+            guard meta.count == 3, meta[1] == "blob" else { continue }
+            base[String(record[record.index(after: tab)...])] = (String(meta[0]), String(meta[2]))
+        }
+        let known = await git(["ls-files", "-z", "--cached", "--others", "--exclude-standard"])
+        guard known.exitCode == 0 else {
+            return .unreadable("git ls-files exited \(known.exitCode): \(known.stderr.prefix(300))")
+        }
+        // Every ignored file in the package but .build: an ignore rule anywhere
+        // (a .gitignore, info/exclude, core.excludesFile) hides nothing build.sh
+        // or SwiftPM reads. .build is not graded because none of it ships: the
+        // install build deletes it first (verifyBuildsGreen), so the worker's
+        // dependency checkouts and build products are never what is built.
+        let ignored = await git(["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--",
+                                 "Grux-Mac", ":(exclude)Grux-Mac/.build"])
+        guard ignored.exitCode == 0 else {
+            return .unreadable("git ls-files --ignored exited \(ignored.exitCode): \(ignored.stderr.prefix(300))")
+        }
+        // git lists a nested repository (SwiftPM's .build/checkouts/<dep>/) even
+        // under the excluded .build, so .build is dropped here too.
+        let candidates = Set(base.keys)
+            .union(records(known))
+            .union(records(ignored).filter { !isFinderOrEditorLitter($0) && !$0.hasPrefix("Grux-Mac/.build/") })
+
+        let fm = FileManager.default
+        let root = worktree.resolvingSymlinksInPath().standardizedFileURL.path
+        var changed: Set<String> = []
+        var toHash: [String] = []
+        for path in candidates {
+            let onDisk = worktree.appendingPathComponent(path).path
+            // A folder on the way that is a link moves what is under it out of
+            // the graded tree, so nothing under it can be graded.
+            let parent = worktree.appendingPathComponent(path).deletingLastPathComponent()
+            let expected = (root as NSString).appendingPathComponent((path as NSString).deletingLastPathComponent)
+            if fm.fileExists(atPath: parent.path),
+               parent.resolvingSymlinksInPath().standardizedFileURL.path != (expected as NSString).standardizingPath {
+                return .unreadable("a folder on the way to \(path) is a link, so what is under it is outside the graded tree")
+            }
+            let type = (try? fm.attributesOfItem(atPath: onDisk))?[.type] as? FileAttributeType
+            guard let type else {
+                if base[path] != nil { changed.insert(path) }   // deleted
+                continue
+            }
+            guard let was = base[path] else {
+                // A new link can point anywhere, so what it adds cannot be graded.
+                if type == .typeSymbolicLink {
+                    return .unreadable("\(path) is a new link")
+                }
+                changed.insert(path)   // added
+                continue
+            }
+            if type == .typeSymbolicLink || was.mode == "120000" {
+                // A link is its target text, not the file it points at.
+                let target = try? fm.destinationOfSymbolicLink(atPath: onDisk)
+                let wasTarget = await git(["cat-file", "blob", was.sha])
+                if type != .typeSymbolicLink || was.mode != "120000" || wasTarget.exitCode != 0 || target != wasTarget.stdout {
+                    changed.insert(path)
+                }
+                continue
+            }
+            guard type == .typeRegular else { changed.insert(path); continue }
+            // The executable bit is part of what git records, and of what ships.
+            let executable = fm.isExecutableFile(atPath: onDisk)
+            if executable != (was.mode == "100755") { changed.insert(path); continue }
+            toHash.append(path)
+        }
+        if toHash.contains(where: { $0.contains("\n") }) {
+            return .unreadable("a file name holds a line break, so it cannot be hashed by path")
+        }
+        if !toHash.isEmpty {
+            let hashed = await git(["hash-object", "--no-filters", "--stdin-paths"], stdin: toHash.joined(separator: "\n") + "\n")
+            let shas = hashed.stdout.split(separator: "\n").map(String.init)
+            guard hashed.exitCode == 0, shas.count == toHash.count else {
+                return .unreadable("git hash-object exited \(hashed.exitCode) with \(shas.count) of \(toHash.count) hashes: \(hashed.stderr.prefix(300))")
+            }
+            for (path, sha) in zip(toHash, shas) where base[path]?.sha != sha {
+                changed.insert(path)
+            }
+        }
+        let paths = changed.sorted()
+        let protected = paths.filter(TrustLedger.isProtectedChange)
+        return protected.isEmpty ? .clear(paths) : .protected(protected)
+    }
+
+    /// Files Finder and editors leave beside source, which SwiftPM never builds.
+    /// Python's compiled caches in a __pycache__ are litter too: the install
+    /// script points Python at a cache outside the tree, so one left here is
+    /// never read. Anything else in such a folder is graded.
+    nonisolated static func isFinderOrEditorLitter(_ path: String) -> Bool {
+        let parts = path.split(separator: "/").map(String.init)
+        let leaf = parts.last ?? path
+        if parts.dropLast().contains("__pycache__") && leaf.hasSuffix(".pyc") { return true }
+        return leaf == ".DS_Store" || leaf.hasPrefix("._") || leaf.hasSuffix(".swp") || leaf.hasSuffix(".swo") || leaf.hasSuffix("~")
+    }
+
+    /// The line the person reads when a verified build is not offered for
+    /// install, or nil when it may go on to approval.
+    nonisolated static func builtChangeRefusal(_ change: BuiltChange, branch: String) -> String? {
+        switch change {
+        case .clear:
+            return nil
+        case .protected(let paths):
+            return "Not offered for install: it changes Grux's own safety checks or what builds and upgrades Grux (\(paths.joined(separator: ", "))), which Grux never installs by itself. The change is on branch \(branch) to review, and to build by hand if you want it."
+        case .unreadable(let why):
+            return "Not offered for install: Grux could not read what the build changed, so it could not check it against its safety rules (\(why))."
+        }
+    }
+
     nonisolated static func shouldAutoLand(earnedTier: TrustTier, proposal: UpgradeProposal) -> Bool {
         let effective = min(earnedTier, proposal.tierRequired)
         return effective >= .autoLand && proposal.riskClass != .protected
@@ -555,6 +1044,20 @@ final class FoundryEngine: ObservableObject {
             return
         }
         let worktreeURL = URL(fileURLWithPath: handle.worktreePath)
+        Task { @MainActor [weak self] in
+            // Graded again here, not only after verify: an approval filed before
+            // this rule existed, or a worktree that changed since its verify,
+            // must not reach install ungraded.
+            let change = await Self.readBuiltChange(worktree: worktreeURL, baseRef: handle.baseRef ?? "main",
+                                                    runner: RDLiveProcessRunner())
+            guard let self, !self.refuseBuiltChange(change, proposalId: proposalId, branch: handle.branch) else { return }
+            let graded = TrustLedger.applyProtectedPinning(to: ProposalStore.shared.proposal(id: proposalId) ?? proposal)
+            self.landGreen(proposal: graded, worktreeURL: worktreeURL)
+        }
+    }
+
+    private func landGreen(proposal: UpgradeProposal, worktreeURL: URL) {
+        let proposalId = proposal.id
         Task.detached(priority: .utility) {
             let green = GruxUpdater.shared.verifyBuildsGreen(worktree: worktreeURL)
             await MainActor.run {

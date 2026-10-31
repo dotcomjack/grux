@@ -4,7 +4,8 @@ import XCTest
 // RDVerifier unit tests: gate sequencing with injected fake gates
 // (short-circuit, skip semantics, evidence attachment), the test-summary
 // and verdict parsers, the baseline fixture store, and the domain gates
-// against fixture seams. No test spawns a process or touches the network.
+// against fixture seams. One test spawns /bin/sh to die by a real signal; none
+// touches the network.
 final class RDVerifierTests: XCTestCase {
 
     private func tempURL(_ name: String) -> URL {
@@ -56,13 +57,18 @@ final class RDVerifierTests: XCTestCase {
     }
 
     struct FakeRunner: RDProcessRunning {
-        // Keyed by "<executable> <first-arg>"; unknown commands succeed empty.
+        // Keyed by "<executable> <first-arg>"; unknown commands succeed empty. A suite
+        // command's `/usr/bin/env GRUX_REPO=<worktree>` prefix is not part of the key.
         var outputs: [String: RDProcessOutput]
         func run(
             executable: String, arguments: [String], currentDirectory: URL?,
             stdin: String?, timeoutSeconds: TimeInterval
         ) async -> RDProcessOutput {
-            let key = ([executable] + arguments.prefix(1)).joined(separator: " ")
+            var argv = [executable] + arguments
+            if executable == "/usr/bin/env" {
+                argv = Array(argv.dropFirst().drop { $0.contains("=") })
+            }
+            let key = argv.prefix(2).joined(separator: " ")
             return outputs[key] ?? RDProcessOutput(exitCode: 0, stdout: "", stderr: "")
         }
     }
@@ -174,7 +180,11 @@ final class RDVerifierTests: XCTestCase {
     }
 
     func testBaselineGatePassesAtBaselineAndFailsOnRegression() async {
-        let summary = "Executed 582 tests, with 6 tests skipped and 2 failures (0 unexpected) in 40.0 seconds"
+        let summary = """
+            Test Suite 'All tests' failed at 2026-06-08 03:10:00.000.
+            \t Executed 582 tests, with 6 tests skipped and 2 failures (0 unexpected) in 40.0 seconds
+            \u{2714} Test run with 0 tests in 0 suites passed after 0.001 seconds.
+            """
         let atBaseline = FakeRunner(outputs: [
             "swift test": RDProcessOutput(exitCode: 1, stdout: summary, stderr: "")
         ])
@@ -187,7 +197,8 @@ final class RDVerifierTests: XCTestCase {
         let regressed = FakeRunner(outputs: [
             "swift test": RDProcessOutput(
                 exitCode: 1,
-                stdout: "Executed 582 tests, with 6 tests skipped and 3 failures (1 unexpected) in 40.0 seconds",
+                stdout: "Test Suite 'All tests' failed at 2026-06-08 03:10:00.000.\n"
+                    + "Executed 582 tests, with 6 tests skipped and 3 failures (1 unexpected) in 40.0 seconds",
                 stderr: ""
             )
         ])
@@ -195,6 +206,343 @@ final class RDVerifierTests: XCTestCase {
         let fail = await failGate.run(ctx)
         XCTAssertFalse(fail.passed)
         XCTAssertTrue(fail.evidence.contains("REGRESSED"))
+    }
+
+    // MARK: - A suite that ran nothing verified nothing
+
+    // Measured on a Mac whose Xcode license is not accepted system-wide (2026-10-22): bare
+    // `swift test` builds, runs swift-testing only, finds no tests and exits 0.
+    static let bareSwiftTestRunningNothing = """
+        Build complete! (5.08s)
+        warning: No matching test cases were run
+        \u{25C7} Test run started.
+        \u{21B3} Testing Library Version: 1743
+        \u{21B3} Target Platform: arm64e-apple-macos14.0
+        \u{2714} Test run with 0 tests in 0 suites passed after 0.001 seconds.
+        """
+
+    func testBareSwiftTestThatRanNothingFailsWithAPlainReason() async {
+        let runner = FakeRunner(outputs: [
+            "swift test": RDProcessOutput(exitCode: 0, stdout: Self.bareSwiftTestRunningNothing, stderr: "")
+        ])
+        let gate = RDBaselineTestGate(runner: runner, baseline: RDTestBaseline(failures: 2, skips: 6))
+        let result = await gate.run(RDVerifyContext(worktreeRoot: worktree, proposal: makeProposal()))
+        XCTAssertFalse(result.passed)
+        XCTAssertTrue(result.evidence.contains("ran zero tests"), result.evidence)
+    }
+
+    func testAnXCTestSummaryOfZeroTestsIsAFailNotAtBaseline() async {
+        let runner = FakeRunner(outputs: [
+            "swift test": RDProcessOutput(
+                exitCode: 0,
+                stdout: "Test Suite 'All tests' passed at 2026-10-22 12:59:06.304.\n"
+                    + "\t Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds",
+                stderr: ""
+            )
+        ])
+        let gate = RDBaselineTestGate(runner: runner, baseline: RDTestBaseline(failures: 2, skips: 6))
+        let result = await gate.run(RDVerifyContext(worktreeRoot: worktree, proposal: makeProposal()))
+        XCTAssertFalse(result.passed, "zero failures out of zero tests is not a green suite")
+        XCTAssertTrue(result.evidence.contains("ran zero tests"), result.evidence)
+    }
+
+    final class RecordingRunner: RDProcessRunning, @unchecked Sendable {
+        private let lock = NSLock()
+        private var calls: [(executable: String, arguments: [String], cwd: URL?)] = []
+        let output: RDProcessOutput
+        init(output: RDProcessOutput) { self.output = output }
+        var recorded: [(executable: String, arguments: [String], cwd: URL?)] {
+            lock.lock(); defer { lock.unlock() }; return calls
+        }
+        func run(
+            executable: String, arguments: [String], currentDirectory: URL?,
+            stdin: String?, timeoutSeconds: TimeInterval
+        ) async -> RDProcessOutput {
+            lock.lock(); calls.append((executable, arguments, currentDirectory)); lock.unlock()
+            return output
+        }
+    }
+
+    static let xctestWrapperGreen = """
+        Test Suite 'All tests' passed at 2026-10-22 13:47:03.051.
+        \t Executed 4039 tests, with 6 tests skipped and 0 failures (0 unexpected) in 620.6 (620.9) seconds
+        XCTEST: executed=4039 failures=0 floor=4039
+        XCTEST: PASS
+        """
+
+    func testAConfiguredSuiteCommandRunsInTheUpgradeWorktreeNotTheLiveTree() async {
+        let runner = RecordingRunner(output: RDProcessOutput(exitCode: 0, stdout: Self.xctestWrapperGreen, stderr: ""))
+        let suite = RDSuiteCommand(
+            full: ["zsh", "~/grux-loop/xctest.sh"],
+            focused: ["zsh", "~/grux-loop/xctest.sh", "GruxTests.{filter}"],
+            runsSwiftTesting: false
+        )
+        let root = worktree
+        let ctx = RDVerifyContext(worktreeRoot: root, proposal: makeProposal())
+        let gate = RDBaselineTestGate(runner: runner, baseline: RDTestBaseline(failures: 2, skips: 6), suite: suite)
+        let result = await gate.run(ctx)
+        XCTAssertTrue(result.passed, result.evidence)
+        XCTAssertTrue(result.evidence.contains("executed 4039"), result.evidence)
+
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let call = try? XCTUnwrap(runner.recorded.first)
+        XCTAssertEqual(call?.executable, "/usr/bin/env")
+        XCTAssertEqual(call?.arguments, ["GRUX_REPO=\(root.path)", "zsh", "\(home)/grux-loop/xctest.sh"])
+        XCTAssertEqual(call?.cwd, ctx.packageDir)
+
+        let focused = RDFocusedTestGate(runner: runner, filters: ["FoundryGovernorTests"], suite: suite)
+        let focusedResult = await focused.run(ctx)
+        XCTAssertTrue(focusedResult.passed, focusedResult.evidence)
+        XCTAssertEqual(runner.recorded.last?.arguments,
+                       ["GRUX_REPO=\(root.path)", "zsh", "\(home)/grux-loop/xctest.sh", "GruxTests.FoundryGovernorTests"])
+    }
+
+    func testANonZeroExitWithNoFailingTestIsNotAtBaseline() async {
+        // A wrapper's own check failed (here a test-count floor), or the run died after a
+        // per-suite summary: the counts look clean and the exit code says otherwise.
+        let floorFail = """
+            Test Suite 'All tests' passed at 2026-10-22 13:47:03.051.
+            \t Executed 3839 tests, with 6 tests skipped and 0 failures (0 unexpected) in 600.0 (600.2) seconds
+            XCTEST: executed=3839 failures=0 floor=4039
+            XCTEST: FAIL (executed 3839 is below floor 4039)
+            """
+        let runner = RecordingRunner(output: RDProcessOutput(exitCode: 1, stdout: floorFail, stderr: ""))
+        let wrapper = RDSuiteCommand(full: ["zsh", "run.sh"], focused: ["zsh", "run.sh", "{filter}"], runsSwiftTesting: false)
+        let gate = RDBaselineTestGate(runner: runner, baseline: RDTestBaseline(failures: 2, skips: 6), suite: wrapper)
+        let result = await gate.run(RDVerifyContext(worktreeRoot: worktree, proposal: makeProposal()))
+        XCTAssertFalse(result.passed, result.evidence)
+        XCTAssertTrue(result.evidence.contains("exited 1 with no failing test"), result.evidence)
+    }
+
+    func testARunThatDidNotFinishIsNotAtBaselineEvenWithAFailureInsideTheBaseline() async {
+        // Partial counts from a per-suite line, one failure, inside a baseline of two.
+        let partial = """
+            Test Suite 'AgentTests' failed at 2026-10-22 13:40:00.000.
+            \t Executed 1200 tests, with 0 tests skipped and 1 failure (0 unexpected) in 300.0 (300.1) seconds
+            """
+        let ctx = RDVerifyContext(worktreeRoot: worktree, proposal: makeProposal())
+        let timedOut = FakeRunner(outputs: ["swift test": RDProcessOutput(
+            exitCode: -2, stdout: partial, stderr: "[rd-verifier] timed out after 2400s, sent SIGTERM")])
+        let timeout = await RDBaselineTestGate(runner: timedOut, baseline: RDTestBaseline(failures: 2, skips: 6)).run(ctx)
+        XCTAssertFalse(timeout.passed, timeout.evidence)
+        XCTAssertTrue(timeout.evidence.contains("did not finish"), timeout.evidence)
+
+        let crashed = FakeRunner(outputs: ["swift test": RDProcessOutput(exitCode: 11, stdout: partial, stderr: "")])
+        let crash = await RDBaselineTestGate(runner: crashed, baseline: RDTestBaseline(failures: 2, skips: 6)).run(ctx)
+        XCTAssertFalse(crash.passed, crash.evidence)
+        XCTAssertTrue(crash.evidence.contains("did not finish"), crash.evidence)
+    }
+
+    func testSwiftTestingsClosingLineDoesNotVouchForACrashedXCTestRun() async {
+        // `swift test` runs swift-testing after XCTest, so a crashed XCTest run can still
+        // end with swift-testing's own closing line.
+        let output = """
+            Test Suite 'AgentTests' failed at 2026-10-22 13:40:00.000.
+            \t Executed 1200 tests, with 0 tests skipped and 1 failure (0 unexpected) in 300.0 (300.1) seconds
+            \u{2714} Test run with 0 tests in 0 suites passed after 0.001 seconds.
+            """
+        let runner = FakeRunner(outputs: ["swift test": RDProcessOutput(exitCode: 1, stdout: output, stderr: "")])
+        let result = await RDBaselineTestGate(runner: runner, baseline: RDTestBaseline(failures: 2, skips: 6))
+            .run(RDVerifyContext(worktreeRoot: worktree, proposal: makeProposal()))
+        XCTAssertFalse(result.passed, result.evidence)
+        XCTAssertTrue(result.evidence.contains("did not finish"), result.evidence)
+    }
+
+    // Wave 1 independent review (P2-W1a): with XCTest counts present, swift-testing's own
+    // failures were dropped and a failing exit was credited to the XCTest failures alone.
+    func testSwiftTestingFailuresCountAgainstTheBaseline() async {
+        let output = """
+            Test Suite 'All tests' failed at 2026-10-22 13:40:00.000.
+            \t Executed 4039 tests, with 6 tests skipped and 1 failure (0 unexpected) in 600.0 (600.1) seconds
+            \u{2718} Test run with 30 tests in 5 suites failed after 1.0 seconds with 4 issues.
+            """
+        XCTAssertEqual(RDTestSummary.parse(output), RDTestSummary.Counts(executed: 4069, failures: 1, skips: 6, swiftTestingIssues: 4))
+        let runner = FakeRunner(outputs: ["swift test": RDProcessOutput(exitCode: 1, stdout: output, stderr: "")])
+        let result = await RDBaselineTestGate(runner: runner, baseline: RDTestBaseline(failures: 2, skips: 6))
+            .run(RDVerifyContext(worktreeRoot: worktree, proposal: makeProposal()))
+        XCTAssertFalse(result.passed, "swift-testing's 4 failures were dropped: \(result.evidence)")
+        XCTAssertTrue(result.evidence.contains("REGRESSED"), result.evidence)
+    }
+
+    func testAnXCTestRunThatDiedInItsFirstSuiteIsNotVouchedForBySwiftTesting() async {
+        let output = """
+            Test Suite 'All tests' started at 2026-10-22 13:40:00.000.
+            Test Suite 'GruxPackageTests.xctest' started at 2026-10-22 13:40:00.001.
+            Test Suite 'AgentTests' started at 2026-10-22 13:40:00.002.
+            \u{25C7} Test run started.
+            \u{2718} Test run with 3 tests in 1 suites failed after 0.1 seconds with 1 issue.
+            """
+        let runner = FakeRunner(outputs: ["swift test": RDProcessOutput(exitCode: 1, stdout: output, stderr: "")])
+        let result = await RDBaselineTestGate(runner: runner, baseline: RDTestBaseline(failures: 2, skips: 6))
+            .run(RDVerifyContext(worktreeRoot: worktree, proposal: makeProposal()))
+        XCTAssertFalse(result.passed, result.evidence)
+        XCTAssertTrue(result.evidence.contains("did not finish"), result.evidence)
+    }
+
+    func testASwiftTestingRunThatDiedAfterStartingIsNotAtBaseline() async {
+        let output = """
+            Test Suite 'All tests' failed at 2026-10-22 13:40:00.000.
+            \t Executed 4039 tests, with 6 tests skipped and 1 failure (0 unexpected) in 600.0 (600.1) seconds
+            \u{25C7} Test run started.
+            \u{21B3} Testing Library Version: 1743
+            """
+        let runner = FakeRunner(outputs: ["swift test": RDProcessOutput(exitCode: 1, stdout: output, stderr: "")])
+        let result = await RDBaselineTestGate(runner: runner, baseline: RDTestBaseline(failures: 2, skips: 6))
+            .run(RDVerifyContext(worktreeRoot: worktree, proposal: makeProposal()))
+        XCTAssertFalse(result.passed, result.evidence)
+        XCTAssertTrue(result.evidence.contains("did not finish"), result.evidence)
+    }
+
+    // Wave 2 independent review (operator note 8, P2-W2a): the baseline allowance was
+    // compared to XCTest failures PLUS swift-testing issues, so 1 + 1 and 0 + 2 both sat
+    // exactly on a baseline of 2. The allowance is XCTest's; any swift-testing issue refuses.
+    private func gradeAgainstBaselineTwo(xctestFailures: Int, swiftTestingIssues: Int) async -> RDGateResult {
+        var output = """
+            Test Suite 'All tests' \(xctestFailures > 0 ? "failed" : "passed") at 2026-10-22 13:40:00.000.
+            \t Executed 4039 tests, with 6 tests skipped and \(xctestFailures) failure\(xctestFailures == 1 ? "" : "s") (0 unexpected) in 600.0 (600.1) seconds
+            \u{25C7} Test run started.
+            """
+        output += swiftTestingIssues > 0
+            ? "\n\u{2718} Test run with 30 tests in 5 suites failed after 1.0 seconds with \(swiftTestingIssues) issue\(swiftTestingIssues == 1 ? "" : "s")."
+            : "\n\u{2714} Test run with 30 tests in 5 suites passed after 1.0 seconds."
+        let exit: Int32 = xctestFailures + swiftTestingIssues > 0 ? 1 : 0
+        let runner = FakeRunner(outputs: ["swift test": RDProcessOutput(exitCode: exit, stdout: output, stderr: "")])
+        return await RDBaselineTestGate(runner: runner, baseline: RDTestBaseline(failures: 2, skips: 6))
+            .run(RDVerifyContext(worktreeRoot: worktree, proposal: makeProposal()))
+    }
+
+    func testTheBaselineAllowanceIsXCTestsAndAnySwiftTestingIssueRefuses() async {
+        for (xctest, swiftTesting) in [(1, 1), (0, 2), (0, 1), (2, 1), (1, 2)] {
+            let result = await gradeAgainstBaselineTwo(xctestFailures: xctest, swiftTestingIssues: swiftTesting)
+            XCTAssertFalse(result.passed, "XCTest \(xctest) + swift-testing \(swiftTesting) against baseline 2: \(result.evidence)")
+            XCTAssertTrue(result.evidence.contains("swift-testing"), result.evidence)
+        }
+        // On the allowance, one under it, and one over it, with swift-testing clean.
+        let onIt = await gradeAgainstBaselineTwo(xctestFailures: 2, swiftTestingIssues: 0)
+        XCTAssertTrue(onIt.passed, onIt.evidence)
+        let under = await gradeAgainstBaselineTwo(xctestFailures: 1, swiftTestingIssues: 0)
+        XCTAssertTrue(under.passed, under.evidence)
+        let over = await gradeAgainstBaselineTwo(xctestFailures: 3, swiftTestingIssues: 0)
+        XCTAssertFalse(over.passed, over.evidence)
+        let clean = await gradeAgainstBaselineTwo(xctestFailures: 0, swiftTestingIssues: 0)
+        XCTAssertTrue(clean.passed, clean.evidence)
+    }
+
+    // P3-W2b: a failing exit passes only when a failure counted in a runner that closed
+    // explains it. A suite process killed by a signal after printing a closed XCTest run
+    // with one failure (inside the baseline) exited 11, which read as that failure's exit.
+    // The one test here that spawns a process: only a real signal death proves the runner.
+    func testASuiteKilledByASignalDidNotFinishEvenWhenItsCountsAreInsideTheBaseline() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("grux-rdverifier-signal-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("Grux-Mac"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let script = """
+            printf "Test Suite 'All tests' failed at 2026-10-22 13:40:00.000.\\n"
+            printf "\\t Executed 4039 tests, with 6 tests skipped and 1 failure (0 unexpected) in 600.0 (600.1) seconds\\n"
+            kill -SEGV $$
+            """
+        let suite = RDSuiteCommand(full: ["/bin/sh", "-c", script], focused: ["/bin/sh", "-c", script, "{filter}"])
+        let result = await RDBaselineTestGate(baseline: RDTestBaseline(failures: 2, skips: 6), suite: suite)
+            .run(RDVerifyContext(worktreeRoot: root, proposal: makeProposal()))
+        XCTAssertFalse(result.passed, result.evidence)
+        XCTAssertTrue(result.evidence.contains("did not finish"), result.evidence)
+        XCTAssertTrue(result.evidence.contains("signal 11"), result.evidence)
+    }
+
+    func testAFocusedRunThatDidNotFinishFails() async {
+        let output = """
+            Test Suite 'Selected tests' started at 2026-10-22 13:40:00.000.
+            Test Suite 'FoundryGovernorTests' failed at 2026-10-22 13:40:01.000.
+            \t Executed 12 tests, with 0 failures (0 unexpected) in 1.0 (1.0) seconds
+            """
+        let runner = FakeRunner(outputs: ["swift test": RDProcessOutput(exitCode: 0, stdout: output, stderr: "")])
+        let result = await RDFocusedTestGate(runner: runner, filters: ["FoundryGovernorTests"])
+            .run(RDVerifyContext(worktreeRoot: worktree, proposal: makeProposal()))
+        XCTAssertFalse(result.passed, result.evidence)
+        XCTAssertTrue(result.evidence.contains("did not finish"), result.evidence)
+    }
+
+    func testAFocusedCommandWithNoFilterPlaceFailsInsteadOfRunningEverything() async {
+        let runner = RecordingRunner(output: RDProcessOutput(exitCode: 0, stdout: Self.xctestWrapperGreen, stderr: ""))
+        let suite = RDSuiteCommand(full: ["zsh", "run.sh"], focused: ["zsh", "run.sh"])
+        let gate = RDFocusedTestGate(runner: runner, filters: ["FoundryGovernorTests"], suite: suite)
+        let result = await gate.run(RDVerifyContext(worktreeRoot: worktree, proposal: makeProposal()))
+        XCTAssertFalse(result.passed, "every filter would have run the whole suite: \(result.evidence)")
+        XCTAssertTrue(result.evidence.contains("{filter}"), result.evidence)
+        XCTAssertTrue(runner.recorded.isEmpty, "nothing should run")
+    }
+
+    func testAFocusedFilterThatRanNothingSaysSo() async {
+        let runner = FakeRunner(outputs: [
+            "swift test": RDProcessOutput(exitCode: 0, stdout: Self.bareSwiftTestRunningNothing, stderr: "")
+        ])
+        let gate = RDFocusedTestGate(runner: runner, filters: ["FoundryGovernorTests"])
+        let result = await gate.run(RDVerifyContext(worktreeRoot: worktree, proposal: makeProposal()))
+        XCTAssertFalse(result.passed)
+        XCTAssertTrue(result.evidence.contains("FoundryGovernorTests: ran zero tests"), result.evidence)
+    }
+
+    func testTheStandardPipelineCarriesTheSuiteCommandToBothTestGates() {
+        let suite = RDSuiteCommand(full: ["zsh", "run.sh"], focused: ["zsh", "run.sh", "{filter}"])
+        let verifier = RDVerifier.standard(baseline: .default, suite: suite, focusedTestFilters: ["X"])
+        XCTAssertEqual(verifier.gates.compactMap { ($0 as? RDBaselineTestGate)?.suite }, [suite])
+        XCTAssertEqual(verifier.gates.compactMap { ($0 as? RDFocusedTestGate)?.suite }, [suite])
+        XCTAssertEqual(RDVerifier.standard(baseline: .default).gates.compactMap { ($0 as? RDBaselineTestGate)?.suite },
+                       [.swiftTest], "no configured command means swift test, as before")
+    }
+
+    func testTheSuiteCommandIsReadFromConfigAndABadOneDoesNotLoseTheConfig() throws {
+        func decode(foundrySuiteCommand: Any?) throws -> GruxConfig {
+            var dict = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(GruxConfig.default)) as? [String: Any])
+            dict["foundryEnabled"] = true
+            dict["foundrySuiteCommand"] = foundrySuiteCommand
+            return try JSONDecoder().decode(GruxConfig.self, from: JSONSerialization.data(withJSONObject: dict))
+        }
+        let good = try decode(foundrySuiteCommand: ["full": ["zsh", "a.sh"], "focused": ["zsh", "a.sh", "{filter}"]])
+        XCTAssertEqual(good.foundrySuiteCommand, RDSuiteCommand(full: ["zsh", "a.sh"], focused: ["zsh", "a.sh", "{filter}"]))
+        XCTAssertTrue(good.foundryEnabled)
+
+        let bad = try decode(foundrySuiteCommand: "zsh a.sh")
+        XCTAssertNil(bad.foundrySuiteCommand)
+        XCTAssertTrue(bad.foundryEnabled, "the rest of config.json still loads")
+
+        XCTAssertNil(try decode(foundrySuiteCommand: nil).foundrySuiteCommand)
+        XCTAssertNil(try decode(foundrySuiteCommand: nil).foundrySuiteCommandProblem, "no command is not a problem")
+    }
+
+    // Wave 1 independent review (P3-W1b): a hand-edited command that did not decode was
+    // dropped without a word, and one that named only `full` was refused whole.
+    func testASuiteCommandWithOnlyFullGetsAFocusedDefaultAndABadOneIsSaidInTheEvidence() async throws {
+        func decode(_ value: Any) throws -> GruxConfig {
+            var dict = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(GruxConfig.default)) as? [String: Any])
+            dict["foundrySuiteCommand"] = value
+            return try JSONDecoder().decode(GruxConfig.self, from: JSONSerialization.data(withJSONObject: dict))
+        }
+        let fullOnly = try decode(["full": ["zsh", "a.sh"]])
+        XCTAssertEqual(fullOnly.foundrySuiteCommand, RDSuiteCommand(full: ["zsh", "a.sh"], focused: ["zsh", "a.sh", "{filter}"]))
+        XCTAssertNil(fullOnly.foundrySuiteCommandProblem)
+
+        let bad = try decode("zsh a.sh")
+        XCTAssertNil(bad.foundrySuiteCommand)
+        let problem = try XCTUnwrap(bad.foundrySuiteCommandProblem, "a command that did not decode was dropped silently")
+        XCTAssertTrue(problem.contains("foundrySuiteCommand"), problem)
+        // P3-W2d: the sentence says exactly what happens. The value is ignored now, stays
+        // on disk until Grux next saves its settings, and that save writes config.json
+        // without it (the problem itself is never written).
+        XCTAssertTrue(problem.contains("is ignoring it"), problem)
+        XCTAssertTrue(problem.contains("\"runsSwiftTesting\": false"), "the example must show how to declare an XCTest-only runner: \(problem)")
+        XCTAssertTrue(problem.contains("the next time Grux saves its settings it rewrites config.json without it"), problem)
+        let saved = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(bad)) as? [String: Any])
+        XCTAssertNil(saved["foundrySuiteCommand"], "a save keeps an unreadable command the sentence says is dropped")
+        XCTAssertNil(saved["foundrySuiteCommandProblem"])
+
+        let runner = FakeRunner(outputs: ["swift test": RDProcessOutput(exitCode: 0, stdout: Self.xctestWrapperGreen, stderr: "")])
+        let verifier = RDVerifier.standard(baseline: RDTestBaseline(failures: 2, skips: 6), suiteProblem: problem)
+        var gate = try XCTUnwrap(verifier.gates.compactMap { $0 as? RDBaselineTestGate }.first)
+        gate.runner = runner
+        let result = await gate.run(RDVerifyContext(worktreeRoot: worktree, proposal: makeProposal()))
+        XCTAssertTrue(result.evidence.contains(problem), "the verify evidence must say why it ran swift test: \(result.evidence)")
     }
 
     // MARK: - Adversarial review verdict parsing

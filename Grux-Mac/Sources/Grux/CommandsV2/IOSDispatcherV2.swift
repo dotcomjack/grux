@@ -394,6 +394,8 @@ enum IOSDispatcherV2 {
         with open('\(probeJSON)', 'w') as f: f.write(json.dumps(findings))
         PYEOF
         """
+        // A result left by an earlier try of this run must not stand in for this one.
+        try? FileManager.default.removeItem(atPath: probeJSON)
         let probe = await ShellRunner.runRaw(command: script, timeoutSeconds: 60)
 
         // Parse the JSON the python script wrote to /tmp (more reliable than parsing stdout
@@ -402,8 +404,14 @@ enum IOSDispatcherV2 {
         var warnings: [String] = []
         var actionURL: String = ""
         var actionText: String = ""
-        if let data = try? Data(contentsOf: URL(fileURLWithPath: probeJSON)),
-           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+        // No readable result means the probe never ran (refused, python missing, a crash),
+        // and that is not a healthy account.
+        let probed = (try? Data(contentsOf: URL(fileURLWithPath: probeJSON)))
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        if probed == nil {
+            blockers.append("PROBE_DID_NOT_RUN: the account check wrote no result (exit \(probe.status)): \(String(probe.stdout.prefix(300)))")
+        }
+        if let obj = probed {
             if let bs = obj["blockers"] as? [[String: Any]] {
                 for b in bs {
                     blockers.append((b["code"] as? String ?? "?") + ": " + (b["message"] as? String ?? ""))
@@ -492,7 +500,9 @@ enum IOSDispatcherV2 {
         guard let parsed = URL(string: url), parsed.scheme?.lowercased() == "https" else {
             return .init(text: "refusing to open non-https or malformed url: \(url)", success: false, stateUpdates: [:])
         }
-        _ = await ShellRunner.runArgs("/usr/bin/open", ["-a", "Google Chrome", parsed.absoluteString], timeoutSeconds: 5)
+        if let why = await ForeignAppScript.open(["-a", "Google Chrome", parsed.absoluteString], purpose: "IOSDispatcherV2.openAccountBlocker") {
+            return .init(text: "did not open \(url): \(why)", success: false, stateUpdates: [:])
+        }
         if !text.isEmpty {
             await speakAndWaitGlobal(text)
         }

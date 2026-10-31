@@ -21,7 +21,11 @@ enum ToolReplyCopy {
         let result = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         // Checked first: a held write never reads as done, whatever its tool.
         if result.hasPrefix(JaxToolGate.dryRunStatus) { return heldForDryRun(tool: tool) }
-        if result.hasPrefix("pending:") { return pending(tool: tool, input: input) }
+        // Only a write waits in Approvals: a read whose text starts "pending:" is the
+        // person's own text (wave 7 review round 9), the same test as ActionClaimGuard.
+        if result.lowercased().hasPrefix("pending:"), !ActionClaimGuard.readOnlyTools.contains(tool) {
+            return pending(tool: tool, input: input)
+        }
         if result.hasPrefix("refused:") {
             let reason = strip(prefix: "refused:", from: result)
                 .replacingOccurrences(of: "Nothing was sent or changed.", with: "")
@@ -224,7 +228,9 @@ enum ToolReplyCopy {
             let to = (input["to"] as? String).map { " to \($0)" } ?? ""
             return "Your email\(to) is waiting for your OK in Approvals. Nothing is sent until you tap it."
         default:
-            return "That is waiting for your OK in Approvals. Nothing happens until you tap it."
+            // Its own subject ("The command `make`", "That request"), so after another
+            // line it never reads as if that one were the thing waiting.
+            return "\(subject(tool: tool, input: input).capitalizedFirst) is waiting for your OK in Approvals. Nothing happens until you tap it."
         }
     }
 

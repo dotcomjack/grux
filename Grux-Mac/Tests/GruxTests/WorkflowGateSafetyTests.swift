@@ -69,7 +69,8 @@ final class WorkflowGateSafetyTests: XCTestCase {
                 || (run.status == .waitingForApproval && (phase == nil || run.currentPhaseId == phase)) {
                 return run
             }
-            try await Task.sleep(nanoseconds: 20_000_000)
+            // 1 ms, not 20: settles poll hundreds of times a class, and the 20 ms naps added up to seconds.
+            try await Task.sleep(nanoseconds: 1_000_000)
         }
         XCTFail("run \(runId.uuidString.prefix(8)) did not settle", file: file, line: line)
         throw CancellationError()
@@ -363,7 +364,8 @@ final class WorkflowGateSafetyTests: XCTestCase {
         guard case .success(let id) = await engine.start(definitionId: def.id, dryRun: false) else { return XCTFail("start") }
         let deadline = Date().addingTimeInterval(10)
         while engine.run(id: id)?.status != .waitingScheduled, Date() < deadline {
-            try await Task.sleep(nanoseconds: 20_000_000)
+            // 1 ms, not 20: settles poll hundreds of times a class, and the 20 ms naps added up to seconds.
+            try await Task.sleep(nanoseconds: 1_000_000)
         }
         XCTAssertEqual(engine.run(id: id)?.status, .waitingScheduled)
 

@@ -188,11 +188,19 @@ public enum ShellAuditLog {
     /// The exact path `FilesystemToolState` derives, spelled out the same way so
     /// the two cannot drift apart. If either side moves, the log silently splits
     /// in two and each half looks complete.
+    /// Under XCTest it is the suite's own `Grux-tests-<pid>` folder, the one
+    /// Persistence uses, so a test run never writes the person's log (D22).
     public static let logURL: URL? = {
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            return nil
+        let underTest = NSClassFromString("XCTestCase") != nil
+        let dir: URL
+        if underTest {
+            dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("Grux-tests-\(getpid())", isDirectory: true)
+        } else {
+            guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+                return nil
+            }
+            dir = base.appendingPathComponent("Grux", isDirectory: true)
         }
-        let dir = base.appendingPathComponent("Grux", isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         } catch {

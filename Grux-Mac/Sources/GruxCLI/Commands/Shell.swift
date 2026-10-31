@@ -337,6 +337,16 @@ struct Shell: ParsableCommand {
                               + "Grux make sound again.", indent: 2))
                 leave(.waitingOnYou)
             }
+            if (reply["blocked_kind"] as? String) == "headless" {
+                print(r.prose("Grux would not run that: headless mode is on, and that command "
+                              + "would script or open another app on a screen nobody is watching."))
+                print("")
+                print(r.style.ink(.dim, r.prose(reason, indent: 2)))
+                print("")
+                print(r.prose("Nothing ran and nothing changed. Remove ~/.grux/HEADLESS to let "
+                              + "Grux reach other apps again.", indent: 2))
+                leave(.waitingOnYou)
+            }
             let allowlist = (reply["blocked_kind"] as? String) == "allowlist"
             if allowlist {
                 print(r.prose("Grux would not run that. Your trust ceiling is strict, which "

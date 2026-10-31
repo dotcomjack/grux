@@ -164,6 +164,22 @@ struct UpgradeProposal: Codable, Identifiable, Equatable, Sendable {
     // prompt by the engine; used for protected-zone pinning).
     var touchedPaths: [String] = []
 
+    // The (source, lane, domain) group a synthesized proposal came from, so
+    // the next pass does not file the same problem twice. Nil for proposals
+    // filed by hand (proposal book 001).
+    var signalKey: String? = nil
+
+    // True when the person turned this down (Not now on the card, or an
+    // install approval refused). Only their no stops the next pass filing
+    // the same problem; a rejection Grux made itself (a usage limit, a
+    // stalled build, a failed verify, a lost worktree) does not.
+    var declinedByPerson: Bool? = nil
+
+    // Every signal the proposal answered (`FoundrySignal.identity`), past the
+    // evidence cap too, so a landed fix is refiled only by a signal it did
+    // not cover.
+    var coveredSignals: [String]? = nil
+
     // True when the proposal pass retired it for sitting unbuilt too long,
     // rather than a person rejecting it or its build failing. Only these
     // may be proposed again. Absent in older files, which decode as nil.

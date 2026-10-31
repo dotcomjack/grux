@@ -150,6 +150,37 @@ final class MicConsentTests: XCTestCase {
         }
     }
 
+    /// D29 (3.2 sense pass): with Always on chosen and no yes given yet,
+    /// Settings, Ambient said "The microphone is open while this is on." over
+    /// a status of "Idle", while Home said listening waits for your OK. The
+    /// section read the preference; the tell reads the mode in effect.
+    func testWaitingForConsentIsNeverDescribedAsAnOpenMicrophone() throws {
+        // Home's own words (TodayModel.sayItLine), as the row asked.
+        XCTAssertEqual(ListeningSection.costNote(mode: .alwaysOn, awaitingConsent: true), TodayModel.sayItLine(.waiting))
+        XCTAssertEqual(ListeningSection.costNote(mode: .wakeWord, awaitingConsent: true), TodayModel.sayItLine(.waiting))
+        // The mode line above it said "Grux hears you all the time" while
+        // nothing was heard (wave 8 review): it is now conditional.
+        XCTAssertTrue(ListeningSection.modeLine(mode: .alwaysOn, awaitingConsent: true)
+            .hasPrefix("Always on. Once you allow it, Grux hears you all the time"),
+                      "the mode line still states the open microphone as fact")
+        for mode in [ListeningMode.alwaysOn, .wakeWord] {
+            XCTAssertEqual(ListeningSection.modeLine(mode: mode, awaitingConsent: true),
+                           "\(mode.label). Once you allow it, \(mode.explanation)")
+            XCTAssertEqual(ListeningSection.modeLine(mode: mode, awaitingConsent: false), "\(mode.label). \(mode.explanation)")
+        }
+        XCTAssertEqual(ListeningSection.costNote(mode: .alwaysOn, awaitingConsent: false), MicConsent.runningNote)
+        XCTAssertNil(ListeningSection.costNote(mode: .off, awaitingConsent: false))
+        let src = try String(contentsOf: sourcesRoot().appendingPathComponent("Settings/ListeningSection.swift"),
+                             encoding: .utf8)
+        XCTAssertTrue(src.contains("Self.costNote(mode: state.config.listeningMode, awaitingConsent: state.config.listeningAwaitingConsent)"),
+                      "the section shows a note that is not the one rule")
+        XCTAssertTrue(src.contains("Button(ListeningTell.allowTitle) { ListeningTell.allow() }"),
+                      "waiting for a yes with no way to give it")
+        XCTAssertTrue(src.contains("Text(ListeningTell.waiting.phrase)"), "the status row reads Idle while it waits")
+        XCTAssertTrue(src.contains("Text(Self.modeLine(mode: state.config.listeningMode, awaitingConsent: state.config.listeningAwaitingConsent))"),
+                      "the mode line reads the preference alone")
+    }
+
     /// The cost stays visible while it runs, rather than being explained once
     /// and forgotten. First run happens once; the microphone is open for months.
     /// One Listening control now covers both listening features, so the note is

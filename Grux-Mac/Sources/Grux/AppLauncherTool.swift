@@ -130,6 +130,7 @@ enum AppLauncherTool {
     static func open(name rawName: String) async -> String {
         let query = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return "error: empty app name" }
+        if let why = ForeignAppScript.refuse("AppLauncherTool.open") { return "error: \(why)" }
 
         AppCatalog.shared.buildIfNeeded()
         var hit = AppCatalog.shared.match(query)
@@ -144,18 +145,15 @@ enum AppLauncherTool {
             return "error: no app matched '\(query)' in /Applications, ~/Applications, or /System/Applications"
         }
 
-        let config = NSWorkspace.OpenConfiguration()
-        config.activates = true
-        return await withCheckedContinuation { (cont: CheckedContinuation<String, Never>) in
-            NSWorkspace.shared.openApplication(at: entry.url, configuration: config) { runningApp, error in
-                if let error {
-                    cont.resume(returning: "error: couldn't launch \(entry.name) - \(error.localizedDescription)")
-                    return
-                }
-                let wasRunning = (runningApp?.launchDate ?? Date()) < Date().addingTimeInterval(-1.5)
-                let verb = wasRunning ? "switched to" : "launched"
-                cont.resume(returning: "ok: \(verb) \(entry.name) (\(entry.bundleId))")
-            }
+        switch await ForeignAppScript.launchApp(at: entry.url, activates: true, purpose: "AppLauncherTool.open") {
+        case .refused(let why):
+            return "error: \(why)"
+        case .failed(let error):
+            return "error: couldn't launch \(entry.name) - \(error.localizedDescription)"
+        case .opened(let runningApp):
+            let wasRunning = (runningApp?.launchDate ?? Date()) < Date().addingTimeInterval(-1.5)
+            let verb = wasRunning ? "switched to" : "launched"
+            return "ok: \(verb) \(entry.name) (\(entry.bundleId))"
         }
     }
 }

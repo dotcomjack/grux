@@ -131,7 +131,11 @@ final class WorkJudgmentTests: XCTestCase {
         var item = queuedDelete
         item.risk = ApprovalRisk(score: 2, confidence: 0.98, raised: true)
         queue.enqueue(item)
-        queue.enqueue(queuedDelete)
+        // The unjudged control is a different ask: the same delete asked again
+        // would fold into the card already waiting (D46) and ask nothing.
+        var other = queuedDelete
+        other.action.detail["__replay_input"] = "{\"path\":\"~/Documents/Older\"}"
+        queue.enqueue(other)
         await queue.waitForRiskJudgments()
         XCTAssertEqual(asked, 1, "an item whose event already asked its risk paid for a second call")
     }

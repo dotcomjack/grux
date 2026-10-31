@@ -53,7 +53,7 @@ struct JaxDraftsSection: View {
                 ForEach(shown) { JaxDraftCard(draft: $0) }
             }
         }
-        .sheet(isPresented: $showRules) { ReplyRulesSheet(brand: rulesBrand) }
+        .gruxSheet(isPresented: $showRules) { ReplyRulesSheet(brand: rulesBrand) }
     }
 }
 

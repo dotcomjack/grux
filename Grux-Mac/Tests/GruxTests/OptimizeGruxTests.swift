@@ -208,9 +208,8 @@ final class OptimizeGruxTests: XCTestCase {
     /// ONE LINE FOR EVERY HANDOFF. Every handoff Grux writes for a person's
     /// coding agent goes through `WorkOrderPrompt`; no other file tells an
     /// agent how to build and test. Grux's own headless builder (RDWorker)
-    /// and the verifier that runs the suite itself (RDVerifier) are not
-    /// handoffs a person copies, and are the only other files allowed to
-    /// name the test gate.
+    /// and the verifier both take the test command from `RDSuiteCommand`, an
+    /// argument list, so neither spells the gate as a sentence.
     func test_oneFormatterWritesEveryHandoffForAnAgent() throws {
         let root = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
@@ -228,7 +227,7 @@ final class OptimizeGruxTests: XCTestCase {
         }
         // The scan must find the one it expects, or it proves nothing.
         XCTAssertTrue(formatters.contains("Optimize/WorkOrder.swift"), "the scan is broken: \(formatters)")
-        XCTAssertEqual(formatters, ["Optimize/WorkOrder.swift", "Foundry/RDWorker.swift", "Foundry/RDVerifier.swift"],
+        XCTAssertEqual(formatters, ["Optimize/WorkOrder.swift"],
                        "a second formatter tells an agent how to build and test")
         let upgrade = try sourcesFile("Sources/Grux/Foundry/SelfUpgradeView.swift")
         XCTAssertTrue(upgrade.contains("createAndCopy("), "Self-Upgrade copies a handoff that is not a work order")

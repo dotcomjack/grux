@@ -300,6 +300,8 @@ final class FoundryGovernorTests: XCTestCase {
         gov.idleSeconds = { 0 }
         gov.onACPower = { true }
         gov.sessionLimited = { false }
+        // F0: scheduled passes run only when the person chose them.
+        gov.schedule = { FoundrySchedule(nightly: true) }
 
         let launched = expectation(description: "cycle launched")
         gov.runCycle = { pass in

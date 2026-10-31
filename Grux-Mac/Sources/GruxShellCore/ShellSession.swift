@@ -102,10 +102,10 @@ public actor ShellSession {
         _ = try await snapshots.snapshot(label: "session start", trigger: "session-start", commandIndex: 0)
 
         let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/bin/bash")
         // --noprofile/--norc keeps startup fast and, crucially, deterministic:
         // The user's local ~/.bashrc or ~/.bash_profile won't inject tooling that
         // competes with our markers (e.g. powerline prompts, `cd` overrides).
+        proc.executableURL = URL(fileURLWithPath: "/bin/bash")
         proc.arguments = ["--noprofile", "--norc"]
         proc.currentDirectoryURL = URL(fileURLWithPath: rootDir)
 
@@ -131,7 +131,8 @@ public actor ShellSession {
             "TERM":  "dumb",            // discourage ANSI cursor gymnastics
             "LANG":  "en_US.UTF-8",
             "LC_ALL":"en_US.UTF-8",
-            "PATH":  fullPath,
+            // The headless guard first: see `ShellAppleEvents.guardDirectory`.
+            "PATH":  ShellAppleEvents.guardedPath(fullPath),
             "PS1":   "" // suppress prompt
         ]
         // Pass through NVM_DIR, RUSTUP_HOME, CARGO_HOME if present - otherwise
@@ -197,6 +198,15 @@ public actor ShellSession {
         // Silent mode first: no confirm or trust mode lets a command reach the speaker.
         if let refusal = ShellSilence.refusal(for: command) {
             appendMirror("🔇 \(refusal)\n   command: \(command)\n\n")
+            return ShellRunResult(
+                sessionId: id, command: command, exitCode: -1, stdout: "", stderr: refusal,
+                durationMs: 0, cwdAfter: currentCwd, snapshotId: nil, gated: false, blocked: true,
+                blockedReason: refusal
+            )
+        }
+        // Headless mode: no confirm or trust mode lets a command bring another app forward.
+        if let refusal = ShellAppleEvents.refusal(for: command) {
+            appendMirror("⛔ \(refusal)\n   command: \(command)\n\n")
             return ShellRunResult(
                 sessionId: id, command: command, exitCode: -1, stdout: "", stderr: refusal,
                 durationMs: 0, cwdAfter: currentCwd, snapshotId: nil, gated: false, blocked: true,
@@ -280,6 +290,15 @@ public actor ShellSession {
         commandIndex += 1
         if let refusal = ShellSilence.refusal(for: command) {
             appendMirror("🔇 \(refusal)\n   command: \(command)\n\n")
+            return ShellRunResult(
+                sessionId: id, command: command, exitCode: -1, stdout: "", stderr: refusal,
+                durationMs: 0, cwdAfter: currentCwd, snapshotId: nil, gated: false, blocked: true,
+                blockedReason: refusal
+            )
+        }
+        // Headless mode: no confirm or trust mode lets a command bring another app forward.
+        if let refusal = ShellAppleEvents.refusal(for: command) {
+            appendMirror("⛔ \(refusal)\n   command: \(command)\n\n")
             return ShellRunResult(
                 sessionId: id, command: command, exitCode: -1, stdout: "", stderr: refusal,
                 durationMs: 0, cwdAfter: currentCwd, snapshotId: nil, gated: false, blocked: true,

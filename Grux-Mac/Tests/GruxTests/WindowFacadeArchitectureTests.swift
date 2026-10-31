@@ -37,14 +37,23 @@ final class WindowFacadeArchitectureTests: XCTestCase {
         "LiveTreeTripwire.shared", "PostMergeWatch.shared", "source",
     ]
 
+    /// Compiled once. `range(of:options: .regularExpression)` compiles its pattern on
+    /// every call, and this runs on every line of every source file, so the scan
+    /// took 42 s of a 787 s suite (measured 2026-10-22). Same patterns, same default
+    /// options, so the same lines match.
+    private static let compiledFacadeOnly: [(String, NSRegularExpression)] =
+        facadeOnly.map { ($0, try! NSRegularExpression(pattern: $0)) }
+    private static let bareActivate =
+        try! NSRegularExpression(pattern: #"([A-Za-z_][\w.]*?)\??\.activate\(\s*\)"#)
+
     /// The facade-only patterns a line of code matches. REVIEW-2: a bare
     /// `activate()` (macOS 14 and later) on an NSRunningApplication or
     /// NSApplication brings an app forward too; any receiver that is not one
     /// of Grux's own activators counts.
     static func offenses(_ code: String) -> [String] {
-        var found = facadeOnly.filter { code.range(of: $0, options: .regularExpression) != nil }
-        let bare = try! NSRegularExpression(pattern: #"([A-Za-z_][\w.]*?)\??\.activate\(\s*\)"#)
-        for m in bare.matches(in: code, range: NSRange(code.startIndex..., in: code)) {
+        let whole = NSRange(code.startIndex..., in: code)
+        var found = compiledFacadeOnly.filter { $0.1.firstMatch(in: code, range: whole) != nil }.map(\.0)
+        for m in bareActivate.matches(in: code, range: whole) {
             guard let r = Range(m.range(at: 1), in: code) else { continue }
             let receiver = String(code[r])
             if receiver == "WindowFacade" || ownActivators.contains(receiver) { continue }

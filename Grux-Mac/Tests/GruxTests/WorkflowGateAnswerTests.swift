@@ -71,7 +71,8 @@ final class WorkflowGateAnswerTests: XCTestCase {
                 || (run.status == .waitingForApproval && (phase == nil || run.currentPhaseId == phase)) {
                 return run
             }
-            try await Task.sleep(nanoseconds: 20_000_000)
+            // 1 ms, not 20: settles poll hundreds of times a class, and the 20 ms naps added up to seconds.
+            try await Task.sleep(nanoseconds: 1_000_000)
         }
         XCTFail("run \(runId.uuidString.prefix(8)) did not settle")
         throw CancellationError()

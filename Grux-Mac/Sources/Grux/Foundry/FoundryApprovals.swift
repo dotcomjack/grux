@@ -264,7 +264,7 @@ final class FoundryApprovalStore: ObservableObject {
                 domain: record.request.domain
             ))
             if let proposal {
-                proposalStore.transition(id: proposal.id, to: .rejected)
+                proposalStore.decline(id: proposal.id)
                 FoundryTrustTransitions.recordRejected(
                     proposal: proposal, ledger: trustLedger, timeline: timeline
                 )

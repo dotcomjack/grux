@@ -29,7 +29,7 @@ final class SwarmSandboxSilenceTests: XCTestCase {
     }
 
     func test_audibleProfile_leavesSoundAlone() {
-        let profile = SwarmWorker.sandboxDecision(writableRoot: root, protectedRoots: [], silent: false).profile
+        let profile = SwarmWorker.sandboxDecision(writableRoot: root, protectedRoots: [], silent: false, headless: false).profile
         XCTAssertFalse(profile.contains("(deny mach-lookup"))
         XCTAssertFalse(profile.contains("(deny appleevent-send"))
     }

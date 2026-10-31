@@ -71,7 +71,7 @@ Secrets. Resolved from Keychain only. See section 2.4.
 
 | id | label | remediation |
 |---|---|---|
-| `key.anthropic` | Anthropic API key | Add your Anthropic API key in Settings to let Grux think. Get one at console.anthropic.com. |
+| `key.anthropic` | Anthropic API key | Add your Anthropic API key in Settings to use Claude. Get one at console.anthropic.com. Chat also runs on a local model with no key. |
 | `key.github` | GitHub token | Connect GitHub in Settings so Grux can read your repositories. A classic token with repo scope is enough. |
 | `key.appstoreconnect` | App Store Connect API key | Add your App Store Connect key, issuer ID and .p8 file in Settings to let Grux publish builds. |
 | `key.elevenlabs` | ElevenLabs API key | Optional. Add an ElevenLabs key for a natural voice. Grux uses the built-in macOS voice without one. |

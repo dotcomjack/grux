@@ -51,7 +51,10 @@ public enum IOSSimulator {
 
         // Open Simulator.app so the user can SEE it - otherwise the sim runs headless
         // which makes the "I saw it work" moment weaker.
-        _ = try? await runProcess(path: "/usr/bin/open", args: ["-a", "Simulator"])
+        // Not in headless mode: the screen is not Grux's to bring Simulator onto.
+        if let why = await ShellAppleEvents.open(["-a", "Simulator"], purpose: "IOSSimulator") {
+            append("simulator window: not opened, \(why)")
+        }
 
         // 3. Install
         let inst = try await simctl(["install", device.udid, appPath])

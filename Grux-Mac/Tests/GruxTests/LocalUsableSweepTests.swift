@@ -60,7 +60,11 @@ final class LocalUsableSweepTests: XCTestCase {
         let src = try source("Sources/Grux/SettingsView.swift")
         XCTAssertTrue(src.contains(".foregroundStyle(modelRegistry.localUsable ? Color.secondary : Color.orange)"),
                       "\"local server reachable, no models installed\" renders as fine")
-        XCTAssertTrue(src.contains("if state.offlineMode && !modelRegistry.localUsable {"),
+        // Since wave 7 (P2-1) the rule is OfflineModeCaption.showsNotReady, which also
+        // asks whether the local model is the provider chat uses; OfflineModeCaptionTests
+        // holds its behaviour. This pins that Settings still draws it from localUsable.
+        XCTAssertTrue(src.contains("if OfflineModeCaption.showsNotReady(offlineMode: state.offlineMode,")
+                      && src.contains("localUsable: modelRegistry.localUsable) {"),
                       "offline mode on an empty server says nothing")
         XCTAssertFalse(src.contains("modelRegistry.local != nil") || src.contains("modelRegistry.local == nil"))
     }

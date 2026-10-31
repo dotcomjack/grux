@@ -49,6 +49,15 @@ public struct AgentJob: Codable, Identifiable, Sendable {
     // job state. A stale heartbeat (>5 min) combined with a missing PID is a
     // strong signal that the owning process died.
     public var lastHeartbeatAt: Date?
+    // Who started the job. Nil is a person (chat, the Agents tab, a tool),
+    // and the job's end is reported back into chat. Self-Upgrade settles its
+    // own jobs and shows them on its pane, so its end never posts to chat.
+    // Optional so a store written before this field decodes unchanged.
+    public var startedBy: StartedBy? = nil
+
+    public enum StartedBy: String, Codable, Sendable {
+        case selfUpgrade
+    }
 
     public init(
         id: String = UUID().uuidString,

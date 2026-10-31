@@ -42,6 +42,12 @@ final class AudioDucker {
     // hung TTS thread.
     private static let maxBackupDefers = 3
 
+    /// A restore that fails (Music busy, or the script gate busy behind an Automation
+    /// prompt) tries again this often, up to `maxRestoreRetries` times, instead of
+    /// leaving Music lowered for the rest of the session.
+    static let restoreRetryAfter: TimeInterval = 10
+    static let maxRestoreRetries = 6
+
     private let duckedVolume = 50
 
     private var startToken: NSObjectProtocol?
@@ -49,6 +55,12 @@ final class AudioDucker {
     private var terminateToken: NSObjectProtocol?
     private var forceRestoreTimer: Timer?
     private var backupDeferCount = 0
+    private var restoreRetries = 0
+
+    /// Replaces the Music volume script under test, so no test ever reaches Music.
+    var setVolumeUnderTest: ((Int) -> Bool)?
+    /// True while a backstop or retry restore is scheduled.
+    var restoreIsPending: Bool { forceRestoreTimer != nil }
 
     private var savedVolume: Int? {
         get { UserDefaults.standard.object(forKey: Self.savedVolumeKey) as? Int }
@@ -117,16 +129,17 @@ final class AudioDucker {
     private func duck() {
         guard let current = readMusicVolume(), current > duckedVolume else { return }
         savedVolume = current
+        restoreRetries = 0
         _ = setMusicVolume(duckedVolume)
         WakeLog.shared.log("audio-ducker: ducked Music \(current) → \(duckedVolume)")
         backupDeferCount = 0
         scheduleBackupRestore()
     }
 
-    private func scheduleBackupRestore() {
+    private func scheduleBackupRestore(after interval: TimeInterval = AudioDucker.backupRestoreAfter) {
         forceRestoreTimer?.invalidate()
         forceRestoreTimer = Timer.scheduledTimer(
-            withTimeInterval: Self.backupRestoreAfter, repeats: false
+            withTimeInterval: interval, repeats: false
         ) { [weak self] _ in
             Task { @MainActor in self?.maybeBackupRestore() }
         }
@@ -150,20 +163,29 @@ final class AudioDucker {
         WakeLog.shared.log("audio-ducker: backup-restored (gruxSpeechDidStop missed or speech hung)")
     }
 
-    private func restore() {
+    func restore() {
         forceRestoreTimer?.invalidate()
         forceRestoreTimer = nil
         backupDeferCount = 0
         guard let saved = savedVolume else { return }
         if setMusicVolume(saved) {
             savedVolume = nil
+            restoreRetries = 0
             WakeLog.shared.log("audio-ducker: restored Music → \(saved)")
+        } else if restoreRetries < Self.maxRestoreRetries {
+            // Keep the breadcrumb (we never wrote the new value) and try again soon.
+            restoreRetries += 1
+            WakeLog.shared.log("audio-ducker: restore FAILED (AppleScript), trying again in \(Int(Self.restoreRetryAfter)) s (\(restoreRetries)/\(Self.maxRestoreRetries))")
+            scheduleBackupRestore(after: Self.restoreRetryAfter)
         } else {
             // Keep the breadcrumb so the next launch's self-heal can recover.
-            // Don't clear savedVolume; we never actually wrote the new value.
+            restoreRetries = 0
             WakeLog.shared.log("audio-ducker: restore FAILED (AppleScript), keeping breadcrumb for next launch")
         }
     }
+
+    /// Records a duck from `saved` without touching Music. For tests.
+    func stageDuckUnderTest(saved: Int?) { savedVolume = saved }
 
     // Synchronous restore used by the terminate observer. Avoids the Task
     // hop so the AppleScript completes before AppKit tears the app down.
@@ -212,6 +234,10 @@ final class AudioDucker {
         WakeLog.shared.log("audio-ducker: self-healed stuck Music \(current) → \(saved) (age=\(Int(age))s)")
     }
 
+    /// The longest the main actor waits on Music: it must finish before Grux speaks or
+    /// quits, so it waits here, but never macOS's own 2 min (D13).
+    static let scriptTimeout: TimeInterval = 3
+
     // Returns nil when Music isn't running OR AppleScript fails. nil → no-op.
     private func readMusicVolume() -> Int? {
         // Silent mode (AudioOutput) leaves Music alone entirely: no read, no duck.
@@ -222,8 +248,8 @@ final class AudioDucker {
             return -1
         end tell
         """
-        var err: NSDictionary?
-        guard let raw = NSAppleScript(source: s)?.executeAndReturnError(&err).stringValue,
+        guard let raw = ForeignAppScript.runWaiting(s, purpose: "AudioDucker.readMusicVolume",
+                                                    timeout: Self.scriptTimeout).stringValue,
               let n = Int(raw.trimmingCharacters(in: .whitespacesAndNewlines)),
               n >= 0 else { return nil }
         return n
@@ -231,6 +257,7 @@ final class AudioDucker {
 
     @discardableResult
     private func setMusicVolume(_ v: Int) -> Bool {
+        if let fake = setVolumeUnderTest { return fake(v) }
         guard !AudioOutput.isSilent else { return false }
         let clamped = max(0, min(100, v))
         let s = """
@@ -238,12 +265,13 @@ final class AudioDucker {
             if it is running then set sound volume to \(clamped)
         end tell
         """
-        var err: NSDictionary?
-        let descriptor = NSAppleScript(source: s)?.executeAndReturnError(&err)
-        if let err {
-            WakeLog.shared.log("audio-ducker: setMusicVolume(\(clamped)) AppleScript failed: \(err)")
+        let outcome = ForeignAppScript.runWaiting(s, purpose: "AudioDucker.setMusicVolume", timeout: Self.scriptTimeout)
+        switch outcome {
+        case .ok: return true
+        case .refused: return false
+        case .failed, .timedOut, .busy, .stopped, .behindLongerScript:
+            WakeLog.shared.log("audio-ducker: setMusicVolume(\(clamped)) AppleScript failed: \(outcome.problem ?? "")")
             return false
         }
-        return descriptor != nil
     }
 }

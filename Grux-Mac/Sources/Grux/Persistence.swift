@@ -42,6 +42,14 @@ enum Persistence {
         }
     }
 
+    /// THE SUITE NEVER TALKS TO THE PERSON'S OWN OLLAMA (D40). Under test the
+    /// shared config's local model address is this loopback port, where
+    /// nothing listens (the discard port), so every chat turn, discovery and
+    /// tag check a test starts finds no server, the same on a Mac running
+    /// Ollama as on one without it. A test that wants a server starts a stub
+    /// and points the config at it; `GRUX_OLLAMA_LIVE=1` keeps the real one.
+    static let testLocalModelBaseURL = "http://127.0.0.1:9"
+
     static var supportDir: URL {
         if isUnderTest { return testRoot }
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!

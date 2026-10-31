@@ -397,7 +397,8 @@ final class ChatService {
         // set, the message window, and the resolved backend/model/key). The
         // same factory feeds the pre-run CostMeter estimate below.
         let pending = assemblePendingContext(state: state)
-        WakeLog.shared.log(String(format: "chat stage: context assembled at +%.2fs, routed to %@", Date().timeIntervalSince(turnClock), pending.modelId))
+        WakeLog.shared.log(Self.contextAssembledLine(seconds: Date().timeIntervalSince(turnClock), modelId: pending.modelId,
+                                                     toolNames: pending.tools.map(\.name)))
         let presetApp = pending.presetApp
         let systemBlocks = pending.systemBlocks
         let tools = pending.tools
@@ -561,7 +562,12 @@ final class ChatService {
                 // Execute tools; feed back as tool_result content blocks.
                 var resultBlocks: [[String: Any]] = []
                 for use in toolUses {
-                    let raw = await Self.dispatchTool(name: use.name, input: use.input)
+                    let raw: String
+                    if let refused = Self.notOfferedRefusal(use.name, offered: tools) {
+                        raw = refused
+                    } else {
+                        raw = await Self.dispatchTool(name: use.name, input: use.input)
+                    }
                     // Item 30: screen untrusted tool output for prompt injection
                     // before it goes back to the model as a tool_result.
                     let result = PromptSecurity.sanitizeToolResult(toolName: use.name, result: raw)
@@ -602,7 +608,7 @@ final class ChatService {
             let claimCheck = ActionClaimGuard.vet(reply: finalText, route: pending.provider,
                                                   results: toolResultsThisTurn)
             if claimCheck.replaced {
-                WakeLog.shared.log("chat: local reply claimed an action no tool result this turn backs -> '\(claimCheck.text)' instead of '\(finalText.prefix(160))'")
+                WakeLog.shared.log("chat: local reply corrected (an action claimed that no result backs, or a write waiting in Approvals) -> '\(claimCheck.text)' instead of '\(finalText.prefix(160))'")
                 finalText = claimCheck.text
             }
             // HARD dash guard (house zero em/en dash rule). The persona prompt asks
@@ -762,12 +768,25 @@ final class ChatService {
             tools = LocalTurn.rank(tools, utterance: lastUser?.content ?? "")
             // Room for the line naming what is left out, at its longest.
             let worstLine = LocalTurn.cutToolsLine(tools.map(\.name))?.count ?? 0
-            let systemChars = systemBlocks.compactMap { $0["text"] as? String }.reduce(0) { $0 + $1.count }
-            let fit = LocalTurn.fit(systemChars: systemChars + worstLine, messageChars: messages.map(LocalTurn.chars),
+            // The blocks without cache_control (the per-turn block, a preset's,
+            // the cut line) ride on the newest message on the wire, so they are
+            // counted there, and the tools' half depends on the stable prompt only.
+            func chars(_ blocks: [[String: Any]]) -> Int {
+                blocks.compactMap { $0["text"] as? String }.reduce(0) { $0 + $1.count }
+            }
+            let stableChars = chars(systemBlocks.filter { $0["cache_control"] != nil })
+            var messageChars = messages.map(LocalTurn.chars)
+            if !messageChars.isEmpty {
+                messageChars[messageChars.count - 1] += chars(systemBlocks.filter { $0["cache_control"] == nil }) + worstLine
+            }
+            let fit = LocalTurn.fit(systemChars: stableChars, messageChars: messageChars,
                                     toolChars: tools.map(LocalTurn.chars),
                                     window: min(window, ceiling))
             messages = Array(messages.suffix(visible.count - LocalTurn.historyStart(count: visible.count,
                                                                                   fitting: fit.messages)))
+            // Tools and the cut line go out in the one order (LocalTurn.stableOrder),
+            // on either path, so the order never depends on the words (D17).
+            let order = LocalTurn.canonicalOrder(Self.allTools())
             if let stable = Self.stableLocalTools(systemBlocks: systemBlocks, messages: messages, ranked: tools,
                                                   utterance: lastUser?.content ?? "",
                                                   hasImage: lastUser?.imageData != nil,
@@ -777,18 +796,18 @@ final class ChatService {
                 // The same tools in the same order as the last turn, so Ollama
                 // reuses the prompt it already read (LocalTurn.stableHead).
                 // The history is what the ranked fit kept; only the tools change.
-                // The cut line keeps the catalogue's order, not the message's,
-                // so it too reads the same from turn to turn.
                 let names = Set(stable.map(\.name))
-                if let line = LocalTurn.cutToolsLine(filtered.map(\.name).filter { !names.contains($0) }) {
+                let cut = LocalTurn.inCanonicalOrder(filtered.filter { !names.contains($0.name) }, order: order)
+                if let line = LocalTurn.cutToolsLine(cut.map(\.name)) {
                     systemBlocks.append(["type": "text", "text": line])
                 }
                 tools = stable
             } else {
-                if let line = LocalTurn.cutToolsLine(tools.dropFirst(fit.tools).map(\.name)) {
+                let cut = LocalTurn.inCanonicalOrder(Array(tools.dropFirst(fit.tools)), order: order)
+                if let line = LocalTurn.cutToolsLine(cut.map(\.name)) {
                     systemBlocks.append(["type": "text", "text": line])
                 }
-                tools = Array(tools.prefix(fit.tools))
+                tools = LocalTurn.inCanonicalOrder(Array(tools.prefix(fit.tools)), order: order)
             }
         }
         let routing = ModelRegistry.shared.resolvedRouting(
@@ -826,6 +845,10 @@ final class ChatService {
                                  presetApp: PresetApplication?, sizingWindow: Int,
                                  contextWindow: Int) -> [ClaudeTool]? {
         guard !hasImage else { return nil }
+        // D12: the tools that open another app ride only when the words ask
+        // for them, and the stable list never holds them, so a turn that
+        // switched them on takes the ranked list.
+        guard !ranked.contains(where: { ToolRelevance.group(for: $0.name) == .otherApps }) else { return nil }
         func chars(_ blocks: [[String: Any]]) -> Int {
             blocks.compactMap { $0["text"] as? String }.reduce(0) { $0 + $1.count }
         }
@@ -914,6 +937,24 @@ final class ChatService {
             modelId: pending.modelId,
             provider: pending.provider,
             maxOutputTokens: pending.maxTokens)
+    }
+
+    /// The tool_result for a tool the turn did not offer, or nil when it was offered. A
+    /// model may name any tool it read about in the prompt; only an offered one runs.
+    nonisolated static func notOfferedRefusal(_ name: String, offered: [ClaudeTool]) -> String? {
+        if offered.contains(where: { $0.name == name }) { return nil }
+        return "error: \(name) is not offered on this turn, so it did not run; answer without it"
+    }
+
+    /// The wake.log line for an assembled turn. It names ToolRelevance's `.otherApps`
+    /// tools the turn carries (they bring Chrome or another app forward), so a log
+    /// reader can tell whether a turn could have (D12).
+    nonisolated static func contextAssembledLine(seconds: TimeInterval, modelId: String, toolNames: [String]) -> String {
+        let opens = toolNames.filter { ToolRelevance.group(for: $0) == .otherApps }
+        let apps = opens.isEmpty ? "none of \(ToolRelevance.otherAppsTools.joined(separator: ", "))"
+            : "with \(opens.joined(separator: ", "))"
+        return String(format: "chat stage: context assembled at +%.2fs, routed to %@, ", seconds, modelId)
+            + "\(toolNames.count) tools, \(apps)"
     }
 
     /// Whether this turn runs on a local model: a preset pinned to local, or
@@ -1926,11 +1967,11 @@ final class ChatService {
 
         case "open_url":
             let url = (input["url"] as? String) ?? ""
-            return await MainActor.run { BrowserTool.openURL(url) }
+            return await BrowserTool.openURL(url)
 
         case "search_web":
             let q = (input["query"] as? String) ?? ""
-            return await MainActor.run { BrowserTool.searchWeb(q) }
+            return await BrowserTool.searchWeb(q)
 
         case "research_web":
             let q = (input["query"] as? String) ?? ""
@@ -1946,7 +1987,7 @@ final class ChatService {
 
         case "play_on_youtube":
             let q = (input["query"] as? String) ?? ""
-            return await MainActor.run { BrowserTool.playOnYouTube(q) }
+            return await BrowserTool.playOnYouTube(q)
 
         case "play_music_track":
             let song = (input["song"] as? String) ?? ""
@@ -1956,7 +1997,7 @@ final class ChatService {
         case "list_library_tracks":
             let artist = (input["artist"] as? String) ?? ""
             let limit = (input["limit"] as? Int) ?? 20
-            return await MainActor.run { MusicTool.listLibraryTracks(artist: artist, limit: limit) }
+            return await MusicTool.listLibraryTracks(artist: artist, limit: limit)
 
         case "read_screen":
             let question = (input["question"] as? String) ?? ""
@@ -1996,6 +2037,13 @@ final class ChatService {
             if action == "status" {
                 return "foundry: \(FoundryEngine.shared.statusLine())"
             }
+            if let off = FoundryEngine.manualCycleRefusal(foundryEnabled: AppState.shared.config.foundryEnabled) {
+                WakeLog.shared.log("foundry: manual cycle via chat tool -> \(off)")
+                return "foundry: \(off)"
+            }
+            // The setting can be turned on after launch; activate() is
+            // idempotent and wires the cycle the governor runs.
+            FoundryEngine.shared.activate()
             let started = FoundryEngine.shared.triggerManualCycle()
             WakeLog.shared.log("foundry: manual cycle via chat tool -> \(started)")
             return "foundry: \(started)"
@@ -2286,6 +2334,13 @@ final class ChatService {
     //
     // Cache invalidates when block [0] bytes change (e.g., the user teaches a
     // new slang term). That's fine - next call rebuilds the cache.
+    /// The lean local system prompt as one string, for the speed check after
+    /// a model download (LocalModelSpeedCheck), so it times the prompt a local
+    /// chat turn really sends.
+    func leanSystemText(state: AppState) -> String {
+        buildSystemBlocks(state: state, lean: true).compactMap { $0["text"] as? String }.joined(separator: "\n\n")
+    }
+
     private func buildSystemBlocks(state: AppState, lean: Bool = false) -> [[String: Any]] {
         let profile = ProfileMemoryStore.shared.asSystemContext()
         let skillsContext = SkillStore.shared.asSystemContext()

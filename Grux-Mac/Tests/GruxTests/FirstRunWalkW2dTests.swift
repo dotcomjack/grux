@@ -17,12 +17,16 @@ final class LocalDownloadRunsToTheEndTests: XCTestCase {
     private var savedBase = ""
     private var savedModel = ""
     private var savedLocalModel = ""
+    // The fake server answers /api/version as 0.22.0 and OllamaManager records
+    // it (D25); put back the real server's, or later tests inherit the fake one.
+    private var savedOllamaVersion: String?
     private var server: SlowOllama?
 
     override func setUp() async throws {
         savedBase = AppState.shared.config.ollamaBaseURL
         savedModel = AppState.shared.config.offlineLLMModel
         savedLocalModel = AppState.shared.config.localLLMModel
+        savedOllamaVersion = Cookbook.knownOllamaVersion
     }
 
     override func tearDown() async throws {
@@ -30,6 +34,7 @@ final class LocalDownloadRunsToTheEndTests: XCTestCase {
         AppState.shared.config.ollamaBaseURL = savedBase
         AppState.shared.config.offlineLLMModel = savedModel
         AppState.shared.config.localLLMModel = savedLocalModel
+        Cookbook.knownOllamaVersion = savedOllamaVersion
         ModelRegistry.shared.resetLocalForTest()
     }
 

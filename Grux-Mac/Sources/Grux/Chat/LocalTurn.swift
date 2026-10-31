@@ -92,6 +92,21 @@ enum LocalTurn {
     static let everyday = ["list_tasks", "add_task", "complete_task", "list_events", "create_event",
                            "search_web", "capture_memory", "open_app"]
 
+    /// Words that name no tool, however often a description uses them.
+    static let commonWords: Set<String> = [
+        "what", "whats", "when", "where", "which", "while", "whom", "whose", "that", "this", "these", "those",
+        "there", "their", "theirs", "them", "they", "then", "than", "have", "having", "with", "without", "from",
+        "your", "yours", "about", "could", "would", "should", "please", "just", "like", "some", "will", "into",
+        "onto", "over", "also", "been", "were", "does", "doing", "done", "make", "made", "know", "tell", "give",
+        "need", "want", "thanks", "thank", "okay", "sure", "much", "many", "more", "most", "very", "really",
+        "only", "even", "still", "here", "same", "each", "every", "other", "another", "such", "both", "after",
+        "before", "again", "being", "dont", "doesn", "didn", "cant", "plus", "minus",
+        "times", "divided", "equals", "hello", "thing", "things", "something", "anything", "nothing", "everything",
+    ]
+
+    // Two scorings on purpose: `rank` below (D17, 2026-10-29) matches whole
+    // words and skips `commonWords`; `pointsPast` keeps `words` and `score`,
+    // the substring scoring its held-out v2 thresholds were calibrated on.
     /// The words of a message that `rank` matches: lowercased, split on
     /// anything not a letter or number, four characters or more.
     static func words(_ utterance: String) -> Set<String> {
@@ -107,10 +122,26 @@ enum LocalTurn {
     /// Tools by how much the message is about them: words of the message found
     /// in a tool's name or description, then the everyday ones, then the rest
     /// in their usual order. Deterministic, so the same message gets the same tools.
+    ///
+    /// D17: whole words only, and never the words every question has ("what",
+    /// "about", "plus"): matched inside descriptions they ranked
+    /// remember_slang and list_macros above add_task for "what is two plus
+    /// two", and a different set for every question, so no two turns shared a
+    /// prompt.
     static func rank(_ tools: [ClaudeTool], utterance: String) -> [ClaudeTool] {
-        let words = Self.words(utterance)
+        let words = Set(utterance.lowercased().split { !$0.isLetter && !$0.isNumber }
+            .map(String.init).filter { $0.count >= 4 && !commonWords.contains($0) })
+        func score(_ t: ClaudeTool) -> Int {
+            let text = Set((t.name.replacingOccurrences(of: "_", with: " ") + " " + t.description).lowercased()
+                .split { !$0.isLetter && !$0.isNumber }.map(String.init))
+            return words.reduce(0) { n, w in
+                // "tasks" finds "task"; "news" is not "new".
+                let stem = w.hasSuffix("s") && w.count > 4 ? String(w.dropLast()) : w
+                return n + (text.contains(w) || text.contains(stem) || text.contains(stem + "s") ? 1 : 0)
+            }
+        }
         return tools.enumerated().sorted { a, b in
-            let sa = score(a.element, words: words), sb = score(b.element, words: words)
+            let sa = score(a.element), sb = score(b.element)
             if sa != sb { return sa > sb }
             let ea = everyday.firstIndex(of: a.element.name) ?? Int.max
             let eb = everyday.firstIndex(of: b.element.name) ?? Int.max
@@ -127,7 +158,10 @@ enum LocalTurn {
     /// held-out v2): 8.54 s a turn at the median with the ranked list and
     /// 1.1 s with one list for every turn, with 201 passes against 198.
     /// `stableHead` leads it, then the core tools in their usual order.
-    static let stableHead = everyday + ["set_mode", "create_note", "remember_fact", "remove_task"]
+    /// Core tools only: the ones that open another app (D12, `.otherApps`)
+    /// ride when a message asks for them, never on the stable list.
+    static let stableHead = (everyday + ["set_mode", "create_note", "remember_fact", "remove_task"])
+        .filter { ToolRelevance.group(for: $0) == .core }
 
     /// Room the stable list leaves for what changes every turn (the turn's own
     /// block and the newest message), so neither changes how many tools it
@@ -161,14 +195,24 @@ enum LocalTurn {
         "anything", "something",
     ]
 
-    /// `tools` with `stableHead` first, then the rest in their usual order.
+    /// `tools` in the one order a local turn sends (`orderKey`): the core
+    /// group with `stableHead` first, then the groups a message brings in,
+    /// then the tools that open another app, each in the usual order.
     static func stableOrder(_ tools: [ClaudeTool]) -> [ClaudeTool] {
-        tools.enumerated().sorted { a, b in
-            let ha = stableHead.firstIndex(of: a.element.name) ?? Int.max
-            let hb = stableHead.firstIndex(of: b.element.name) ?? Int.max
-            if ha != hb { return ha < hb }
-            return a.offset < b.offset
-        }.map(\.element)
+        inCanonicalOrder(tools, order: canonicalOrder(tools))
+    }
+
+    /// The sort key behind `stableOrder` and `canonicalOrder`: the group's
+    /// band (core 0, other groups 1, `.otherApps` 2), then the place in
+    /// `stableHead`. Ties keep the catalogue order.
+    static func orderKey(_ name: String) -> (band: Int, head: Int) {
+        let band: Int
+        switch ToolRelevance.group(for: name) {
+        case .core: band = 0
+        case .otherApps: band = 2
+        default: band = 1
+        }
+        return (band, stableHead.firstIndex(of: name) ?? Int.max)
     }
 
     /// The stable list: `core` in the stable order, as many as fit beside the
@@ -218,16 +262,17 @@ enum LocalTurn {
     static let historyStep = 10
 
     /// Index of the oldest of `count` messages a local turn sends, when the
-    /// newest `fitting` fit in the window. It is a multiple of historyStep,
-    /// so it holds still for about historyStep messages and the history
-    /// reads the same from turn to turn: past 30 messages a turn keeps 21 to
-    /// 30, and a cut for room drops up to historyStep - 1 more than it must.
-    /// The newest message always stays.
+    /// newest `fitting` fit in the window. The 30-message window starts at a
+    /// multiple of historyStep, so it holds still for about historyStep
+    /// messages and the history reads the same from turn to turn (past 30 a
+    /// turn keeps 21 to 30). A cut for room keeps every message that fits
+    /// (wave 10 review, 2026-10-29: a dropped message that fit changes the
+    /// answer, a cache miss only costs time). The newest message always stays.
     static func historyStart(count: Int, fitting: Int) -> Int {
-        let must = max(0, count - historyMessages, count - fitting)
-        guard must > 0 else { return 0 }
-        let stepped = (must + historyStep - 1) / historyStep * historyStep
-        return min(stepped, count - 1)
+        guard count > 0 else { return 0 }
+        let over = max(0, count - historyMessages)
+        let window = (over + historyStep - 1) / historyStep * historyStep
+        return min(max(window, count - max(1, fitting)), count - 1)
     }
 
     /// How many of the newest messages fit beside a fixed tool list: the
@@ -248,16 +293,22 @@ enum LocalTurn {
 
     /// How many of the newest messages and of the ranked tools fit in the
     /// window beside the system prompt and the reply. The newest message
-    /// always stays; then the best tools, up to half of what is left; then
-    /// older history; then more tools if room remains.
+    /// always stays; then the best tools, up to half of what the window leaves
+    /// beside the system prompt (D17); then older history.
     static func fit(systemChars: Int, messageChars: [Int], toolChars: [Int],
                     window: Int, reply: Int = replyTokens) -> (messages: Int, tools: Int) {
         let margin = 256
         var budget = window - reply - margin - tokens(chars: systemChars)
         var messages = 0
         var tools = 0
+        // D17: the tools get half of what the window leaves beside the system
+        // prompt, whatever the conversation holds, so two turns of one thread
+        // send the same tools. A newest message too long for the other half
+        // takes from the tools' half instead.
+        var toolLimit = max(0, budget / 2)
         if let newest = messageChars.last {
             budget -= tokens(chars: newest)
+            toolLimit = min(toolLimit, max(0, budget))
             messages = 1
         }
         func takeTools(within limit: Int) {
@@ -270,15 +321,49 @@ enum LocalTurn {
                 tools += 1
             }
         }
-        takeTools(within: max(0, budget / 2))
+        takeTools(within: toolLimit)
         for chars in messageChars.dropLast().reversed() {
             let cost = tokens(chars: chars)
             guard cost <= budget else { break }
             budget -= cost
             messages += 1
         }
-        takeTools(within: Int.max)
         return (messages, tools)
+    }
+
+    // D17: A LOCAL MODEL READS AGAIN WHATEVER DIFFERS FROM THE LAST PROMPT.
+    // Ollama keeps the last prompt it read and reuses the part that matches,
+    // token by token from the start. qwen3.5's template (Grux Local's too) puts
+    // the tools first, then the system prompt, then the conversation. Measured on
+    // a 16 GB Mac mini, 2026-10-29: every chat turn missed (`matched=32`, the
+    // template's own words before the first tool) and waited 15 to 20 s, because
+    // each turn sent a different set of tools in a different order and the
+    // JSON came out in a different key order each time (see
+    // `OpenAICompatBackend.wireData`). So a local turn sends its tools in one
+    // order, picks how many from the window and the system prompt alone, and
+    // moves its history window in steps (`historyStart`).
+
+    /// One order for the tools a local turn sends, by `orderKey`, so the
+    /// order never depends on the words. Which tools make the list still does
+    /// (`rank`, within the window).
+    static func canonicalOrder(_ tools: [ClaudeTool]) -> [String: Int] {
+        let sorted = tools.enumerated().sorted {
+            let (a, b) = (orderKey($0.element.name), orderKey($1.element.name))
+            if a.band != b.band { return a.band < b.band }
+            if a.head != b.head { return a.head < b.head }
+            return $0.offset < $1.offset
+        }
+        var out: [String: Int] = [:]
+        for (i, t) in sorted.enumerated() where out[t.element.name] == nil { out[t.element.name] = i }
+        return out
+    }
+
+    /// `tools` in `canonicalOrder`; names it does not know go last, as given.
+    static func inCanonicalOrder(_ tools: [ClaudeTool], order: [String: Int]) -> [ClaudeTool] {
+        tools.enumerated().sorted {
+            let a = order[$0.element.name] ?? Int.max, b = order[$1.element.name] ?? Int.max
+            return a != b ? a < b : $0.offset < $1.offset
+        }.map(\.element)
     }
 
     /// A tool's size on the wire, for `fit`.

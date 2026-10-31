@@ -35,7 +35,7 @@ struct DocumentLibraryView: View {
             }
         }
         .background(GruxTheme.base)
-        .sheet(item: $openDocument) { selection in
+        .gruxSheet(item: $openDocument) { selection in
             DocumentEditorView(documentId: selection.id)
                 .frame(minWidth: 760, minHeight: 520)
         }

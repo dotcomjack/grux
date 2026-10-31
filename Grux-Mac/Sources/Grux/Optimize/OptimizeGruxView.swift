@@ -48,7 +48,7 @@ struct OptimizeGruxButton: View {
         }
         .buttonStyle(.plain)
         .help(OptimizeCopy.subtitle)
-        .popover(isPresented: $state.isOpen, arrowEdge: .trailing) {
+        .gruxPopover(isPresented: $state.isOpen, arrowEdge: .trailing) {
             OptimizeGruxPanel(store: store, state: state)
         }
         // Keeps the dot honest while an agent is working, without a timer

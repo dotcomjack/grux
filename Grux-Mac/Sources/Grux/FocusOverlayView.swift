@@ -238,7 +238,13 @@ struct FocusOverlayView: View {
         case .drifting: return "drifting"
         case .offTask: return "off task"
         case .ambiguous: return "checking…"
-        case .none: return appState.watching ? "watching" : "idle"
+        case .none:
+            // The one rule: on with no screen access watches nothing.
+            switch PanelCopy.watchingState(watching: appState.watching, screenAccess: appState.screenPermissionGranted) {
+            case .watching: return "watching"
+            case .needsScreenAccess: return "needs screen access"
+            case .paused: return "idle"
+            }
         }
     }
 }

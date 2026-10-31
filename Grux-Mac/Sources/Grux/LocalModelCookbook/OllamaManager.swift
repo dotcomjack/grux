@@ -233,6 +233,8 @@ final class OllamaManager: ObservableObject {
     @Published private(set) var installedTags: [String] = []
     @Published private(set) var pulls: [String: PullProgress] = [:]
     @Published private(set) var lastError: String? = nil
+    // What the server said at /api/version, the last time it answered (D25).
+    @Published private(set) var serverVersion: String? = nil
 
     private var serveProcess: Process? = nil
     private var pullTasks: [String: Task<Void, Never>] = [:]
@@ -350,15 +352,30 @@ final class OllamaManager: ObservableObject {
 
     // MARK: - Health
 
+    /// The version an `/api/version` body states (`{"version":"0.40.8"}`), or nil.
+    nonisolated static func version(fromVersionBody data: Data) -> String? {
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let v = (obj["version"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !v.isEmpty else { return nil }
+        return v
+    }
+
     // GET {base}/api/version with a 2 second budget. True means something is
     // answering like Ollama on the port.
     func isHealthy() async -> Bool {
         guard let url = URL(string: "\(baseURL)/api/version") else { return false }
         var req = URLRequest(url: url)
         req.timeoutInterval = 2
-        guard let (_, resp) = try? await Self.probeSession.data(for: req),
+        guard let (data, resp) = try? await Self.probeSession.data(for: req),
               let http = resp as? HTTPURLResponse else { return false }
-        return (200..<300).contains(http.statusCode)
+        let healthy = (200..<300).contains(http.statusCode)
+        // D25: the Cookbook recommends only what this server runs. Kept when the
+        // server stops: the installed Ollama is still that version.
+        if healthy, let v = Self.version(fromVersionBody: data), v != serverVersion {
+            serverVersion = v
+            Cookbook.knownOllamaVersion = v
+        }
+        return healthy
     }
 
     // One-shot reconciliation: figure out what's true right now. Called on
@@ -807,6 +824,32 @@ final class OllamaManager: ObservableObject {
         await pull(modelId)
         if let task = pullTasks[modelId] { await task.value }
         return pulls[modelId]
+    }
+
+    /// The Cookbook's Pull button for a Mac nobody can click on
+    /// (`~/.grux/fire-cookbook-pull`, contents = a catalog id). Only a catalog
+    /// id, the set the button itself can reach; anything else is refused with
+    /// the reason, and nothing is pulled.
+    nonisolated static func catalogPullTarget(token: String) -> Result<String, PullDoorRefusal> {
+        let id = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !id.isEmpty else { return .failure(.init(reason: "refused: name a Cookbook model id")) }
+        guard Cookbook.catalog.contains(where: { $0.id == id }) else {
+            return .failure(.init(reason: "refused: \(id) is not in the Cookbook, so the Pull button cannot reach it"))
+        }
+        return .success(id)
+    }
+
+    struct PullDoorRefusal: Error, Equatable { let reason: String }
+
+    /// Runs the Pull button's path to its end and says how it ended.
+    func pullRequested(token: String) async -> String {
+        switch Self.catalogPullTarget(token: token) {
+        case .failure(let refusal):
+            return refusal.reason
+        case .success(let id):
+            guard let ended = await pullToEnd(id) else { return "\(id): no pull row" }
+            return "\(id): \(ended.failed ? "failed" : "ended") (\(ended.status)), installed \(isInstalled(id))"
+        }
     }
 
     func cancelPull(_ modelId: String) {

@@ -49,6 +49,8 @@ public struct SwarmWorkerSpec: Codable, Identifiable, Sendable {
     // Records why the worker is parked + checkpoint context for the resume
     // sheet's UI copy. Cleared when the worker is re-queued by resumeJob().
     public var interruption: WorkerInterruption?
+    // This worker's own wall TTL in seconds; nil takes the orchestrator's default.
+    public var ttlSeconds: Int?
 
     public init(
         id: String = UUID().uuidString,
@@ -68,7 +70,8 @@ public struct SwarmWorkerSpec: Codable, Identifiable, Sendable {
         sessionId: String? = nil,
         lastResultText: String? = nil,
         errorMessage: String? = nil,
-        interruption: WorkerInterruption? = nil
+        interruption: WorkerInterruption? = nil,
+        ttlSeconds: Int? = nil
     ) {
         self.id = id
         self.role = role
@@ -88,6 +91,7 @@ public struct SwarmWorkerSpec: Codable, Identifiable, Sendable {
         self.lastResultText = lastResultText
         self.errorMessage = errorMessage
         self.interruption = interruption
+        self.ttlSeconds = ttlSeconds
     }
 
     public var isTerminal: Bool {

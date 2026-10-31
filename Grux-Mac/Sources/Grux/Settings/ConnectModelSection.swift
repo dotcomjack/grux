@@ -144,6 +144,8 @@ enum LocalModelFetch {
     /// nil when a usable model is installed and discovered, otherwise the
     /// sentence to show.
     static func fetchHeadline(onPulling: (CookbookModel?) -> Void) async -> String? {
+        // Reads the server's version, so the pick is one it runs (D25).
+        _ = await OllamaManager.shared.isHealthy()
         guard let pick = Cookbook.headline(for: HardwareProfile.detect()) else { return ConnectModelCopy.noFit }
         if let refusal = await OllamaManager.shared.pullRefusal(for: pick.id), !refusal.fits {
             return String(format: "%@ needs %.1f GB free and %@ has %.1f GB. Free some space, or paste a key instead.",
@@ -156,11 +158,13 @@ enum LocalModelFetch {
         guard !GruxConfig.usableLocalModels(OllamaManager.shared.installedTags).isEmpty else {
             return ConnectModelCopy.downloadFailed(pick, ended)
         }
+        // Timed on this Mac before it becomes the default.
+        let settled = await LocalModelSpeedGuard.settle(pick: pick, onPulling: onPulling)
         // Chat reads `offlineLLMModel` and the background path `localLLMModel`:
         // both point at what is actually here, as first run does.
         if let adopt = GruxConfig.installedModelToAdopt(configured: AppState.shared.config.offlineLLMModel,
                                                         installed: OllamaManager.shared.installedTags,
-                                                        headline: pick.id) {
+                                                        headline: settled.id) {
             AppState.shared.config.offlineLLMModel = adopt
             AppState.shared.config.localLLMModel = adopt
             AppState.shared.saveConfig()

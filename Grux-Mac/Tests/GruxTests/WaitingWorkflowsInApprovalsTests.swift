@@ -39,7 +39,8 @@ final class WaitingWorkflowsInApprovalsTests: XCTestCase {
         let deadline = Date().addingTimeInterval(20)
         while Date() < deadline {
             if engine.run(id: runId)?.status == .waitingForApproval { return runId }
-            try await Task.sleep(nanoseconds: 20_000_000)
+            // 1 ms, not 20: settles poll hundreds of times a class, and the 20 ms naps added up to seconds.
+            try await Task.sleep(nanoseconds: 1_000_000)
         }
         XCTFail("run did not reach its gate")
         throw CancellationError()

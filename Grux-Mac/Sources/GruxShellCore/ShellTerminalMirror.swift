@@ -91,18 +91,6 @@ public actor ShellTerminalMirror {
     // MARK: - Internals
 
     private func runAppleScript(_ source: String) async -> String? {
-        await Task.detached(priority: .userInitiated) { () -> String? in
-            let proc = Process()
-            proc.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-            proc.arguments = ["-e", source]
-            let out = Pipe(); let err = Pipe()
-            proc.standardOutput = out
-            proc.standardError = err
-            do { try proc.run() } catch { return nil }
-            proc.waitUntilExit()
-            guard proc.terminationStatus == 0 else { return nil }
-            let data = out.fileHandleForReading.readDataToEndOfFile()
-            return String(data: data, encoding: .utf8)
-        }.value
+        await ShellAppleEvents.runOsascript(source, purpose: "ShellTerminalMirror")
     }
 }

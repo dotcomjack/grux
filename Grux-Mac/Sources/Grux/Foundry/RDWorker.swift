@@ -427,12 +427,12 @@ final class RDWorker: ObservableObject {
         var repoRoot: URL
         // Autonomous R&D defaults to Sonnet: it does structural dup/lint and
         // iteration work at a fraction of Opus cost with negligible quality
-        // loss. Pass SubscriptionModels.code explicitly for genuinely high-stakes runs.
-        var model: String = SubscriptionModels.routine
+        // loss. Pass FoundryModelIDs.highStakes for genuinely high-stakes runs.
+        var model: String = FoundryModelIDs.standard
         var mode: Mode = .headless
         var runsDir: URL = RDWorkerPaths.runsDir
 
-        init(repoRoot: URL, model: String = SubscriptionModels.routine, mode: Mode = .headless, runsDir: URL = RDWorkerPaths.runsDir) {
+        init(repoRoot: URL, model: String = FoundryModelIDs.standard, mode: Mode = .headless, runsDir: URL = RDWorkerPaths.runsDir) {
             self.repoRoot = repoRoot
             self.model = model
             self.mode = mode
@@ -496,18 +496,24 @@ final class RDWorker: ObservableObject {
         - No em dash (U+2014) and no en dash (U+2013) anywhere: code, comments, docs, tests, commit messages. Use a comma, period, colon, parentheses, or pipe instead.
         - Dollar figures in any copy are written as $N (numeral with symbol), and every cost figure is labeled estimated. The engine is subscription powered; nothing here is billed dollars.
         - Commit messages use Conventional Commits: feat(scope):, fix(scope):, docs(scope):. Stage specific files by name, never git add -A.
-        - Tests stay at baseline: the existing suite must pass before you finish, and the new behavior gets focused tests.
+        - Tests stay at baseline: the new behavior gets focused tests, and Grux's verifier runs the full suite after you finish.
         - Native Swift and SwiftUI only. Zero new dependencies.
-        - Protected zones are off limits, do not touch: \(TrustLedger.protectedPathMarkers.joined(separator: ", ")).
+        - Protected zones are off limits, do not touch: \((TrustLedger.protectedPathMarkers + TrustLedger.protectedChangeMarkers + TrustLedger.protectedChangeFilenames + TrustLedger.protectedChangeFilenamePrefixes).joined(separator: ", ")).
         """
     }
 
-    static func verifyBlock() -> String {
+    static func verifyBlock() -> String { verifyBlock(suite: .swiftTest) }
+
+    // The worker runs only the focused tests for what it touched, with this Mac's own
+    // focused command. The full suite is the verifier's job after the session: a worker
+    // that ran it too spent its whole TTL there on a Mac whose suite takes 15 minutes
+    // (live 2026-10-23, swarm job BB340D13).
+    static func verifyBlock(suite: RDSuiteCommand) -> String {
         """
         ## Verify before you finish (in order)
         1. swift build (zero errors)
-        2. swift test (full suite green at baseline)
-        3. Run your focused new tests and confirm they pass
+        2. Run the focused tests for what you changed with `\(suite.focused.joined(separator: " "))`, the test class name in place of \(RDSuiteCommand.filterToken), and confirm they pass
+        3. Do not run the full suite: Grux runs it on this Mac after you finish and grades it against this Mac's measured bar, and a full run here can take longer than your session is allowed
         4. Scan the diff for U+2014 and U+2013 characters and remove any
         5. Commit with a conventional message, then report files changed, insertions, deletions
 
@@ -523,17 +529,19 @@ final class RDWorker: ObservableObject {
     }
 
     // Worktree-aware variant used by execute/escalate once the workspace exists.
-    static func composePrompt(_ proposal: UpgradeProposal, worktreePath: String, branch: String) -> String {
+    static func composePrompt(_ proposal: UpgradeProposal, worktreePath: String, branch: String,
+                              suite: RDSuiteCommand = .swiftTest) -> String {
         let workspace = """
         ## Workspace
         - Worktree: \(worktreePath)
         - Branch: \(branch) (created from the current branch; commit here only)
         - Never modify files outside this worktree.
         """
-        return composePrompt(proposal, workspaceBlock: workspace)
+        return composePrompt(proposal, workspaceBlock: workspace, suite: suite)
     }
 
-    private static func composePrompt(_ proposal: UpgradeProposal, workspaceBlock: String?) -> String {
+    private static func composePrompt(_ proposal: UpgradeProposal, workspaceBlock: String?,
+                                      suite: RDSuiteCommand = .swiftTest) -> String {
         let evidenceLines = proposal.evidence.isEmpty
             ? "- (no recorded signals; treat the task description as the evidence)"
             : proposal.evidence.map { "- \($0.display)" }.joined(separator: "\n")
@@ -556,7 +564,7 @@ final class RDWorker: ObservableObject {
         if let workspaceBlock { sections.append(workspaceBlock) }
         sections.append(conventionsBlock())
         sections.append("## Task\n\(proposal.readyPrompt)")
-        sections.append(verifyBlock())
+        sections.append(verifyBlock(suite: suite))
         return sections.joined(separator: "\n\n")
     }
 
@@ -567,7 +575,8 @@ final class RDWorker: ObservableObject {
         branch: String,
         worktreePath: String,
         previousFinalText: String?,
-        instruction: String
+        instruction: String,
+        suite: RDSuiteCommand = .swiftTest
     ) -> String {
         let prior = previousFinalText?.trimmingCharacters(in: .whitespacesAndNewlines)
         let priorBlock = (prior?.isEmpty ?? true) ? "(none captured)" : prior!
@@ -582,7 +591,7 @@ final class RDWorker: ObservableObject {
 
         \(conventionsBlock())
 
-        \(verifyBlock())
+        \(verifyBlock(suite: suite))
         """
     }
 
@@ -612,7 +621,8 @@ final class RDWorker: ObservableObject {
         // not yet accepted simply stays where it is.
         store.transition(id: proposal.id, to: .building)
 
-        let prompt = Self.composePrompt(proposal, worktreePath: handle.worktreePath, branch: handle.branch)
+        let prompt = Self.composePrompt(proposal, worktreePath: handle.worktreePath, branch: handle.branch,
+                                        suite: Self.configuredSuite)
         await log.writePrompt(prompt)
         await log.append(RDRunEvent(kind: .promptComposed, text: "prompt \(prompt.count) chars, saved to prompt.md"))
 
@@ -660,7 +670,8 @@ final class RDWorker: ObservableObject {
             branch: handle.branch,
             worktreePath: handle.worktreePath,
             previousFinalText: lastFinalTextByRun[handle.runId],
-            instruction: instruction
+            instruction: instruction,
+            suite: Self.configuredSuite
         )
         await log.writePrompt(prompt, name: "followup-\(Int(Date().timeIntervalSince1970)).md")
         let outcome = await runHeadlessSession(
@@ -682,6 +693,29 @@ final class RDWorker: ObservableObject {
     // existing SwarmOrchestrator (DAG, pause/resume, Agents tab UI) drives
     // the build. The worktree stays alive for the job's lifetime; call
     // complete(_:)/abandon(_:) after the AgentJob reaches a terminal state.
+    // A Foundry swarm worker's wall TTL, above the general 30 minutes: an implementor on a
+    // slow Mac builds, writes focused tests and runs them, each build a few minutes here.
+    static let swarmWorkerTTLSeconds = 3600
+
+    nonisolated static let escalationTitlePrefix = "foundry: "
+
+    // The swarm job an escalation starts, every worker on Foundry's own TTL and
+    // Foundry's own model (left alone it takes the Agents default), marked as
+    // Self-Upgrade's so its end is settled here and never posted into chat.
+    nonisolated static func escalationJob(title: String, prompt: String, rootDir: String) -> AgentJob {
+        var job = AgentService.plannedJob(title: escalationTitlePrefix + title, goal: prompt, template: .architectImplement,
+                                          rootDir: rootDir, maxParallelWorkers: 1)
+        job.startedBy = .selfUpgrade
+        for i in job.workers.indices {
+            job.workers[i].ttlSeconds = swarmWorkerTTLSeconds
+            job.workers[i].model = FoundryModelIDs.highStakes
+        }
+        return job
+    }
+
+    // The suite command the verifier will run, so the worker is told this Mac's own.
+    static var configuredSuite: RDSuiteCommand { AppState.shared.config.foundrySuiteCommand ?? .swiftTest }
+
     func escalate(_ proposal: UpgradeProposal) async -> (outcome: RDRunOutcome, handle: RDRunHandle?) {
         var handle = makeHandle(proposal)
         let log = RDRunLog(runDir: handle.runDir)
@@ -697,15 +731,12 @@ final class RDWorker: ObservableObject {
 
         store.transition(id: proposal.id, to: .building)
 
-        let prompt = Self.composePrompt(proposal, worktreePath: handle.worktreePath, branch: handle.branch)
+        let prompt = Self.composePrompt(proposal, worktreePath: handle.worktreePath, branch: handle.branch,
+                                        suite: Self.configuredSuite)
         await log.writePrompt(prompt)
 
         let job = await AgentService.shared.startSwarm(
-            title: "foundry: \(proposal.title)",
-            goal: prompt,
-            template: .architectImplement,
-            rootDir: handle.worktreePath,
-            maxParallelWorkers: 1
+            planned: Self.escalationJob(title: proposal.title, prompt: prompt, rootDir: handle.worktreePath)
         )
         await log.append(RDRunEvent(kind: .escalated, text: "swarm job \(job.id) running architectImplement in \(handle.worktreePath)"))
         return (.escalated(jobId: job.id), handle)

@@ -100,7 +100,8 @@ final class FoundryRDWorkerTests: XCTestCase {
         XCTAssertTrue(prompt.contains("sources/grux/security/"))
         // Verify steps are ordered.
         XCTAssertTrue(prompt.contains("1. swift build"))
-        XCTAssertTrue(prompt.contains("2. swift test"))
+        XCTAssertTrue(prompt.contains("2. Run the focused tests for what you changed with `swift test --filter {filter}`"))
+        XCTAssertTrue(prompt.contains("3. Do not run the full suite"))
         XCTAssertTrue(prompt.contains("RD_RESULT:"))
         // The prompt itself obeys the dash ban.
         XCTAssertFalse(prompt.contains("\u{2014}"))
@@ -385,5 +386,57 @@ final class FoundryRDWorkerTests: XCTestCase {
         // Tail limit.
         let tail = await log.load(limit: 1)
         XCTAssertEqual(tail.map(\.kind), [.usage])
+    }
+
+    // MARK: - D23: a medium upgrade can finish on a Mac with a slow suite
+
+    // The swarm killed the implementor at 30 minutes while it re-ran the full suite the
+    // verifier runs anyway after it (live 2026-10-23, job BB340D13). The worker runs only
+    // this Mac's focused command for what it touched and is told the full run is not its job.
+    func test_theWorkerRunsOnlyFocusedTestsAndLeavesTheFullSuiteToTheVerifier() throws {
+        let suite = RDSuiteCommand(full: ["zsh", "~/grux-loop/xctest.sh"],
+                                   focused: ["zsh", "~/grux-loop/xctest.sh", "GruxTests.{filter}"],
+                                   runsSwiftTesting: false)
+        let block = RDWorker.verifyBlock(suite: suite)
+        XCTAssertTrue(block.contains("`zsh ~/grux-loop/xctest.sh GruxTests.{filter}`"),
+                      "the worker is not told this Mac's focused test command: \(block)")
+        XCTAssertTrue(block.contains("Do not run the full suite"), block)
+        XCTAssertFalse(block.contains("full suite green"), "the worker is still asked for a full run: \(block)")
+        let prompt = RDWorker.composePrompt(makeProposal(), worktreePath: "/tmp/w", branch: "upgrade/w", suite: suite)
+        XCTAssertTrue(prompt.contains(block), "the escalated prompt does not carry the suite's verify block")
+    }
+
+    func test_aFoundrySwarmJobGetsItsOwnWorkerTTL() throws {
+        let job = RDWorker.escalationJob(title: "Fix it", prompt: "do it", rootDir: "/tmp/w")
+        XCTAssertFalse(job.workers.isEmpty)
+        XCTAssertEqual(job.maxParallelWorkers, 1)
+        XCTAssertEqual(job.title, "foundry: Fix it")
+        XCTAssertGreaterThan(RDWorker.swarmWorkerTTLSeconds, SwarmOrchestrator.defaultWorkerTTLSeconds)
+        for w in job.workers {
+            XCTAssertEqual(w.ttlSeconds, RDWorker.swarmWorkerTTLSeconds, "worker \(w.label) takes the general 30 minute TTL")
+        }
+    }
+
+    func test_theOrchestratorHonorsAWorkersOwnTTL() throws {
+        var spec = SwarmWorkerSpec(role: .implementor, label: "i", goal: "g", cwd: "/tmp")
+        XCTAssertEqual(SwarmOrchestrator.ttlSeconds(for: spec, environment: [:]), 1800)
+        XCTAssertEqual(SwarmOrchestrator.ttlSeconds(for: spec, environment: ["GRUX_WORKER_TTL_SECONDS": "2400"]), 2400)
+        spec.ttlSeconds = 3600
+        XCTAssertEqual(SwarmOrchestrator.ttlSeconds(for: spec, environment: [:]), 3600)
+        XCTAssertEqual(SwarmOrchestrator.ttlSeconds(for: spec, environment: ["GRUX_WORKER_TTL_SECONDS": "2400"]), 3600)
+        // A TTL of zero or less would kill the worker at once: it is no TTL.
+        spec.ttlSeconds = 0
+        XCTAssertEqual(SwarmOrchestrator.ttlSeconds(for: spec, environment: [:]), 1800)
+        spec.ttlSeconds = -5
+        XCTAssertEqual(SwarmOrchestrator.ttlSeconds(for: spec, environment: ["GRUX_WORKER_TTL_SECONDS": "2400"]), 2400)
+        spec.ttlSeconds = 1
+        XCTAssertEqual(SwarmOrchestrator.ttlSeconds(for: spec, environment: [:]), 1)
+        spec.ttlSeconds = nil
+        XCTAssertEqual(SwarmOrchestrator.ttlSeconds(for: spec, environment: ["GRUX_WORKER_TTL_SECONDS": "0"]), 1800)
+        // A saved job from before the field decodes with no TTL of its own.
+        let old = try JSONSerialization.jsonObject(with: JSONEncoder().encode(SwarmWorkerSpec(role: .architect, label: "a", goal: "g", cwd: "/tmp"))) as! [String: Any]
+        XCTAssertNil(old["ttlSeconds"])
+        let back = try JSONDecoder().decode(SwarmWorkerSpec.self, from: JSONSerialization.data(withJSONObject: old))
+        XCTAssertNil(back.ttlSeconds)
     }
 }

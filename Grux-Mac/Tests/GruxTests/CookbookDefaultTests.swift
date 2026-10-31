@@ -90,7 +90,7 @@ final class CookbookDefaultTests: XCTestCase {
             Cookbook.defaultModelID(for: airEightGB,
                                     userHasChosen: false,
                                     current: GruxConfig.defaultLocalModel),
-            "llama3.2:3b",
+            "gruxai.com/grux/grux-local:2b",
             "the 8 GB tier is the one this finding was about")
     }
 
@@ -99,7 +99,7 @@ final class CookbookDefaultTests: XCTestCase {
             Cookbook.defaultModelID(for: laptopSixteenGB,
                                     userHasChosen: false,
                                     current: GruxConfig.defaultLocalModel),
-            "qwen3-vl:4b")
+            "gruxai.com/grux/grux-local:4b")
     }
 
     func test_defaultModelID_picksTheHeadline_onASixtyFourGigMac() {
@@ -107,18 +107,28 @@ final class CookbookDefaultTests: XCTestCase {
             Cookbook.defaultModelID(for: studioSixtyFourGB,
                                     userHasChosen: false,
                                     current: GruxConfig.defaultLocalModel),
-            "qwen3.5:35b",
-            "a 48 GB budget was handed a small model, which wastes the machine")
+            "gruxai.com/grux/grux-local:4b",
+            "a 48 GB budget was handed a weaker model than the best that fits it")
     }
 
-    /// The three above must not be the same answer, or "reads your hardware" is
-    /// decoration. Asserted separately from the ids so the failure message says
-    /// which claim broke.
+    /// The three above must not all be the same answer, or "reads your
+    /// hardware" is decoration. Asserted separately from the ids so the failure
+    /// message says which claim broke.
+    ///
+    /// THREE DIFFERENT ANSWERS UNTIL GRUX LOCAL (2026-10-23). Grux's own 4B
+    /// scored 0.975 on Grux's jobs, above every larger model, so the 16 GB and
+    /// 64 GB Macs now rightly share it: a bigger machine is given the best model
+    /// that fits, not a bigger one. What still has to differ is the small end,
+    /// where the 4B does not rate Great on an 8 GB budget and the 2B does.
     func test_defaultModelID_actuallyDiffersByMachine() {
         let picks = [airEightGB, laptopSixteenGB, studioSixtyFourGB].map {
             Cookbook.defaultModelID(for: $0, userHasChosen: false, current: GruxConfig.defaultLocalModel)
         }
-        XCTAssertEqual(Set(picks).count, 3, "three machine classes got \(picks)")
+        XCTAssertNotEqual(picks[0], picks[1], "the 8 GB and 16 GB machines got \(picks)")
+        let best = Cookbook.recommended(for: studioSixtyFourGB).first { Cookbook.fit(of: $0, in: studioSixtyFourGB) == .great }
+        XCTAssertEqual(picks[2], best?.id, "the 64 GB machine was not handed the best Great fit")
+        XCTAssertEqual(Cookbook.catalog.first { $0.id == picks[2] }?.measuredQuality,
+                       Cookbook.catalog.compactMap(\.measuredQuality).max())
     }
 
     /// A Mac too small for anything in the catalog keeps what it had rather than
@@ -195,39 +205,54 @@ final class CookbookDefaultTests: XCTestCase {
     /// So this asserts the improvement that actually happened, and pins the
     /// rating so the day a smaller entry lands, this test has to be revisited
     /// rather than quietly passing.
+    ///
+    /// CELEBRATED, 2026-10-22 (D-COOKBOOK). It happened: qwen3.5:2b was measured
+    /// at 2.6 GB resident, under the 2.65 GB line, so an 8 GB Mac now gets a
+    /// "Great fit", and it is also the better model on Grux's jobs (0.752
+    /// against llama3.2:3b's 0.637). The rating is pinned again at the new level.
     func test_eightGigMac_isOfferedSomethingItCanLiveWith() {
         let best = Cookbook.recommended(for: airEightGB)
             .map { Cookbook.fit(of: $0, in: airEightGB) }
             .max { (generosity[$0] ?? 0) < (generosity[$1] ?? 0) }
-        XCTAssertEqual(best, .good,
+        XCTAssertEqual(best, .great,
                        "the 8 GB tier's best rating moved off .good, which is either the "
                        + "regression this test was written for or a smaller catalog entry "
                        + "that should be celebrated here")
 
         let pick = try! XCTUnwrap(Cookbook.headline(for: airEightGB))
-        XCTAssertEqual(pick.id, "llama3.2:3b")
-        XCTAssertEqual(Cookbook.fit(of: pick, in: airEightGB), .good)
+        XCTAssertEqual(pick.id, "gruxai.com/grux/grux-local:2b")
+        XCTAssertEqual(Cookbook.fit(of: pick, in: airEightGB), .great)
         XCTAssertLessThanOrEqual(pick.estimatedMemoryGB, airEightGB.modelBudgetGB,
                                  "\(pick.id) needs \(pick.estimatedMemoryGB) GB")
     }
 
     /// The pick for a 16 GB Mac used to depend on the sort implementation.
-    /// qwen3-vl:4b and qwen3.5:4b are both estimated at 6.0 GB, so they tie on
+    /// qwen3-vl:4b and qwen3.5:4b were both estimated at 6.0 GB, so they tied on
     /// score AND on the smaller-model tie-break, and `sorted` promises an
     /// ordering rather than a stable one. That was survivable while the headline
     /// was a label; it stopped being survivable when it started being written
     /// into a config file, because the default a stranger gets would then change
-    /// with a toolchain upgrade. The id comparison is arbitrary and it is
-    /// arbitrary once.
+    /// with a toolchain upgrade.
+    ///
+    /// Since D-COOKBOOK the catalog's tie is on measured QUALITY: gemma4:12b and
+    /// qwen3.8:27b both scored 0.927. On a 36 GB budget both rate Great while
+    /// gemma4:26b rates only Good, so the tie decides the headline, and the
+    /// footprint break hands it to the smaller model every time. (The id break
+    /// behind it is pinned on fabricated models in CookbookMeasuredQualityTests.)
+    /// Since Grux Local the tie decides the order behind the headline rather than
+    /// the headline itself, so the whole ranked list is held still.
     func test_headline_isDeterministic_whenTwoModelsTieExactly() {
-        let tied = Cookbook.catalog.filter { $0.estimatedMemoryGB == 6.0 }.map(\.id).sorted()
-        XCTAssertEqual(tied.count, 2, "the tie this test is about is gone: \(tied)")
+        let machine = mac(ramGB: 48, gpuGB: 36)
+        let tied = Cookbook.catalog
+            .filter { $0.measuredQuality == 0.927 && Cookbook.fit(of: $0, in: machine) == .great }
+            .map(\.id).sorted()
+        XCTAssertEqual(tied, ["gemma4:12b", "qwen3.8:27b"], "the tie this test is about is gone")
 
         let picks = (0..<25).map { _ in
-            Cookbook.headline(for: laptopSixteenGB)?.id
+            Cookbook.recommended(for: machine).map(\.id)
         }
-        XCTAssertEqual(Set(picks.compactMap { $0 }).count, 1, "the headline moved between calls")
-        XCTAssertEqual(picks.first ?? nil, tied.first)
+        XCTAssertEqual(Set(picks).count, 1, "the ranking moved between calls")
+        XCTAssertEqual(picks[0].filter { tied.contains($0) }, ["gemma4:12b", "qwen3.8:27b"])
     }
 
     // MARK: - Pressure aware scoring
@@ -303,7 +328,10 @@ final class CookbookDefaultTests: XCTestCase {
     /// case the pressure work was written for: the 16 GB laptop that was told an
     /// 11 GB model was a "Good fit" while most of that budget was already spent.
     func test_aLoadedMachineActuallyLosesARating() {
-        let model = try! XCTUnwrap(Cookbook.catalog.first { $0.id == "qwen3.5:9b" },
+        // gemma4:12b at a measured 9.4 GB. This was qwen3.5:9b at an estimated
+        // 10 GB until D-COOKBOOK measured that one at 6.2, which a 16 GB laptop
+        // rates Good at full headroom and so cannot show this step.
+        let model = try! XCTUnwrap(Cookbook.catalog.first { $0.id == "gemma4:12b" },
                                    "fixture model left the catalog")
         XCTAssertEqual(Cookbook.fit(of: model, in: laptopSixteenGB, headroom: .full), .tight)
         XCTAssertEqual(Cookbook.fit(of: model, in: laptopSixteenGB, headroom: .reduced), .tooBig)
@@ -397,7 +425,7 @@ final class CookbookDefaultTests: XCTestCase {
         let stored = Cookbook.defaultModelID(for: laptopSixteenGB,
                                              userHasChosen: false,
                                              current: GruxConfig.defaultLocalModel)
-        XCTAssertEqual(stored, "qwen3-vl:4b")
+        XCTAssertEqual(stored, "gruxai.com/grux/grux-local:4b")
 
         var shown: [String] = []
         for headroom in MachineLoad.Headroom.allCases {
@@ -410,19 +438,26 @@ final class CookbookDefaultTests: XCTestCase {
                 "the stored model changed with \(headroom.rawValue) headroom, which is a "
                 + "transient reading writing itself into a config file")
         }
-        XCTAssertEqual(Set(shown).count, MachineLoad.Headroom.allCases.count,
-                       "the displayed headline did not move at all, so the half of this "
-                       + "test that proves labels ARE live proves nothing: got \(shown)")
+        // Pinned per headroom. Before D-COOKBOOK all three differed; with the
+        // measured figures the 2B is both the best fit at reduced headroom and
+        // the only Good one at minimal, so two of the three agree, and the label
+        // still moves off what config.json holds. (Grux Local's 4B and 2B since
+        // 2026-10-23, in the places Qwen 3.5's held.)
+        XCTAssertEqual(shown, ["gruxai.com/grux/grux-local:4b", "gruxai.com/grux/grux-local:2b",
+                               "gruxai.com/grux/grux-local:2b"],
+                       "the displayed headline did not move as pinned, so the half of this "
+                       + "test that proves labels ARE live proves nothing")
+        XCTAssertEqual(MachineLoad.Headroom.allCases, [.full, .reduced, .minimal])
 
         // THE DIVERGENCE IS THE FEATURE, not something to reconcile later. On a
-        // 16 GB laptop at its limit the pane names llama3.2:3b while config.json
-        // still holds qwen3-vl:4b, and the config file is right to hold its
+        // 16 GB laptop at its limit the pane names the 2B while config.json
+        // still holds the 4B, and the config file is right to hold its
         // ground. Asserted out loud so a later change that "helpfully" re-syncs
         // the two has to delete this line rather than slip past a green suite.
         let underLoad = try! XCTUnwrap(
             Cookbook.listing(for: laptopSixteenGB, headroom: .minimal).headline?.id,
             "a 16 GB laptop at its limit was offered nothing at all")
-        XCTAssertEqual(underLoad, "llama3.2:3b")
+        XCTAssertEqual(underLoad, "gruxai.com/grux/grux-local:2b")
         XCTAssertNotEqual(underLoad, stored)
     }
 
@@ -901,10 +936,14 @@ final class CookbookDefaultTests: XCTestCase {
                              "the discrete card's VRAM was taken as the model budget")
 
         // And the machine is then offered something worth its RAM, rather than
-        // being told a 12B is too big, which is what the VRAM budget did.
-        let pick = try! XCTUnwrap(Cookbook.headline(for: macPro),
-                                  "a 64 GB Mac was offered no local model at all")
-        XCTAssertGreaterThan(pick.estimatedMemoryGB, 8.0, "picked \(pick.id)")
+        // being told a 12B is too big, which is what the VRAM budget did. (This
+        // asserted the headline's footprint until Grux Local, a 4B measured above
+        // every larger model, became the headline at every size; the budget is
+        // what the defect was about, so the 12B's rating is asserted directly.)
+        XCTAssertNotNil(Cookbook.headline(for: macPro), "a 64 GB Mac was offered no local model at all")
+        let twelve = try! XCTUnwrap(Cookbook.catalog.first { $0.id == "gemma4:12b" })
+        XCTAssertGreaterThan(twelve.estimatedMemoryGB, macPro.gpuWorkingSetGB, "the fixture stopped testing VRAM")
+        XCTAssertEqual(Cookbook.fit(of: twelve, in: macPro), .great)
     }
 
     /// THE OTHER WRONG KEY, found one review after the discrete fix. That fix

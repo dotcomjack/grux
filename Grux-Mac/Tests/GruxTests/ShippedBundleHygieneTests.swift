@@ -120,16 +120,7 @@ final class ShippedBundleHygieneTests: XCTestCase {
                           "Grux is not installed; nothing to inspect")
 
         let data = try Data(contentsOf: installed)
-        let needle = Array("/Users/".utf8)
-        var found = 0
-        data.withUnsafeBytes { raw in
-            let bytes = raw.bindMemory(to: UInt8.self)
-            guard bytes.count >= needle.count else { return }
-            for i in 0...(bytes.count - needle.count)
-            where Array(bytes[i..<(i + needle.count)]) == needle {
-                found += 1
-            }
-        }
+        let found = Self.occurrences(of: "/Users/", in: data)
         XCTAssertEqual(found, 0,
             "the installed binary contains \(found) absolute /Users/ path(s). build.sh must "
             + "redact SwiftPM's embedded build paths before codesign, or every download "
@@ -222,11 +213,78 @@ final class ShippedBundleHygieneTests: XCTestCase {
         ]
         let code = data.prefix(sigStart)
         for needle in needles {
-            let count = code.ranges(of: Data(needle.utf8)).count
+            let count = Self.occurrences(of: needle, in: code,
+                                         allowed: NoPersonalIdentityTests.allowedContexts)
             XCTAssertEqual(count, 0,
                 "\"\(needle)\" appears \(count) time(s) in the app's own code or strings, "
                 + "outside the code-signature blob")
         }
+    }
+
+    /// Every position where `needle`'s bytes start in `data`, overlapping ones
+    /// included, which is what the byte-by-byte loop this replaced counted.
+    ///
+    /// `memmem` rather than a Swift loop: these scans read the whole 63 MB
+    /// installed binary, and in the debug build tests run in, slicing an Array at
+    /// every offset and `Data.ranges(of:)` took 32 s and 47 s of a 787 s suite
+    /// (measured 2026-10-22). Same bytes, same count, in milliseconds.
+    ///
+    /// A hit that sits inside one of `allowed`, byte for byte, is not counted. That
+    /// is how the scan honours the sanctioned public strings in
+    /// `banned-vocabulary.json`'s `allowed_contexts`, the same list the source guard
+    /// reads: the 3.1 About credit links `https://dotcomjack.com` and the agent work
+    /// order clones `github.com/dotcomjack/grux`, so every installed 3.1 build failed
+    /// this scan while the suite that passed had read an older install. A bare name
+    /// is still counted.
+    static func occurrences(of needle: String, in data: Data, allowed: [String] = []) -> Int {
+        let pattern = Array(needle.utf8)
+        guard !pattern.isEmpty else { return 0 }
+        // Each context containing the needle, with every offset the needle sits at in it.
+        let covers: [([UInt8], Int)] = allowed.flatMap { context -> [([UInt8], Int)] in
+            let c = Array(context.utf8)
+            guard c.count >= pattern.count else { return [] }
+            return (0...(c.count - pattern.count))
+                .filter { Array(c[$0..<($0 + pattern.count)]) == pattern }
+                .map { (c, $0) }
+        }
+        return data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) -> Int in
+            guard let base = raw.baseAddress else { return 0 }
+            var found = 0
+            var offset = 0
+            while offset + pattern.count <= raw.count,
+                  let hit = memmem(base + offset, raw.count - offset, pattern, pattern.count) {
+                let at = base.distance(to: UnsafeRawPointer(hit))
+                let excused = covers.contains { context, k in
+                    at - k >= 0 && at - k + context.count <= raw.count
+                        && memcmp(base + (at - k), context, context.count) == 0
+                }
+                if !excused { found += 1 }
+                offset = at + 1
+            }
+            return found
+        }
+    }
+
+    /// The counter both binary scans rest on: every start, overlapping ones too, one
+    /// at the very end, none in too short a buffer, and a slice counts only its own
+    /// bytes (the signature scan hands it a prefix).
+    func testOccurrencesCountsEveryStartTheOldLoopCounted() {
+        let text = Data("/Users/Users/x/Users/".utf8)
+        XCTAssertEqual(Self.occurrences(of: "/Users/", in: text), 3)
+        XCTAssertEqual(Self.occurrences(of: "/Users/", in: text.dropFirst()), 2)
+        XCTAssertEqual(Self.occurrences(of: "/Users/", in: text.prefix(12)), 1)
+        XCTAssertEqual(Self.occurrences(of: "/Users/", in: Data("/User".utf8)), 0)
+        XCTAssertEqual(Self.occurrences(of: "aa", in: Data("aaaa".utf8)), 3)
+        XCTAssertEqual(Self.occurrences(of: "/Users/", in: Data()), 0)
+        // A sanctioned context forgives the hit inside it and no other.
+        // (A neutral word: the counter is generic, and a banned one written here
+        // would be the identity guard's next hit.)
+        let mixed = Data("credit https://acme.example and a bare acme".utf8)
+        XCTAssertEqual(Self.occurrences(of: "acme", in: mixed), 2)
+        XCTAssertEqual(Self.occurrences(of: "acme", in: mixed, allowed: ["https://acme.example"]), 1)
+        // A context cut off by the end of the buffer does not excuse anything.
+        XCTAssertEqual(Self.occurrences(of: "acme", in: Data("https://acme".utf8),
+                                        allowed: ["https://acme.example"]), 1)
     }
 
     /// build.sh must keep the prune. Without it the bundle check above passes on

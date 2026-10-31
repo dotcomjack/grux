@@ -69,7 +69,7 @@ struct SessionsStrip: View {
             }
         }
         .onAppear { observer.start() }
-        .sheet(item: $openSession) { info in
+        .gruxSheet(item: $openSession) { info in
             SessionLogSheet(info: info) {
                 openSession = nil
             }

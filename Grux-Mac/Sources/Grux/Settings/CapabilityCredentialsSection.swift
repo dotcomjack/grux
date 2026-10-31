@@ -53,11 +53,19 @@ struct CapabilityCredentialsSection: View {
             Text("Credentials")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(GruxTheme.textPrimary)
-            Text("Every key Grux can use. All of them are empty until you paste one, and each stays in your Mac's Keychain.")
+            Text(Self.headerLine(configured: credentials.filter { CapabilityResolver.isSatisfied($0) }.count,
+                                 offered: credentials.count))
                 .font(GruxTheme.Font.caption)
                 .foregroundStyle(GruxTheme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    /// What the header knows now (D49): it said every key was empty on a Mac with one set.
+    static func headerLine(configured: Int, offered: Int) -> String {
+        configured == 0
+            ? "Every key Grux can use. None is set yet, and each one you paste stays in your Mac's Keychain."
+            : "Every key Grux can use. \(configured) of \(offered) set, and each stays in your Mac's Keychain."
     }
 
     @ViewBuilder

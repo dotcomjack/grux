@@ -24,6 +24,13 @@ import XCTest
 /// those, which did nothing, and was removed once measured rather than left in
 /// because it looked plausible.
 ///
+/// Those three were measured on the OpenAI-compatible `/v1` endpoint. Grux now
+/// talks to Ollama on its native `/api/chat`, where `think: false` IS honored
+/// (measured 2026-10-22, Ollama 0.22.0: qwen3:8b answered `ok` in 0.05 s told
+/// not to think, '' in 2.02 s without it), so every native call sends it
+/// (`OpenAICompatBackend.ollamaChatBody`). The default stays a model that
+/// cannot think, because a server that ignores the field still hangs on one.
+///
 /// So the default is a model that answers. Anyone who prefers qwen3 can still
 /// pick it in Settings; it is the DEFAULT that must not hang a new user on
 /// first contact.

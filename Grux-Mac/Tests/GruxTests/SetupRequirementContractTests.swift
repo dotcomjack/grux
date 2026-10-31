@@ -84,6 +84,35 @@ final class SetupRequirementContractTests: XCTestCase {
         }
     }
 
+    /// D45 (sense pass 3, 2026-10-29). The Anthropic key's line said "Add your Anthropic API
+    /// key in Settings to let Grux think." on a Mac whose chat ran on a local Ollama model with
+    /// no key, while the README promises "Your own API key, or a local model through Ollama and
+    /// no key at all". A capability that a feature can swap for another (an `anyOf` group) must
+    /// not describe itself as the thing Grux cannot work without, and the Anthropic key must name
+    /// the no-key route the README promises.
+    @MainActor
+    func testACapabilityWithAnAlternativeNeverClaimsGruxNeedsIt() {
+        let exclusive = ["to let grux think", "grux needs", "grux cannot", "required to"]
+        var swappable: Set<SetupRequirement> = []
+        for row in FeatureRegistry.rows {
+            for group in row.anyOf where group.capabilities.count > group.min {
+                swappable.formUnion(group.capabilities)
+            }
+        }
+        XCTAssertTrue(swappable.contains(.keyAnthropic),
+                      "the premise moved: no feature can swap the Anthropic key for a local model")
+        for req in swappable.sorted(by: { $0.rawValue < $1.rawValue }) {
+            let line = req.remediation.lowercased()
+            for claim in exclusive {
+                XCTAssertFalse(line.contains(claim),
+                               "\(req.rawValue) can be swapped for another capability, yet its line says \"\(claim)\": \(req.remediation)")
+            }
+        }
+        let anthropic = SetupRequirement.keyAnthropic.remediation.lowercased()
+        XCTAssertTrue(anthropic.contains("local model") && anthropic.contains("no key"),
+                      "the Anthropic key's line must say chat also runs on a local model with no key: \(SetupRequirement.keyAnthropic.remediation)")
+    }
+
     /// The contract caps remediation length. Measured, not trusted.
     func testRemediationsStayUnderTheContractCeiling() {
         for req in SetupRequirement.allCases {

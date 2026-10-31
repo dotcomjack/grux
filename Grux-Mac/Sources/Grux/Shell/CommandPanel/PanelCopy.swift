@@ -18,6 +18,9 @@ enum PanelCopy {
     static var paletteHint: String { "\(PaletteHotkeyConfig.spokenShortcut) reaches everything." }
     static let firstRunUnderInput = "Start here, or say what you want."
     static let nowHeading = "Now"
+    /// Beside the update offer: hides that version for good.
+    static let notNow = "Not now"
+    static func notNowLabel(_ title: String) -> String { "\(notNow): \(title)" }
     static let recentHeading = "Recent"
     static let closePane = "Close"
     static let hidePane = "Hide pane"

@@ -394,10 +394,7 @@ final class AccountSwitcher: ObservableObject {
             do script "\(command.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\""))"
         end tell
         """
-        if let appleScript = NSAppleScript(source: script) {
-            var err: NSDictionary?
-            appleScript.executeAndReturnError(&err)
-        }
+        Task { _ = await ForeignAppScript.run(script, purpose: "AccountSwitcher") }
     }
 
     private static func shellQuote(_ s: String) -> String {

@@ -206,6 +206,143 @@ struct FoundryCycleBudget: Sendable, Equatable {
     }
 }
 
+// MARK: - The schedule the person chose (saved in config.json)
+
+// Which self-upgrade passes run by themselves. Every one is OFF until the person turns
+// it on in Self-Upgrade. This used to live only in FoundryGovernorConfig, in memory,
+// with all three ON, so turning self-upgrade on (or pressing "Look for upgrades now")
+// also armed a nightly, a weekly and an idle pass that nobody chose.
+struct FoundrySchedule: Codable, Equatable, Sendable {
+    var nightly = false
+    var weeklyDeep = false
+    var whenIdle = false
+
+    init(nightly: Bool = false, weeklyDeep: Bool = false, whenIdle: Bool = false) {
+        self.nightly = nightly
+        self.weeklyDeep = weeklyDeep
+        self.whenIdle = whenIdle
+    }
+
+    // A hand-edited schedule missing a pass reads that pass as off.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        nightly = try c.decodeIfPresent(Bool.self, forKey: .nightly) ?? false
+        weeklyDeep = try c.decodeIfPresent(Bool.self, forKey: .weeklyDeep) ?? false
+        whenIdle = try c.decodeIfPresent(Bool.self, forKey: .whenIdle) ?? false
+    }
+
+    var anyOn: Bool { nightly || weeklyDeep || whenIdle }
+
+    // What the governor may schedule: nothing at all while self-upgrade is off.
+    static func effective(enabled: Bool, schedule: FoundrySchedule) -> FoundrySchedule {
+        enabled ? schedule : FoundrySchedule()
+    }
+
+    // The one line the Self-Upgrade pane shows above the toggles.
+    static func line(enabled: Bool, schedule: FoundrySchedule) -> String {
+        guard enabled else {
+            return "Self-upgrade is off. Turn it on in Settings, or ask Grux to upgrade itself."
+        }
+        var when: [String] = []
+        if schedule.nightly { when.append("nightly between 2 and 6 AM") }
+        if schedule.weeklyDeep { when.append("Sundays at 11 PM") }
+        if schedule.whenIdle { when.append("when your Mac is idle on power") }
+        guard let last = when.popLast() else {
+            return "Self-upgrade is on. It runs only when you ask."
+        }
+        let joined = when.isEmpty ? last : when.joined(separator: ", ") + " and " + last
+        return "Self-upgrade is on. It also runs \(joined)."
+    }
+}
+
+// The pane's second line: when a pass last ran and when the next one will, from the
+// same window math the governor schedules with, so a quiet schedule reads differently
+// from a broken one.
+extension FoundrySchedule {
+    static func timesLine(enabled: Bool, schedule: FoundrySchedule, lastRanAt: Date?,
+                          lastNightlyAt: Date?, lastDeepAt: Date?, lastOpportunisticAt: Date?,
+                          paused: Bool, ticking: Bool, running: Bool, limitClearsAt: Date?, now: Date,
+                          calendar: Calendar = FoundryGovernorWindow.calendar,
+                          opportunisticSpacingHours: Double = FoundryGovernorConfig().opportunisticSpacingHours) -> String {
+        let last = "Last pass: " + (lastRanAt.map { when($0, now: now, calendar: calendar) } ?? "none yet") + "."
+        guard enabled else { return last }
+        if paused { return last + " Next: none, self-upgrade paused itself after a crash loop." }
+        // tick() returns at once while a pass runs, so nothing else starts before it ends.
+        if running { return last + " Next: after the pass running now." }
+        // A limit holds every pass, scheduled or asked for, until it clears; the windows are
+        // read from that moment, and the line says why.
+        let held = limitClearsAt.flatMap { $0 > now ? $0 : nil }
+        // Grux's own cooldown after a limit hit (limitCooldownHours), not Claude's reset time.
+        let hold = held.map { " After a Claude session limit, Grux waits until " + when($0, now: now, calendar: calendar) + " to run a pass." } ?? ""
+        guard schedule.anyOn else { return last + " Next: when you ask." + hold }
+        // Only a running tick starts a scheduled pass; one turned on after launch from
+        // Settings or the command line waits for the next launch.
+        guard ticking else { return last + " Next: once Grux relaunches." + hold }
+        let from = held ?? now
+
+        // Each timed pass is due inside its window unless it already ran that day, else at
+        // its next window start.
+        func due(inWindow: Bool, lastAt: Date?, next: Date) -> Date {
+            let ranToday = lastAt.map { FoundryGovernorWindow.sameLocalDay($0, from, calendar: calendar) } ?? false
+            return inWindow && !ranToday ? from : next
+        }
+        var timed: [Date] = []
+        if schedule.nightly {
+            timed.append(due(inWindow: FoundryGovernorWindow.isInNightlyWindow(from, calendar: calendar),
+                             lastAt: lastNightlyAt,
+                             next: FoundryGovernorWindow.nextNightlyStart(after: from, calendar: calendar)))
+        }
+        if schedule.weeklyDeep {
+            timed.append(due(inWindow: FoundryGovernorWindow.isInDeepPassWindow(from, calendar: calendar),
+                             lastAt: lastDeepAt,
+                             next: FoundryGovernorWindow.nextDeepPassStart(after: from, calendar: calendar)))
+        }
+        // The idle pass has no clock time, only the spacing after the last one (and the hold).
+        let idleFrom = lastOpportunisticAt.map { $0.addingTimeInterval(opportunisticSpacingHours * 3600) }
+        let idleAfter = [idleFrom.flatMap { $0 > now ? $0 : nil }, held].compactMap { $0 }.max()
+        let idleTail = idleAfter.map { " after " + clock($0, calendar: calendar) } ?? ""
+
+        guard let next = timed.min() else {
+            return last + " Next: when your Mac is idle on power" + (idleAfter.map { ", after " + clock($0, calendar: calendar) } ?? "") + "." + hold
+        }
+        if next <= now { return last + " Next: within a minute." }
+        var line = last + " Next: " + when(next, now: now, calendar: calendar)
+        if schedule.whenIdle, (idleAfter ?? now) < next {
+            line += ", or sooner when your Mac is idle on power" + idleTail
+        }
+        return line + "." + hold
+    }
+
+    // "today at 3:48 AM", "yesterday at", "tomorrow at", a weekday within the coming
+    // week, else "Jun 13 at 9:00 AM".
+    private static func when(_ date: Date, now: Date, calendar: Calendar) -> String {
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: now),
+                                           to: calendar.startOfDay(for: date)).day ?? 0
+        let day: String
+        switch days {
+        case 0: day = "today"
+        case -1: day = "yesterday"
+        case 1: day = "tomorrow"
+        case 2...6: day = format(date, "EEEE", calendar: calendar)
+        default: day = format(date, "MMM d", calendar: calendar)
+        }
+        return day + " at " + clock(date, calendar: calendar)
+    }
+
+    private static func clock(_ date: Date, calendar: Calendar) -> String {
+        format(date, "h:mm a", calendar: calendar)
+    }
+
+    private static func format(_ date: Date, _ pattern: String, calendar: Calendar) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.calendar = calendar
+        f.timeZone = calendar.timeZone
+        f.dateFormat = pattern
+        return f.string(from: date)
+    }
+}
+
 // MARK: - Scheduling decision (pure, unit tested)
 
 struct FoundryGovernorConfig: Codable, Equatable, Sendable {
@@ -225,6 +362,16 @@ struct FoundryGovernorConfig: Codable, Equatable, Sendable {
     var deepTokenCap = 10_000_000
     var opportunisticTokenCap = 500_000
     var manualTokenCap = 10_000_000
+
+    // The pass switches come from the saved FoundrySchedule on every live tick;
+    // the defaults above only serve the pure decision tests.
+    func scheduled(_ schedule: FoundrySchedule) -> FoundryGovernorConfig {
+        var c = self
+        c.nightlyEnabled = schedule.nightly
+        c.deepPassEnabled = schedule.weeklyDeep
+        c.opportunisticEnabled = schedule.whenIdle
+        return c
+    }
 
     func tokenCap(for pass: FoundryCyclePass) -> Int {
         switch pass {
@@ -313,10 +460,20 @@ enum FoundryGovernorDecision {
         now: Date,
         cooldownHours: Double
     ) -> Bool {
+        sessionLimitClearsAt(state: state, now: now, cooldownHours: cooldownHours) != nil
+    }
+
+    // When the limit above stops holding passes, or nil when it holds none now.
+    static func sessionLimitClearsAt(
+        state: AuthState,
+        now: Date,
+        cooldownHours: Double
+    ) -> Date? {
         guard let activeId = state.activeAccountId,
               let hitAt = state.perAccount[activeId]?.lastLimitHitAt
-        else { return false }
+        else { return nil }
         return now.timeIntervalSince(hitAt) < cooldownHours * 3600
+            ? hitAt.addingTimeInterval(cooldownHours * 3600) : nil
     }
 }
 
@@ -350,6 +507,13 @@ final class FoundryGovernor: ObservableObject {
     var idleSeconds: () -> TimeInterval = FoundryGovernor.systemIdleSeconds
     var onACPower: () -> Bool = FoundryGovernor.isOnACPower
     var sessionLimited: (() -> Bool)?
+    // The saved schedule, read on every tick so a change in the Self-Upgrade pane (or in
+    // config.json on disk) takes effect without a relaunch, and turning self-upgrade off
+    // stops every scheduled pass at once.
+    var schedule: @MainActor () -> FoundrySchedule = {
+        FoundrySchedule.effective(enabled: AppState.shared.config.foundryEnabled,
+                                  schedule: AppState.shared.config.foundrySchedule)
+    }
 
     private var timer: Timer?
     private let stateURL: URL
@@ -370,17 +534,31 @@ final class FoundryGovernor: ObservableObject {
 
     // MARK: Lifecycle
 
+    // Whether the scheduler tick runs, so the pane promises a time only when it does.
+    @Published private(set) var isTicking = false
+
     // Start the scheduler tick. Safe to call repeatedly.
     func start(tickSeconds: TimeInterval = 60) {
         guard timer == nil else { return }
         timer = Timer.scheduledTimer(withTimeInterval: tickSeconds, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in self?.tick() }
         }
+        isTicking = true
     }
 
     func stop() {
         timer?.invalidate()
         timer = nil
+        isTicking = false
+    }
+
+    // When the session limit stops holding passes, from the same state tick() reads.
+    func sessionLimitClearsAt(now date: Date) -> Date? {
+        FoundryGovernorDecision.sessionLimitClearsAt(
+            state: AccountSwitcher.shared.state,
+            now: date,
+            cooldownHours: config.limitCooldownHours
+        )
     }
 
     // Manual trigger seam: "Grux, upgrade yourself." Skips the window math
@@ -420,7 +598,8 @@ final class FoundryGovernor: ObservableObject {
             cycleRunning: false,
             lastOpportunisticAt: lastOpportunisticAt
         )
-        guard let pass = FoundryGovernorDecision.nextPass(snapshot: snapshot, config: config) else {
+        guard let pass = FoundryGovernorDecision.nextPass(snapshot: snapshot,
+                                                          config: config.scheduled(schedule())) else {
             if case .yielded = phase { phase = .idle }
             return
         }

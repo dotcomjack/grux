@@ -327,6 +327,160 @@ final class WatchingTruthTests: XCTestCase {
         let settings = try macSource("Sources/Grux/SettingsView.swift")
         XCTAssertTrue(settings.contains("get: { screen && state.screenPermissionGranted }"), "screen analysis reads ON without access")
     }
+
+    /// D3 (3.2 sense pass): the Focus Log pane read a green "Watching" beside
+    /// "Needs screen recording permission", said "Grux samples your active
+    /// window every 8s", and left 0 events under a blank list. The menu bar and
+    /// the foot already asked the one rule; these two surfaces read the switch.
+    func test_noSurfaceReadsWatchingFromTheSwitchAlone() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/Grux")
+        // Any receiver, either case: the focus overlay's `appState.watching ?
+        // "watching"` slipped past a scan that knew only `state.` and "Watching".
+        let pattern = try NSRegularExpression(pattern: #"\b\w+\.watching \? ("[Ww]atching"|Color\.green|GruxTheme\.successMint|1\.0)"#)
+        var hits: [String] = []
+        let files = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)?
+            .compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" } ?? []
+        XCTAssertGreaterThan(files.count, 100, "scan found no sources")
+        for url in files {
+            let src = try String(contentsOf: url, encoding: .utf8)
+            if pattern.firstMatch(in: src, range: NSRange(src.startIndex..., in: src)) != nil {
+                hits.append(url.lastPathComponent)
+            }
+        }
+        XCTAssertEqual(hits, [], "a watching status chosen from the switch alone reads Watching with no screen access")
+    }
+
+    /// D47 (sense pass 3): the banner read "After 2 checks consecutive off-task samples, Grux
+    /// nudges", because the drift label already carries its unit. Every state reads it once.
+    func test_theDriftSentenceReadsAsEnglish() {
+        for shown in [PanelCopy.WatchingState.watching, .needsScreenAccess, .paused] {
+            for drift in ["1 check", "2 checks"] {
+                let line = FocusLogView.samplingLine(shown, interval: "every 8s", hours: "9:00 AM to 5:00 PM",
+                                                     model: "vision", drift: drift, cooldown: "15m")
+                XCTAssertFalse(line.contains("checks consecutive") || line.contains("check consecutive"), line)
+                XCTAssertTrue(line.contains("After \(drift) in a row that read off task, Grux nudges you"), line)
+            }
+        }
+    }
+
+    func test_theFocusLogSaysNothingIsSampledWithoutScreenAccess() {
+        let line = FocusLogView.samplingLine(.needsScreenAccess, interval: "every 8s", hours: "9:00 AM to 5:00 PM",
+                                             model: "vision", drift: "2 checks", cooldown: "15m")
+        XCTAssertTrue(line.hasPrefix("Nothing is sampled until macOS allows screen recording."), line)
+        XCTAssertFalse(line.contains("Grux samples your active window"), line)
+        XCTAssertTrue(FocusLogView.samplingLine(.watching, interval: "every 8s", hours: "9:00 AM to 5:00 PM",
+                                                model: "vision", drift: "2 checks", cooldown: "15m")
+            .hasPrefix("Grux samples your active window every 8s during 9:00 AM to 5:00 PM."))
+        XCTAssertEqual(FocusLogView.statusTitle(.needsScreenAccess), PanelCopy.needsScreenAccess)
+        XCTAssertEqual(FocusLogView.statusTitle(.watching), PanelCopy.watching)
+        XCTAssertEqual(FocusLogView.statusTitle(.paused), PanelCopy.paused)
+        XCTAssertEqual(FocusLogView.emptyLine(.needsScreenAccess, interval: "every 8s"),
+                       "No samples. Grux needs screen recording to see your active window; Grant asks macOS.")
+        // A fact, not a promise: the local prescreen and the daily ceiling can
+        // skip a check without a sample (wave 8 review round 4).
+        XCTAssertEqual(FocusLogView.emptyLine(.watching, interval: "every 8s"),
+                       "No samples yet. Grux checks every 8s.")
+        // Watch alone may not start sampling, and the pane has no Watch button
+        // (wave 8 review round 5): the line says only what is true.
+        XCTAssertEqual(FocusLogView.emptyLine(.paused, interval: "every 8s"), "Paused, so nothing is sampled.")
+        // On and allowed, but the watcher skips every tick (no task set is the
+        // fresh-Mac case): the line names why instead of promising a sample.
+        XCTAssertEqual(FocusLogView.emptyLine(.watching, interval: "every 8s", skip: .noTask), "No samples yet.")
+    }
+
+    /// The old guard short-circuited, so the Keychain key and the screen
+    /// preflight were read only when every earlier check passed. A failed
+    /// Keychain read is not cached, so reading it on every tick of a Mac that
+    /// never set Focus up could ask for the Keychain every few seconds (wave 8
+    /// review round 2). The gate reads each input only when it gets that far.
+    func test_theFocusGateReadsNothingPastTheFirstMissingThing() {
+        var accessRead = false, keyRead = false, taskRead = false
+        let skip = FocusWatcher.skipReason(screenAnalysisEnabled: true, featureOn: true, firstFrameReviewed: false,
+                                           exclusionsConfirmed: true,
+                                           screenAccess: { accessRead = true; return true }(),
+                                           withinActiveHours: true, snoozed: false,
+                                           hasTask: { taskRead = true; return true }(),
+                                           hasKey: { keyRead = true; return true }())
+        XCTAssertEqual(skip, .firstFrame)
+        XCTAssertFalse(accessRead, "screen access read past a missing setup step")
+        XCTAssertFalse(taskRead, "the task read past a missing setup step")
+        XCTAssertFalse(keyRead, "the Keychain key read past a missing setup step")
+        let src = try? macSource("Sources/Grux/FocusWatcher.swift")
+        let start = src?.components(separatedBy: "    func start() {").dropFirst().first?.prefix(400) ?? ""
+        XCTAssertTrue(start.contains("AppState.shared.focusSkip = nil"), "a restart shows the last run's reason until the first tick")
+    }
+
+    func test_theBannerSaysNothingIsSampledWhileTheTickSkips() {
+        let line = FocusLogView.samplingLine(.watching, interval: "every 8s", hours: "9:00 AM to 5:00 PM",
+                                             model: "vision", drift: "2 checks", cooldown: "15m", skip: .noTask)
+        XCTAssertTrue(line.hasPrefix("Nothing is sampled right now. No task is set as Now, so there is nothing to compare against. When nothing stands in the way, Grux samples your active window every 8s"), line)
+        // Every reason, not only the one that happened to read right: "When it
+        // is, Grux samples" after "Focus is snoozed." said it samples while
+        // snoozed (wave 8 review round 3).
+        for skip in FocusWatcher.Skip.allCases {
+            let l = FocusLogView.samplingLine(.watching, interval: "every 8s", hours: "9:00 AM to 5:00 PM",
+                                              model: "vision", drift: "2 checks", cooldown: "15m", skip: skip)
+            XCTAssertEqual(l, "Nothing is sampled right now. \(skip.line) When nothing stands in the way, Grux samples your active window every 8s during 9:00 AM to 5:00 PM. Each sample is classified against your current task using vision analysis. After 2 checks in a row that read off task, Grux nudges you (respecting a 15m cooldown per app).")
+            XCTAssertFalse(l.contains("When it is"), l)
+            XCTAssertFalse(l.contains("Once that changes"), "reads wrong after a line that is an instruction: \(l)")
+            // Without screen access the tick still knows what else is missing;
+            // "Then Grux will sample" promised a sample after the grant alone
+            // (wave 8 review round 4).
+            let a = FocusLogView.samplingLine(.needsScreenAccess, interval: "every 8s", hours: "9:00 AM to 5:00 PM",
+                                              model: "vision", drift: "2 checks", cooldown: "15m", skip: skip)
+            let extra = skip == .noScreenAccess ? "" : " \(skip.line)"
+            XCTAssertTrue(a.hasPrefix("Nothing is sampled until macOS allows screen recording.\(extra) When nothing stands in the way, Grux will sample your active window every 8s"), a)
+            XCTAssertFalse(a.contains("Then Grux will sample"), a)
+            // The banner names the reason; the empty list does not say it twice.
+            XCTAssertEqual(FocusLogView.emptyLine(.watching, interval: "every 8s", skip: skip), "No samples yet.")
+        }
+        for shown in [PanelCopy.WatchingState.watching, .needsScreenAccess, .paused] {
+            let l = FocusLogView.samplingLine(shown, interval: "every 8s", hours: "9:00 AM to 5:00 PM",
+                                              model: "vision", drift: "2 checks", cooldown: "15m")
+            XCTAssertFalse(l.contains("Then Grux will sample"), l)
+            XCTAssertFalse(l.contains("nothing is missing"), "a snooze is not a missing thing: \(l)")
+            XCTAssertFalse(FocusLogView.emptyLine(shown, interval: "every 8s").contains("starts it again"))
+        }
+    }
+
+    /// The tick's gate, as one function the pane also asks, in the tick's order.
+    func test_theFocusGateNamesTheFirstThingMissing() throws {
+        func reason(analysis: Bool = true, feature: Bool = true, frame: Bool = true, exclusions: Bool = true,
+                    access: Bool = true, hours: Bool = true, snoozed: Bool = false, task: Bool = true,
+                    key: Bool = true) -> FocusWatcher.Skip? {
+            FocusWatcher.skipReason(screenAnalysisEnabled: analysis, featureOn: feature, firstFrameReviewed: frame,
+                                    exclusionsConfirmed: exclusions, screenAccess: access, withinActiveHours: hours,
+                                    snoozed: snoozed, hasTask: task, hasKey: key)
+        }
+        XCTAssertNil(reason())
+        XCTAssertEqual(reason(analysis: false), .screenAnalysisOff)
+        XCTAssertEqual(reason(feature: false), .focusOff)
+        XCTAssertEqual(reason(frame: false), .firstFrame)
+        XCTAssertEqual(reason(exclusions: false), .exclusions)
+        XCTAssertEqual(reason(access: false), .noScreenAccess)
+        XCTAssertEqual(reason(hours: false), .outsideHours)
+        XCTAssertEqual(reason(snoozed: true), .snoozed)
+        XCTAssertEqual(reason(task: false), .noTask)
+        XCTAssertEqual(reason(key: false), .noKey)
+        XCTAssertEqual(reason(analysis: false, key: false), .screenAnalysisOff, "the first missing thing wins")
+        // Neighbours in the tick's order, so a swap of two checks fails.
+        XCTAssertEqual(reason(feature: false, frame: false), .focusOff)
+        XCTAssertEqual(reason(frame: false, exclusions: false), .firstFrame)
+        XCTAssertEqual(reason(exclusions: false, access: false), .exclusions)
+        XCTAssertEqual(reason(access: false, hours: false), .noScreenAccess)
+        XCTAssertEqual(reason(hours: false, snoozed: true), .outsideHours)
+        XCTAssertEqual(reason(snoozed: true, task: false), .snoozed)
+        XCTAssertEqual(reason(task: false, key: false), .noTask)
+        let src = try macSource("Sources/Grux/FocusWatcher.swift")
+        XCTAssertTrue(src.contains("let skip = Self.skipReason(screenAnalysisEnabled: state.config.screenAnalysisEnabled,"),
+                      "the tick no longer asks the shared gate")
+        XCTAssertTrue(src.contains("if state.focusSkip != skip { state.focusSkip = skip }"), "the tick's answer is not published")
+        XCTAssertTrue(src.contains("        if let skip {\n"), "the tick samples whatever the gate said")
+        let pane = try macSource("Sources/Grux/LaunchRootView.swift")
+        XCTAssertTrue(pane.contains("skip: state.focusSkip))"), "the empty line does not read what the tick found")
+    }
 }
 
 /// 7. The app menu had no Settings… and Cmd-comma did nothing.

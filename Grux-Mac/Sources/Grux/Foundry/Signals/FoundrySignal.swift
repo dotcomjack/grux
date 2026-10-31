@@ -42,6 +42,12 @@ struct FoundrySignal: Codable, Identifiable, Equatable, Sendable {
     // "swarm", "compare", "tests", "telemetry", "ui:settings".
     var suggestedDomain: String
     var capturedAt: Date
+    // What the signal is evidence OF, when the summary cannot say it: two
+    // threads both titled "New chat" read the same and are different
+    // evidence. Nil means the summary identifies it.
+    var fingerprint: String? = nil
+
+    var identity: String { fingerprint ?? summary }
 
     init(
         id: UUID = UUID(),
@@ -51,7 +57,8 @@ struct FoundrySignal: Codable, Identifiable, Equatable, Sendable {
         evidence: String,
         suggestedLane: FoundryLane,
         suggestedDomain: String,
-        capturedAt: Date = Date()
+        capturedAt: Date = Date(),
+        fingerprint: String? = nil
     ) {
         self.id = id
         self.source = source
@@ -61,6 +68,7 @@ struct FoundrySignal: Codable, Identifiable, Equatable, Sendable {
         self.suggestedLane = suggestedLane
         self.suggestedDomain = suggestedDomain
         self.capturedAt = capturedAt
+        self.fingerprint = fingerprint
     }
 }
 

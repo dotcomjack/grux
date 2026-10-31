@@ -109,7 +109,7 @@ checked", not "Healthy". No em dashes, no en dashes.
 The feature renders `needs-setup` with a setup card showing these exact strings.
 
 - Social accounts: "Connect the social accounts you want Grux to watch in Settings."
-- Anthropic API key: "Add your Anthropic API key in Settings to let Grux think. Get one at console.anthropic.com."
+- Anthropic API key: "Add your Anthropic API key in Settings to use Claude. Get one at console.anthropic.com. Chat also runs on a local model with no key."
 - Notifications: "Allow notifications so Grux can nudge you. Open System Settings, Notifications, Grux, and turn them on."
 
 An empty `grux.social.accounts` is `needs-setup`, not a grid with no rows. A health grid

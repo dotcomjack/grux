@@ -34,17 +34,13 @@ actor SecurityAuditLog {
     private var recentEntries: [SecurityAuditEntry] = []
     private let recentCap = 100
 
-    private lazy var logURL: URL? = {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-        guard let base = appSupport else { return nil }
-        let dir = base.appendingPathComponent("Grux", isDirectory: true)
-        do {
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        } catch {
-            return nil
-        }
-        return dir.appendingPathComponent("security-audit.log")
-    }()
+    private lazy var logURL: URL? = Self.auditLogURL()
+
+    // Persistence's folder, so a test run writes the suite's own log, never the
+    // person's (D22: Foundry filed proposals from a suite's lines).
+    nonisolated static func auditLogURL() -> URL? {
+        Persistence.supportDir.appendingPathComponent("security-audit.log")
+    }
 
     private let isoFormatter: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()

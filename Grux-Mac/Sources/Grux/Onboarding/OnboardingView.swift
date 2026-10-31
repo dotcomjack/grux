@@ -551,6 +551,10 @@ struct ModelKeyStep: View {
             //
             // Closing it needs the tag count, which OllamaManager already has.
             await OllamaManager.shared.refreshInstalled()
+            // Reads the server's version, so the pick below is one it runs (D25).
+            _ = await OllamaManager.shared.isHealthy()
+            // What the speed check settled on, when this run downloaded a model.
+            var settledPick: CookbookModel?
             // USABLE, not merely present. A server holding only the superseded
             // model has nothing Grux can drive, so it takes the fetch path.
             if GruxConfig.usableLocalModels(OllamaManager.shared.installedTags).isEmpty {
@@ -584,6 +588,9 @@ struct ModelKeyStep: View {
                     localError = ConnectModelCopy.downloadFailed(pick, ended)
                     return
                 }
+                // Timed on this Mac before it becomes the default: a pick too
+                // slow here keeps the faster model (LocalModelSpeedCheck).
+                settledPick = await LocalModelSpeedGuard.settle(pick: pick) { pulling = $0 }
                 // Re-discover, so the registry knows about what was just pulled.
                 await ModelRegistry.shared.discoverLocal()
             }
@@ -602,7 +609,7 @@ struct ModelKeyStep: View {
             if let adopt = GruxConfig.installedModelToAdopt(
                 configured: AppState.shared.config.offlineLLMModel,
                 installed: OllamaManager.shared.installedTags,
-                headline: Cookbook.headline(for: HardwareProfile.detect())?.id) {
+                headline: settledPick?.id ?? Cookbook.headline(for: HardwareProfile.detect())?.id) {
                 AppState.shared.config.offlineLLMModel = adopt
                 AppState.shared.config.localLLMModel = adopt
                 AppState.shared.saveConfig()

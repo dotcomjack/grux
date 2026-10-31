@@ -110,7 +110,7 @@ that actually executed, never the count the config claims. No em dashes, no en d
 The feature renders `needs-setup` with a setup card showing these exact strings.
 
 - Project registry: "Point Grux at your project registry URL in Settings, or add projects by hand."
-- Anthropic API key: "Add your Anthropic API key in Settings to let Grux think. Get one at console.anthropic.com."
+- Anthropic API key: "Add your Anthropic API key in Settings to use Claude. Get one at console.anthropic.com. Chat also runs on a local model with no key."
 - Notifications: "Allow notifications so Grux can nudge you. Open System Settings, Notifications, Grux, and turn them on."
 
 An empty project list is `needs-setup`, not a run that reports zero projects. A sweep of

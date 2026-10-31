@@ -138,10 +138,21 @@ enum TodayModel {
         var icon: String
         var line: String
         var tab: String
+        /// A second, smaller line: why the focus task is not watched (D44).
+        var detail: String? = nil
+    }
+
+    /// Whether the focus watcher is sampling the task in focus right now (D44).
+    enum FocusWatched: Equatable {
+        case yes
+        case no(because: String)
+        /// Nothing read the watcher, so the line names the task and claims nothing.
+        case unknown
     }
 
     struct WatchInput: Equatable {
         var focusTask: String?
+        var focusWatched: FocusWatched = .unknown
         var drifting: Bool = false
         var jobsRunning: Int = 0
         var jobsWaitingOnYou: Int = 0
@@ -158,9 +169,20 @@ enum TodayModel {
     static func watching(_ w: WatchInput) -> [WatchItem] {
         var out: [WatchItem] = []
         if let task = w.focusTask, !task.isEmpty {
-            out.append(WatchItem(id: "focus", icon: "scope",
-                                 line: w.drifting ? "Focusing on \(task), and you have drifted" : "Focusing on \(task)",
-                                 tab: "focus"))
+            // Watching and drift are claimed only while the watcher samples (D44).
+            // A "no task" skip beside a task is from a tick before the task was set: stale.
+            let watched = w.focusWatched == .no(because: FocusWatcher.Skip.noTask.line) ? .unknown : w.focusWatched
+            switch watched {
+            case .yes:
+                out.append(WatchItem(id: "focus", icon: "scope",
+                                     line: w.drifting ? "Focusing on \(task), and you have drifted" : "Focusing on \(task)",
+                                     tab: "focus"))
+            case .no(let because):
+                out.append(WatchItem(id: "focus", icon: "scope", line: "Focus: \(task)", tab: "focus",
+                                     detail: "Not watched: \(because)"))
+            case .unknown:
+                out.append(WatchItem(id: "focus", icon: "scope", line: "Focus: \(task)", tab: "focus"))
+            }
         } else if w.focusChecksToday > 0 {
             out.append(WatchItem(id: "focus", icon: "eye",
                                  line: plural(w.focusChecksToday, "focus check", "focus checks") + " today",
@@ -182,6 +204,16 @@ enum TodayModel {
                                  tab: "selfUpgrade"))
         }
         return out
+    }
+
+    /// The watcher's state in the order the foot and the Focus log read it: paused, then
+    /// screen access, then the watcher's own last skip.
+    static func focusWatched(shown: PanelCopy.WatchingState, skip: FocusWatcher.Skip?) -> FocusWatched {
+        switch shown {
+        case .paused: return .no(because: "Watching is paused.")
+        case .needsScreenAccess: return .no(because: FocusWatcher.Skip.noScreenAccess.line)
+        case .watching: return skip.map { .no(because: $0.line) } ?? .yes
+        }
     }
 
     static func plural(_ n: Int, _ one: String, _ many: String) -> String {

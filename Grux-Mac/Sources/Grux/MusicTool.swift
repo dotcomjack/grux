@@ -31,7 +31,6 @@ enum MusicTool {
         guard AudioOutput.permit(.music, source: "MusicTool.play", text: wanted) else {
             return "error: silent mode is on (~/.grux/SILENT), so Grux will not play '\(wanted)'"
         }
-
         // PRIMARY: MusicKit ApplicationMusicPlayer queues the EXACT track and
         // plays it in the app's own session, so there is no Music.app focus
         // takeover and no album-then-skip. Falls through to the AppleScript
@@ -48,8 +47,11 @@ enum MusicTool {
         // signed with a MusicKit-provisioned profile.
         // Not before the microphone question: MusicKit plays in Grux, which would
         // raise the prompt (`AudioOutput.outputWouldAskForMic`). Music.app plays below.
+        // In headless mode only an answer already given: asking would put the MusicKit
+        // permission prompt on a screen nobody is watching.
         if UserDefaults.standard.bool(forKey: "musicKitEnabled"),
            !AudioOutput.outputWouldAskForMic,
+           ForeignAppScript.refusal() == nil || MusicKitPlayer.authorizedWithoutAsking,
            await MusicKitPlayer.ensureAuthorized() {
             if let lib = await MusicKitPlayer.playLibrary(song: songTrim, artist: artistTrim) {
                 return "ok: playing '\(lib)'"
@@ -62,10 +64,14 @@ enum MusicTool {
             }
         }
 
+        // In headless mode nothing below reaches Music (it is all Apple events), so its
+        // errors would mislead. MusicKit above plays inside Grux and is not refused.
+        if let why = ForeignAppScript.refuse("MusicTool.play") { return "error: \(why)" }
+
         // FALLBACK: the original AppleScript cascade, kept until MusicKit catalog
         // is verified on a shipping macOS build. Library already plays in the
         // background; the catalog path now restores focus after it starts.
-        let libResult = playFromLibrary(song: songTrim, artist: artistTrim)
+        let libResult = await playFromLibrary(song: songTrim, artist: artistTrim)
         if libResult.hasPrefix("ok:") { return libResult }
         if libResult.hasPrefix("error:") { return libResult }
         guard libResult.hasPrefix("miss:") else { return libResult }
@@ -104,8 +110,7 @@ enum MusicTool {
                 end try
             end tell
             """
-            var err: NSDictionary?
-            let raw = (NSAppleScript(source: s)?.executeAndReturnError(&err).stringValue ?? "")
+            let raw = (await ForeignAppScript.run(s, purpose: "MusicTool.waitUntilPlaying").stringValue ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             if raw == "notrunning" || raw == "notplaying" || raw == "notrack" {
                 try? await Task.sleep(nanoseconds: 100_000_000)
@@ -126,7 +131,7 @@ enum MusicTool {
         let playedCount: Int
     }
 
-    private static func playFromLibrary(song: String, artist: String) -> String {
+    private static func playFromLibrary(song: String, artist: String) async -> String {
         let songEsc = escapeForAppleScript(song)
         let artistEsc = escapeForAppleScript(artist)
 
@@ -192,20 +197,10 @@ enum MusicTool {
         end tell
         """
 
-        var err: NSDictionary?
-        let script = NSAppleScript(source: source)
-        let result = script?.executeAndReturnError(&err)
+        let result = await ForeignAppScript.run(source, purpose: "MusicTool.playFromLibrary", timeout: librarySearchTimeout)
+        if let failure = scriptFailure(result) { return failure }
 
-        if let err = err {
-            let num = (err[NSAppleScript.errorNumber] as? Int).map { String($0) } ?? "?"
-            let msg = (err[NSAppleScript.errorMessage] as? String) ?? "unknown"
-            if num == "-1743" {
-                return "error: macOS blocked Grux from controlling Music. Grant it in System Settings → Privacy & Security → Automation → Grux → Music."
-            }
-            return "error: Music scripting failed (\(num)): \(msg)"
-        }
-
-        let raw = (result?.stringValue ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let raw = (result.stringValue ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if raw.hasPrefix("err|") {
             let parts = raw.split(separator: "|", maxSplits: 2, omittingEmptySubsequences: false).map(String.init)
             if parts.count >= 3 { return "error: Music script failed (\(parts[1])): \(parts[2])" }
@@ -269,7 +264,7 @@ enum MusicTool {
 
         // Already-playing check: if the current track matches the winner,
         // don't restart it.
-        if isCurrentlyPlaying(candidate: winner.0) {
+        if await isCurrentlyPlaying(candidate: winner.0) {
             return "ok: '\(winner.0.name)' by \(winner.0.artist) already playing - left alone"
         }
 
@@ -277,7 +272,7 @@ enum MusicTool {
         // ok/partial/error prefix contract ChatService routes on. Only a probe
         // that confirmed audio is advancing on this track returns "ok:".
         let label = "'\(winner.0.name)' by \(winner.0.artist)"
-        let playRes = playByPersistentID(winner.0.persistentID)
+        let playRes = await playByPersistentID(winner.0.persistentID)
         switch playRes {
         case "ok":
             return "ok: playing \(label)"
@@ -408,7 +403,7 @@ enum MusicTool {
     // "stalled" (playing but position not advancing), "wrongtrack" (advancing
     // but a different track than requested), "notplaying" (not playing), or
     // "Music play-by-pid failed (...)" on an AppleScript error.
-    private static func playByPersistentID(_ pid: String) -> String {
+    private static func playByPersistentID(_ pid: String) async -> String {
         let pidEsc = escapeForAppleScript(pid)
         let source = """
         tell application "Music"
@@ -440,14 +435,9 @@ enum MusicTool {
             end try
         end tell
         """
-        var err: NSDictionary?
-        let res = NSAppleScript(source: source)?.executeAndReturnError(&err)
-        if let err = err {
-            let num = (err[NSAppleScript.errorNumber] as? Int).map { String($0) } ?? "?"
-            let msg = (err[NSAppleScript.errorMessage] as? String) ?? "unknown"
-            return "Music play-by-pid failed (\(num)): \(msg)"
-        }
-        let raw = (res?.stringValue ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let res = await ForeignAppScript.run(source, purpose: "MusicTool.playByPersistentID")
+        if let problem = res.problem { return "Music play-by-pid failed: \(problem)" }
+        let raw = (res.stringValue ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let parts = raw.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
         // parts: ok|s2|p1|p2|cpid
         guard parts.first == "ok", parts.count >= 5 else {
@@ -471,7 +461,7 @@ enum MusicTool {
     // Detects whether the candidate Grux is about to play is already the
     // current track. Tolerates the property-read failures Music.app emits on
     // some cloud-only items.
-    private static func isCurrentlyPlaying(candidate: LibCandidate) -> Bool {
+    private static func isCurrentlyPlaying(candidate: LibCandidate) async -> Bool {
         let source = """
         tell application "Music"
             try
@@ -484,10 +474,8 @@ enum MusicTool {
             end try
         end tell
         """
-        var err: NSDictionary?
-        let res = NSAppleScript(source: source)?.executeAndReturnError(&err)
-        if err != nil { return false }
-        let raw = (res?.stringValue ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let res = await ForeignAppScript.run(source, purpose: "MusicTool.isCurrentlyPlaying")
+        let raw = (res.stringValue ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if raw == "no" || raw.isEmpty { return false }
         let parts = raw.components(separatedBy: "‖")
         guard parts.count >= 2 else { return false }
@@ -571,17 +559,9 @@ enum MusicTool {
             end try
         end tell
         """
-        var openErr: NSDictionary?
-        let openResult = NSAppleScript(source: openSource)?.executeAndReturnError(&openErr)
-        if let openErr = openErr {
-            let num = (openErr[NSAppleScript.errorNumber] as? Int).map { String($0) } ?? "?"
-            let msg = (openErr[NSAppleScript.errorMessage] as? String) ?? "unknown"
-            if num == "-1743" {
-                return "error: macOS blocked Grux from controlling Music. Grant Automation → Grux → Music in System Settings."
-            }
-            return "error: Music catalog open failed (\(num)): \(msg)"
-        }
-        let openRaw = (openResult?.stringValue ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let openResult = await ForeignAppScript.run(openSource, purpose: "MusicTool.playFromCatalog")
+        if let failure = scriptFailure(openResult, doing: "Music catalog open failed") { return failure }
+        let openRaw = (openResult.stringValue ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if openRaw.hasPrefix("err") {
             return "error: Music catalog open: \(openRaw)"
         }
@@ -637,9 +617,8 @@ enum MusicTool {
             return "ok|" & tName & "|" & tArtist & "|" & s2 & "|" & p1 & "|" & p2
         end tell
         """
-        var verifyErr: NSDictionary?
-        let verifyResult = NSAppleScript(source: verifySource)?.executeAndReturnError(&verifyErr)
-        let verifyRaw = (verifyResult?.stringValue ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let verifyResult = await ForeignAppScript.run(verifySource, purpose: "MusicTool.playFromCatalog")
+        let verifyRaw = (verifyResult.stringValue ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let parts = verifyRaw.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
 
         // verifyRaw format: ok|name|artist|state|p1|p2
@@ -658,7 +637,7 @@ enum MusicTool {
             if curState == "playing" && advancing
                && !trackMatches(playedName, hit.trackName)
                && hit.trackNumber > 1 {
-                let hopped = skipTracks(hops: hit.trackNumber - 1)
+                let hopped = await skipTracks(hops: hit.trackNumber - 1)
                 if !hopped.name.isEmpty { playedName = hopped.name }
                 if !hopped.artist.isEmpty { playedArtist = hopped.artist }
                 advancing = true
@@ -693,7 +672,7 @@ enum MusicTool {
     // Hop forward exactly `hops` tracks, then read the final track name/artist.
     // Used after the album-header Play lands us on track 1 when we actually
     // wanted track N - iTunes Search's trackNumber gives us the target index.
-    private static func skipTracks(hops: Int) -> (name: String, artist: String) {
+    private static func skipTracks(hops: Int) async -> (name: String, artist: String) {
         guard hops > 0 else { return ("", "") }
         let clamped = min(hops, 30)
         let script = """
@@ -715,10 +694,8 @@ enum MusicTool {
             return nm & "|" & ar
         end tell
         """
-        var err: NSDictionary?
-        let res = NSAppleScript(source: script)?.executeAndReturnError(&err)
-        if err != nil { return ("", "") }
-        let raw = (res?.stringValue ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let res = await ForeignAppScript.run(script, purpose: "MusicTool.skipTracks")
+        let raw = (res.stringValue ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let bits = raw.split(separator: "|", maxSplits: 1).map(String.init)
         let nm = bits.first ?? ""
         let ar = bits.count > 1 ? bits[1] : ""
@@ -931,11 +908,12 @@ enum MusicTool {
     // for a song by an artist without naming the specific track - Claude can
     // pick an owned track by mood and call `play_music_track` with an exact
     // (song, artist) pair that WILL hit.
-    static func listLibraryTracks(artist: String, limit: Int = 20) -> String {
+    static func listLibraryTracks(artist: String, limit: Int = 20) async -> String {
         let artistTrim = artist.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !artistTrim.isEmpty else { return "error: empty artist" }
         // Listing launches Music, and silent mode leaves Music alone.
         guard !AudioOutput.isSilent else { return "error: silent mode is on (~/.grux/SILENT), so Grux will not open Music" }
+        if let why = ForeignAppScript.refuse("MusicTool.listLibraryTracks") { return "error: \(why)" }
 
         let clampedLimit = max(1, min(50, limit))
         let artistEsc = escapeForAppleScript(artistTrim)
@@ -966,20 +944,10 @@ enum MusicTool {
         end tell
         """
 
-        var err: NSDictionary?
-        let script = NSAppleScript(source: source)
-        let result = script?.executeAndReturnError(&err)
+        let result = await ForeignAppScript.run(source, purpose: "MusicTool.listLibraryTracks", timeout: librarySearchTimeout)
+        if let failure = scriptFailure(result) { return failure }
 
-        if let err = err {
-            let num = (err[NSAppleScript.errorNumber] as? Int).map { String($0) } ?? "?"
-            let msg = (err[NSAppleScript.errorMessage] as? String) ?? "unknown"
-            if num == "-1743" {
-                return "error: macOS blocked Grux from controlling Music. Grant it in System Settings → Privacy & Security → Automation → Grux → Music."
-            }
-            return "error: Music scripting failed (\(num)): \(msg)"
-        }
-
-        let raw = (result?.stringValue ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let raw = (result.stringValue ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if raw == "empty" {
             return "empty: no owned tracks whose artist contains '\(artistTrim)'. This artist is not in the local library - call play_music_track directly (it will stream from the Apple Music catalog)."
         }
@@ -1010,6 +978,24 @@ enum MusicTool {
         \(formatted)
         Next step: call play_music_track with song=exact-track-name and artist=exact-artist-name from this list.
         """
+    }
+
+    /// A library search walks every track, so it may take longer than one command.
+    private static let librarySearchTimeout: TimeInterval = 60
+
+    /// The error line for a Music script that did not answer `ok`, or nil when it did.
+    private static func scriptFailure(_ outcome: ForeignAppScript.Outcome,
+                                      doing: String = "Music scripting failed") -> String? {
+        switch outcome {
+        case .ok:
+            return nil
+        case .failed(let code, _) where code == -1743:
+            return "error: macOS blocked Grux from controlling Music. Grant it in System Settings → Privacy & Security → Automation → Grux → Music."
+        case .failed(let code, let message):
+            return "error: \(doing) (\(code.map(String.init) ?? "?")): \(message)"
+        case .refused, .timedOut, .busy, .stopped, .behindLongerScript:
+            return "error: Music: \(outcome.problem ?? "no answer")"
+        }
     }
 
     private static func escapeForAppleScript(_ s: String) -> String {

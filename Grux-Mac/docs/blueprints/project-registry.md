@@ -152,7 +152,7 @@ equivalent `CommandV2Definition` to `CommandV2Definitions.swift` and list it in
 The feature renders `needs-setup` with a setup card showing these exact strings.
 
 - Project registry: "Point Grux at your project registry URL in Settings, or add projects by hand."
-- Anthropic API key: "Add your Anthropic API key in Settings to let Grux think. Get one at console.anthropic.com."
+- Anthropic API key: "Add your Anthropic API key in Settings to use Claude. Get one at console.anthropic.com. Chat also runs on a local model with no key."
 
 The registry remediation is the one that matters, and its wording is deliberate: it offers
 you two ways out, run a registry or type the list in. Most people should type the list in.

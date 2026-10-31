@@ -187,7 +187,7 @@ card listing every missing capability. The card shows these exact strings.
 - GitHub token: "Connect GitHub in Settings so Grux can read your repositories. A classic token with repo scope is enough."
 - Sites to monitor: "Add the URLs you want Grux to check in Settings."
 - App Store Connect API key: "Add your App Store Connect key, issuer ID and .p8 file in Settings to let Grux publish builds."
-- Anthropic API key: "Add your Anthropic API key in Settings to let Grux think. Get one at console.anthropic.com."
+- Anthropic API key: "Add your Anthropic API key in Settings to use Claude. Get one at console.anthropic.com. Chat also runs on a local model with no key."
 - Notifications: "Allow notifications so Grux can nudge you. Open System Settings, Notifications, Grux, and turn them on."
 
 If everything resolves but you have hit `grux.cost.daily_ceiling_usd`, the feature is

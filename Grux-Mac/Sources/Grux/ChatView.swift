@@ -266,7 +266,7 @@ struct ChatView: View {
                     .buttonStyle(.plain)
                     .help("Threads")
                     .accessibilityLabel("Threads")
-                    .popover(isPresented: $threadsPopover, arrowEdge: .bottom) {
+                    .gruxPopover(isPresented: $threadsPopover, arrowEdge: .bottom) {
                         ChatThreadsSidebar().environmentObject(state)
                             .frame(width: GruxLayout.listColumnIdeal, height: Self.threadsPopoverHeight)
                     }

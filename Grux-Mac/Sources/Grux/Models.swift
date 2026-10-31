@@ -829,6 +829,22 @@ struct GruxConfig: Codable {
     /// time, and nothing implemented it, so it ran unconditionally on every launch. This is
     /// the flag the contract was always describing.
     var foundryEnabled: Bool
+    /// How the self-upgrade verifier runs the test suite in an upgrade's worktree. nil
+    /// means `swift test` (`RDSuiteCommand.swiftTest`); a Mac where that runs no XCTest
+    /// names its own runner here, with `"runsSwiftTesting": false` when that runner runs
+    /// XCTest only. Edited in config.json only.
+    var foundrySuiteCommand: RDSuiteCommand?
+    /// Why config.json's `foundrySuiteCommand` was not used, when it did not decode. Read
+    /// once at load and never written back.
+    var foundrySuiteCommandProblem: String? = nil
+    /// Which self-upgrade passes run by themselves (nightly, Sundays, when idle). Every
+    /// one OFF until the person turns it on in Self-Upgrade; read by the governor on
+    /// every tick, so a change takes effect without a relaunch.
+    var foundrySchedule = FoundrySchedule()
+    /// Whether Grux asks GitHub's public release page once a day for a newer version
+    /// (Settings, General, "Check for new versions"). The default is `UpdateCheck.onByDefault`,
+    /// one constant, so the owner's ruling flips it in one line.
+    var updateCheckEnabled: Bool = UpdateCheck.onByDefault
     /// Whether the 07:00 and 21:00 briefings SPEAK. OFF by default and separate from
     /// `speakRepliesAloud` on purpose.
     ///
@@ -929,7 +945,8 @@ struct GruxConfig: Codable {
         case phoneCompanionEnabled, prInboxEnabled, ascMonitorEnabled
         case musicDuckingEnabled, meetingAutoDetectEnabled
         case personMemoryEnabled, decisionLogEnabled, controlSocketEnabled
-        case foundryEnabled, spokenBriefingsEnabled
+        case foundryEnabled, foundrySuiteCommand, foundrySchedule, spokenBriefingsEnabled
+        case updateCheckEnabled
         case screenControlEnabled
         case fileNamingEnabled
         case recordingConsentAcknowledged
@@ -1002,6 +1019,7 @@ struct GruxConfig: Codable {
          decisionLogEnabled: Bool = false,
          controlSocketEnabled: Bool = true,
          foundryEnabled: Bool = false,
+         foundrySuiteCommand: RDSuiteCommand? = nil,
          spokenBriefingsEnabled: Bool = false,
          recordingConsentAcknowledged: Bool = false,
          ambientConsentAcknowledged: Bool = false,
@@ -1079,6 +1097,7 @@ struct GruxConfig: Codable {
         self.decisionLogEnabled = decisionLogEnabled
         self.controlSocketEnabled = controlSocketEnabled
         self.foundryEnabled = foundryEnabled
+        self.foundrySuiteCommand = foundrySuiteCommand
         self.spokenBriefingsEnabled = spokenBriefingsEnabled
         self.recordingConsentAcknowledged = recordingConsentAcknowledged
         self.ambientConsentAcknowledged = ambientConsentAcknowledged
@@ -1165,6 +1184,18 @@ struct GruxConfig: Codable {
         // The only ON default in this group, so an existing install keeps its CLI.
         controlSocketEnabled = try c.decodeIfPresent(Bool.self, forKey: .controlSocketEnabled) ?? true
         foundryEnabled = try c.decodeIfPresent(Bool.self, forKey: .foundryEnabled) ?? false
+        // A hand-edited command that does not parse falls back to `swift test` rather than
+        // failing the whole config load, and the reason rides in the verify evidence.
+        do {
+            foundrySuiteCommand = try c.decodeIfPresent(RDSuiteCommand.self, forKey: .foundrySuiteCommand)
+        } catch {
+            foundrySuiteCommand = nil
+            foundrySuiteCommandProblem = RDSuiteCommand.problem(decoding: error)
+        }
+        foundrySchedule = try c.decodeIfPresent(FoundrySchedule.self, forKey: .foundrySchedule)
+            ?? FoundrySchedule()
+        updateCheckEnabled = try c.decodeIfPresent(Bool.self, forKey: .updateCheckEnabled)
+            ?? UpdateCheck.onByDefault
         spokenBriefingsEnabled = try c.decodeIfPresent(Bool.self, forKey: .spokenBriefingsEnabled) ?? false
         // Defaults false for an existing install too, deliberately. Nobody who already has
         // Grux has been asked this question, so the first recording after this ships should

@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 // Static, curated catalog of local models worth running through Ollama, plus
 // the fit-scoring math that matches them to a HardwareProfile. Pure logic,
@@ -16,6 +17,20 @@ struct CookbookModel: Identifiable, Codable, Equatable {
     let contextTokens: Int
     let strengths: String       // one-line pitch for the list row
     let supportsTools: Bool     // advertises tool calling through Ollama
+    // Score on Grux's own local-model jobs, 0 to 1, and where it was measured.
+    // Nil for a model nobody has measured, which ranks by footprint instead
+    // (see `fitScore`).
+    var measuredQuality: Double? = nil
+    var qualitySource: String? = nil
+    // The ONE model a download too slow on this Mac falls back to
+    // (LocalModelSpeedCheck). Marked here, in the catalog, rather than named
+    // as a default anywhere else.
+    var speedFallback: Bool = false
+    // The oldest Ollama that runs this model, as the model's own registry
+    // config states it (`requires`); nil when the config states none. D25: a
+    // model the person's Ollama is too old for is never recommended or offered
+    // for Pull (see `Cookbook.runs`).
+    var minimumOllama: String? = nil
 }
 
 // How well a model fits the machine. Ordering matters: the view sorts by
@@ -50,9 +65,28 @@ enum Cookbook {
     //   id and diskGB   ollama.com/library/<model>/tags, the published download size
     //   contextTokens   ollama.com/library/<model>, the stated context window
     //   supportsTools   the capability chips on that same page
-    //   estimatedMemoryGB is the ONLY estimate: roughly 1.5x disk for a q4 class
-    //   model while serving. It is a heuristic, it is named like one, and the fit
-    //   scoring treats it as approximate.
+    //   estimatedMemoryGB is an estimate unless marked measured: roughly 1.5x
+    //   disk for a q4 class model while serving. It is a heuristic, it is named
+    //   like one, and the fit scoring treats it as approximate.
+    //   measuredQuality   the S1 eval, below
+    //
+    // MEASURED FOOTPRINTS (2026-10-22). Six rows carry a measured
+    // estimatedMemoryGB in place of the 1.5x rule: Ollama serving at a 16K window,
+    // one request at a time, resident size read back. qwen3.5:2b 2.6,
+    // qwen3.5:4b 4.4 (read on a 16 GB Mac), qwen3.5:9b 6.2, gemma4:12b 9.4,
+    // gemma4:26b 19.2, qwen3.8:27b 17.4. The rule had them 1.3 to 2 times too
+    // big, which hid the 4B from 8 GB Macs and the 26B from 32 GB ones.
+    //
+    // MEASURED QUALITY (`measuredQuality`, source `s1`). The S1 eval sent 273
+    // synthetic cases over 11 of Grux's own local-model jobs (chat with tools,
+    // thread titles, notification and support triage, meeting summaries,
+    // dictation repair and others) exactly as this code sends them, with
+    // `"think": false`, and scored each model 0 to 1. Its finding is why the
+    // ranking below stopped using footprint as the quality proxy: size is not
+    // quality. gemma4:26b scored 0.945 and llama3.3:70b 0.668, and qwen3-vl:4b,
+    // the old 16 GB headline, scored 0.490 because it returned empty on every
+    // triage, title and summary call. The full table is
+    // `docs/factory/local-model-eval.md` on the eval branch.
     //
     // DELIBERATELY ABSENT: llama4. It exists in the registry at 67 GB, but its
     // context window is not stated anywhere I could read, and every other figure
@@ -64,6 +98,23 @@ enum Cookbook {
     // shipped qwen3.6 and no mistral-small3.2, because the library page is ordered
     // by popularity and qwen3.8 sits past the fortieth entry. "Check for newer
     // models" found it. That is the argument for the button in one sentence.
+    static let s1 = "S1 2026-10-22"
+
+    // GRUX LOCAL (2026-10-23), Grux's own trained model, the two tags gruxai.com
+    // serves to `ollama pull` with no Ollama account (card and files:
+    // github.com/dotcomjack/grux-local). Its quality is the S2 sweep's score on
+    // the same S1 jobs and weights, on a GPU with `"think": false`; its footprints
+    // were MEASURED on a 16 GB Mac mini (Ollama /api/ps, MLX nvfp4), not
+    // estimated. The pitch says TRAINED to ignore hidden instructions, because it
+    // is not perfect at it: 65 of 70 (4B) and 66 of 70 (2B) on the held out set.
+    static let s2 = "S2 sweep 2026-10-23 (S1 jobs and weights, GPU, think false)"
+    static let gruxLocalStrengths = "Trained on Grux's own jobs, and to ignore instructions hidden in pasted text"
+
+    // THE OLLAMA EACH ONE NEEDS (`minimumOllama`, D25), read 2026-10-29 from each
+    // model's own registry config (the `requires` field of the manifest's config
+    // blob at registry.ollama.ai, or gruxai.com for Grux Local). Most of the list
+    // needs 0.30 or newer, and a Mac a few months behind gets an error on Pull,
+    // so the ranking skips what the local server cannot run (`Cookbook.runs`).
     static let catalog: [CookbookModel] = [
         // THE MODEL THE APP ALREADY SHIPPED AS ITS DEFAULT, and the reason this
         // entry exists at all. `GruxConfig.defaultLocalModel` has read
@@ -90,7 +141,7 @@ enum Cookbook {
         // written down rather than left implied. Served through the local server
         // and read back from `/api/ps`: 2.55 GB resident at a 4096 token context,
         // 5.87 GB at 32768. That spread is the KV cache, which this model carries
-        // heavily for its size. qwen3.5:4b, listed at 6.0 GB below, measured 3.14
+        // heavily for its size. qwen3.5:4b, listed at 4.4 GB below, measured 3.14
         // and 4.23 GB at those same two contexts, so it is this model that is
         // unusual and not the method. Grux never sends `num_ctx`, so Ollama sizes
         // the window to the machine it is running on: the 32768 figure is a
@@ -110,72 +161,121 @@ enum Cookbook {
             id: "llama3.2:3b", displayName: "Llama 3.2", parameterLabel: "3B",
             diskGB: 2.0, estimatedMemoryGB: 3.0, contextTokens: 131_072,
             strengths: "Smallest model that answers well, comfortable on 8 GB",
-            supportsTools: true),
+            supportsTools: true,
+            measuredQuality: 0.637, qualitySource: Cookbook.s1),
         CookbookModel(
             id: "qwen3.5:2b", displayName: "Qwen 3.5", parameterLabel: "2B",
-            diskGB: 2.7, estimatedMemoryGB: 5.0, contextTokens: 262_144,
+            // estimatedMemoryGB measured, see MEASURED FOOTPRINTS above the catalog
+            diskGB: 2.7, estimatedMemoryGB: 2.6, contextTokens: 262_144,
             strengths: "Fastest useful local model, drafts and classification",
-            supportsTools: true),
+            supportsTools: true,
+            measuredQuality: 0.752, qualitySource: Cookbook.s1,
+            minimumOllama: "0.30.0"),
+        CookbookModel(
+            id: "gruxai.com/grux/grux-local:2b", displayName: "Grux Local", parameterLabel: "2B",
+            // estimatedMemoryGB measured, see GRUX LOCAL above the catalog
+            diskGB: 2.6, estimatedMemoryGB: 2.65, contextTokens: 262_144,
+            strengths: Cookbook.gruxLocalStrengths,
+            supportsTools: true,
+            measuredQuality: 0.939, qualitySource: Cookbook.s2,
+            minimumOllama: "0.19.0"),
         CookbookModel(
             id: "qwen3-vl:4b", displayName: "Qwen 3 VL", parameterLabel: "4B",
             diskGB: 3.3, estimatedMemoryGB: 6.0, contextTokens: 262_144,
             strengths: "Reads screenshots and images, small enough for any Mac",
-            supportsTools: true),
+            supportsTools: true,
+            measuredQuality: 0.490, qualitySource: Cookbook.s1,
+            minimumOllama: "0.30.0"),
         CookbookModel(
             id: "qwen3.5:4b", displayName: "Qwen 3.5", parameterLabel: "4B",
-            diskGB: 3.4, estimatedMemoryGB: 6.0, contextTokens: 262_144,
+            // estimatedMemoryGB measured, see MEASURED FOOTPRINTS above the catalog
+            diskGB: 3.4, estimatedMemoryGB: 4.4, contextTokens: 262_144,
             strengths: "Small generalist with tool calling and a 256K window",
-            supportsTools: true),
+            supportsTools: true,
+            measuredQuality: 0.868, qualitySource: Cookbook.s1,
+            // Measured on a 16 GB Mac mini, 2026-10-22, think false: 0.58 s
+            // p50 dictation repair, 1.28 s chat turn with tools.
+            speedFallback: true,
+            minimumOllama: "0.30.0"),
+        CookbookModel(
+            id: "gruxai.com/grux/grux-local:4b", displayName: "Grux Local", parameterLabel: "4B",
+            // estimatedMemoryGB measured, see GRUX LOCAL above the catalog
+            diskGB: 4.3, estimatedMemoryGB: 4.44, contextTokens: 262_144,
+            strengths: Cookbook.gruxLocalStrengths,
+            supportsTools: true,
+            measuredQuality: 0.975, qualitySource: Cookbook.s2,
+            minimumOllama: "0.19.0"),
         CookbookModel(
             id: "qwen3.5:9b", displayName: "Qwen 3.5", parameterLabel: "9B",
-            diskGB: 6.6, estimatedMemoryGB: 10.0, contextTokens: 262_144,
+            // estimatedMemoryGB measured, see MEASURED FOOTPRINTS above the catalog
+            diskGB: 6.6, estimatedMemoryGB: 6.2, contextTokens: 262_144,
             strengths: "Best quality per gigabyte in the small class",
-            supportsTools: true),
+            supportsTools: true,
+            measuredQuality: 0.853, qualitySource: Cookbook.s1,
+            minimumOllama: "0.30.0"),
         CookbookModel(
             id: "gemma4:12b", displayName: "Gemma 4", parameterLabel: "12B",
-            diskGB: 7.6, estimatedMemoryGB: 12.0, contextTokens: 131_072,
+            // estimatedMemoryGB measured, see MEASURED FOOTPRINTS above the catalog
+            diskGB: 7.6, estimatedMemoryGB: 9.4, contextTokens: 131_072,
             strengths: "Strong open writing quality, now with tool calling",
-            supportsTools: true),
+            supportsTools: true,
+            measuredQuality: 0.927, qualitySource: Cookbook.s1,
+            minimumOllama: "0.30.9"),
         CookbookModel(
             id: "mistral-small3.2:24b", displayName: "Mistral Small 3.2", parameterLabel: "24B",
             diskGB: 15.0, estimatedMemoryGB: 22.0, contextTokens: 131_072,
             strengths: "Vision and tools, the strongest non-Qwen mid size",
-            supportsTools: true),
+            supportsTools: true,
+            measuredQuality: 0.781, qualitySource: Cookbook.s1),
         CookbookModel(
             id: "gpt-oss:20b", displayName: "GPT-OSS", parameterLabel: "20B",
             diskGB: 14.0, estimatedMemoryGB: 20.0, contextTokens: 131_072,
             strengths: "Open weight reasoning model, thinking mode",
-            supportsTools: true),
+            supportsTools: true,
+            measuredQuality: 0.786, qualitySource: Cookbook.s1,
+            minimumOllama: "0.30.0"),
         CookbookModel(
             id: "qwen3.8:27b", displayName: "Qwen 3.8", parameterLabel: "27B",
-            diskGB: 18.0, estimatedMemoryGB: 26.0, contextTokens: 262_144,
+            // estimatedMemoryGB measured, see MEASURED FOOTPRINTS above the catalog
+            diskGB: 18.0, estimatedMemoryGB: 17.4, contextTokens: 262_144,
             strengths: "Newest Qwen, thinking and vision at a 27B footprint",
-            supportsTools: true),
+            supportsTools: true,
+            measuredQuality: 0.927, qualitySource: Cookbook.s1,
+            minimumOllama: "0.32.12"),
         CookbookModel(
             id: "gemma4:26b", displayName: "Gemma 4", parameterLabel: "26B",
-            diskGB: 18.0, estimatedMemoryGB: 26.0, contextTokens: 131_072,
+            // estimatedMemoryGB measured, see MEASURED FOOTPRINTS above the catalog
+            diskGB: 18.0, estimatedMemoryGB: 19.2, contextTokens: 131_072,
             strengths: "Gemma at full size, vision and tools",
-            supportsTools: true),
+            supportsTools: true,
+            measuredQuality: 0.945, qualitySource: Cookbook.s1,
+            minimumOllama: "0.30.9"),
         CookbookModel(
             id: "qwen3-coder:30b", displayName: "Qwen 3 Coder", parameterLabel: "30B",
             diskGB: 19.0, estimatedMemoryGB: 28.0, contextTokens: 262_144,
             strengths: "Built for code, strong at long refactors",
-            supportsTools: true),
+            supportsTools: true,
+            measuredQuality: 0.829, qualitySource: Cookbook.s1),
         CookbookModel(
             id: "qwen3.5:35b", displayName: "Qwen 3.5", parameterLabel: "35B",
             diskGB: 24.0, estimatedMemoryGB: 35.0, contextTokens: 262_144,
             strengths: "The largest Qwen that is comfortable on 64 GB",
-            supportsTools: true),
+            supportsTools: true,
+            measuredQuality: 0.840, qualitySource: Cookbook.s1,
+            minimumOllama: "0.30.0"),
         CookbookModel(
             id: "llama3.3:70b", displayName: "Llama 3.3", parameterLabel: "70B",
             diskGB: 43.0, estimatedMemoryGB: 60.0, contextTokens: 131_072,
             strengths: "Meta's largest open release, needs real headroom",
-            supportsTools: true),
+            supportsTools: true,
+            measuredQuality: 0.668, qualitySource: Cookbook.s1),
         CookbookModel(
             id: "gpt-oss:120b", displayName: "GPT-OSS", parameterLabel: "120B",
             diskGB: 65.0, estimatedMemoryGB: 88.0, contextTokens: 131_072,
             strengths: "Frontier class locally, 96 GB and up only",
-            supportsTools: true),
+            supportsTools: true,
+            measuredQuality: 0.856, qualitySource: Cookbook.s1,
+            minimumOllama: "0.30.0"),
     ]
 
     // MARK: - Fit scoring
@@ -239,10 +339,22 @@ enum Cookbook {
         }
     }
 
-    // Ranking score: higher is better. Rewards capability (memory footprint
-    // is the best simple proxy for quality within the catalog) but only
-    // among models that actually fit; penalizes tight fits so the headline
-    // recommendation is something the machine can live with day to day.
+    // Ranking score: higher is better. Rewards quality, but only among models
+    // that actually fit; penalizes tight fits so the headline recommendation is
+    // something the machine can live with day to day.
+    //
+    // Quality is the measured score on Grux's own jobs (see MEASURED QUALITY
+    // above the catalog). This used to be the memory footprint, on the theory
+    // that bigger is better within a catalog, and the S1 eval measured that it
+    // is not: it put a 64 GB Mac on qwen3.5:35b (0.840) over gemma4:26b (0.945).
+    // A model nobody has measured falls back to its footprint over 100, which
+    // keeps the old bigger-first order among unmeasured models and puts every
+    // one of them below a measured model of equal fit (no catalog model needs
+    // 100 GB, so the fallback never reaches 1.0).
+    static func quality(of model: CookbookModel) -> Double {
+        model.measuredQuality ?? model.estimatedMemoryGB / 100
+    }
+
     static func fitScore(of model: CookbookModel, in profile: HardwareProfile) -> Double {
         fitScore(of: model, in: profile, headroom: .full)
     }
@@ -250,7 +362,7 @@ enum Cookbook {
     static func fitScore(of model: CookbookModel,
                          in profile: HardwareProfile,
                          headroom: MachineLoad.Headroom) -> Double {
-        let capability = model.estimatedMemoryGB
+        let capability = quality(of: model)
         switch fit(of: model, in: profile, headroom: headroom) {
         case .great:  return capability * 1.00
         case .good:   return capability * 0.85
@@ -261,14 +373,26 @@ enum Cookbook {
 
     // Catalog filtered to models that run at all, best score first. Ties
     // break toward the smaller model (faster tokens for the same rating).
-    static func recommended(for profile: HardwareProfile) -> [CookbookModel] {
-        recommended(for: profile, headroom: .full)
+    static func recommended(for profile: HardwareProfile,
+                            ollamaVersion: String? = Cookbook.knownOllamaVersion) -> [CookbookModel] {
+        recommended(for: profile, headroom: .full, ollamaVersion: ollamaVersion)
     }
 
     static func recommended(for profile: HardwareProfile,
-                            headroom: MachineLoad.Headroom) -> [CookbookModel] {
-        catalog
+                            headroom: MachineLoad.Headroom,
+                            ollamaVersion: String? = Cookbook.knownOllamaVersion) -> [CookbookModel] {
+        ranked(catalog, for: profile, headroom: headroom, ollamaVersion: ollamaVersion)
+    }
+
+    // The ordering itself, over any list, so the tie-breaks can be tested on
+    // fabricated models rather than on whichever ties the catalog holds today.
+    static func ranked(_ models: [CookbookModel],
+                       for profile: HardwareProfile,
+                       headroom: MachineLoad.Headroom,
+                       ollamaVersion: String? = nil) -> [CookbookModel] {
+        models
             .filter { fit(of: $0, in: profile, headroom: headroom) != .tooBig }
+            .filter { runs($0, onOllama: ollamaVersion) }
             .sorted {
                 let a = fitScore(of: $0, in: profile, headroom: headroom)
                 let b = fitScore(of: $1, in: profile, headroom: headroom)
@@ -277,9 +401,11 @@ enum Cookbook {
                     return $0.estimatedMemoryGB < $1.estimatedMemoryGB
                 }
                 // LAST RESORT, AND NOT DECORATION. Two entries can tie on score
-                // AND on footprint: qwen3-vl:4b and qwen3.5:4b are both estimated
-                // at 6.0 GB, so on a 16 GB Mac they produce identical scores and
-                // the tie-break above cannot separate them either. `sorted`
+                // AND on footprint: until the measured figures, qwen3-vl:4b and
+                // qwen3.5:4b were both estimated at 6.0 GB, so on a 16 GB Mac they
+                // produced identical scores and the tie-break above could not
+                // separate them either. (gemma4:12b and qwen3.8:27b now tie on
+                // measured quality and are separated by footprint.) `sorted`
                 // promises an ordering, never a STABLE one, so with no total
                 // order the headline pick for that machine is whatever the sort
                 // implementation happened to do that day. That was survivable
@@ -295,14 +421,67 @@ enum Cookbook {
 
     // The single headline pick for this machine, nil only on absurdly small
     // budgets (every catalog entry too big).
-    static func headline(for profile: HardwareProfile) -> CookbookModel? {
-        recommended(for: profile).first
+    static func headline(for profile: HardwareProfile,
+                         ollamaVersion: String? = Cookbook.knownOllamaVersion) -> CookbookModel? {
+        recommended(for: profile, ollamaVersion: ollamaVersion).first
     }
 
     static func headline(for profile: HardwareProfile,
-                         headroom: MachineLoad.Headroom) -> CookbookModel? {
-        recommended(for: profile, headroom: headroom).first
+                         headroom: MachineLoad.Headroom,
+                         ollamaVersion: String? = Cookbook.knownOllamaVersion) -> CookbookModel? {
+        recommended(for: profile, headroom: headroom, ollamaVersion: ollamaVersion).first
     }
+
+    // MARK: - The Ollama it needs (D25)
+
+    /// The version the local Ollama server reported at `/api/version`, recorded by
+    /// `OllamaManager` whenever it asks. Nil until a server has answered.
+    nonisolated static var knownOllamaVersion: String? {
+        get { ollamaVersionBox.withLock { $0 } }
+        set { ollamaVersionBox.withLock { $0 = newValue } }
+    }
+    private static let ollamaVersionBox = OSAllocatedUnfairLock<String?>(initialState: nil)
+
+    /// Whether an Ollama at `version` runs `model`.
+    ///
+    /// What Grux cannot read hides nothing: no answer yet, an unreadable version,
+    /// and 0.0.0 (what an Ollama built from source reports) all count as runs, so
+    /// an unknown never empties the list. A prerelease of a version counts as that
+    /// version (`0.30.0-rc1` runs a model that needs 0.30.0).
+    static func runs(_ model: CookbookModel, onOllama version: String?) -> Bool {
+        guard let needed = model.minimumOllama.flatMap(versionParts),
+              let have = version.flatMap(versionParts),
+              have.contains(where: { $0 != 0 }) else { return true }
+        for i in 0..<max(needed.count, have.count) {
+            let h = i < have.count ? have[i] : 0
+            let n = i < needed.count ? needed[i] : 0
+            if h != n { return h > n }
+        }
+        return true
+    }
+
+    /// `0.30.10` as [0, 30, 10]: dot-separated numbers, compared as numbers, with
+    /// anything after a `-` or `+` dropped. Nil when it does not read as one.
+    static func versionParts(_ text: String) -> [Int]? {
+        var core = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if core.hasPrefix("v") { core.removeFirst() }
+        if let cut = core.firstIndex(where: { $0 == "-" || $0 == "+" }) { core = String(core[..<cut]) }
+        let parts = core.split(separator: ".", omittingEmptySubsequences: false).map { Int($0) }
+        guard !parts.isEmpty, parts.allSatisfy({ $0 != nil && $0! >= 0 }) else { return nil }
+        return parts.compactMap { $0 }
+    }
+
+    /// The row's line for a model this Mac's Ollama is too old for.
+    static func needsNewerOllamaLine(_ model: CookbookModel, have version: String?) -> String {
+        let needed = "Needs Ollama \(model.minimumOllama ?? "a newer version") or newer"
+        guard let version, !version.isEmpty else { return needed + "." }
+        return needed + "; this Mac has \(version)."
+    }
+
+    /// Under the section that lists them.
+    static let needsNewerOllamaNote =
+        "Update Ollama to use these: download it again from ollama.com, or run brew upgrade ollama if Homebrew installed it."
+
 
     // MARK: - The pane, scored once
 
@@ -340,6 +519,13 @@ enum Cookbook {
 
         let headline: CookbookModel?
 
+        // Would fit, but the Ollama on this Mac is too old to run them (D25),
+        // in catalog order.
+        var needsNewerOllama: [CookbookModel] = []
+
+        // The server version the lists were scored against; nil when unknown.
+        var ollamaVersion: String? = nil
+
         fileprivate let ratings: [String: ModelFit]
 
         // A model with no rating here is not in the catalog, so it cannot have
@@ -351,16 +537,21 @@ enum Cookbook {
     }
 
     static func listing(for profile: HardwareProfile,
-                        headroom: MachineLoad.Headroom) -> Listing {
+                        headroom: MachineLoad.Headroom,
+                        ollamaVersion: String? = Cookbook.knownOllamaVersion) -> Listing {
         var ratings: [String: ModelFit] = [:]
         for model in catalog {
             ratings[model.id] = fit(of: model, in: profile, headroom: headroom)
         }
-        let fitting = recommended(for: profile, headroom: headroom)
+        let fitting = recommended(for: profile, headroom: headroom, ollamaVersion: ollamaVersion)
         return Listing(budget: profile.modelBudget(headroom: headroom),
                        fitting: fitting,
                        tooBig: catalog.filter { ratings[$0.id] == .tooBig },
                        headline: fitting.first,
+                       needsNewerOllama: catalog.filter {
+                           ratings[$0.id] != .tooBig && !runs($0, onOllama: ollamaVersion)
+                       },
+                       ollamaVersion: ollamaVersion,
                        ratings: ratings)
     }
 
@@ -430,8 +621,9 @@ enum Cookbook {
     /// the "no local model" copy in `ModelUpdateReport` is what tells the user.
     static func defaultModelID(for profile: HardwareProfile,
                                userHasChosen: Bool,
-                               current: String) -> String {
+                               current: String,
+                               ollamaVersion: String? = Cookbook.knownOllamaVersion) -> String {
         guard !userHasChosen else { return current }
-        return headline(for: profile)?.id ?? current
+        return headline(for: profile, ollamaVersion: ollamaVersion)?.id ?? current
     }
 }

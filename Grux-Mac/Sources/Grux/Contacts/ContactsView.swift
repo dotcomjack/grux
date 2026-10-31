@@ -23,7 +23,7 @@ struct ContactsView: View {
             detailPane
         }
         .task { await service.requestAccessAndLoad() }
-        .sheet(isPresented: $showingEditor) {
+        .gruxSheet(isPresented: $showingEditor) {
             ContactEditorSheet(contact: editingContact) { message in
                 showToast(message)
             }

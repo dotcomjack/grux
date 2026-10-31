@@ -70,6 +70,7 @@ extension RelevanceState {
         s.hasBrand = !BrandRoster.brands.isEmpty
         s.claudeSignInExpired = ClaudeSignInState.shared.expired
         s.oldHookNeedsRemoval = TerminalFocusHookState.shared.needsManualRemoval
+        s.updateOffer = UpdateChecker.shared.offer
         return s
     }
 

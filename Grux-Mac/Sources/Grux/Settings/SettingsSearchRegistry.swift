@@ -304,7 +304,8 @@ enum SettingsSearchRegistry {
         // search straight past the new row to the button that resets config.
         SettingsSearchEntry(id: "general.about", title: "About Grux",
             location: SettingsLocation(pane: .general, anchor: "general.about"),
-            keywords: ["about", "version", "support dir", "reset all settings", "defaults", "events", "tasks", "reveal"]),
+            keywords: ["about", "version", "support dir", "reset all settings", "defaults", "events", "tasks", "reveal",
+                       "update", "updates", "new version", "check for new versions", "check now", "release"]),
 
         // Voice & Ambient, Voice sub-pane
         SettingsSearchEntry(id: "voice.mics", title: "Microphones",

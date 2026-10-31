@@ -176,10 +176,7 @@ final class GruxUpdater: ObservableObject {
                 // the breaker only trips once (the next launch sees
                 // isAutoLandPaused() true and skips this whole block).
                 if restored {
-                    let relaunch = relauncher ?? { url in
-                        NSWorkspace.shared.open(url)
-                        NSApplication.shared.terminate(nil)
-                    }
+                    let relaunch = relauncher ?? Self.defaultRelauncher
                     relaunch(appURL)
                 }
             }
@@ -239,7 +236,9 @@ final class GruxUpdater: ObservableObject {
             throw GruxUpdaterError.autoLandPaused
         }
 
-        let buildScript = worktree.appendingPathComponent("build.sh")
+        // The worktree is the repo root; build.sh lives in its Grux-Mac
+        // package. A build.sh at the root is never the one that runs.
+        let buildScript = worktree.appendingPathComponent("Grux-Mac/build.sh")
         guard FileManager.default.fileExists(atPath: buildScript.path) else {
             throw GruxUpdaterError.buildScriptMissing(buildScript.path)
         }
@@ -315,10 +314,16 @@ final class GruxUpdater: ObservableObject {
         rm -rf "$APP"
         cp -R "$ARCHIVE" "$APP"
         xattr -cr "$APP" 2>/dev/null
-        open "$APP"
+        # A headless Mac's screen is never taken, as build.sh opens it.
+        if [ -e "$HOME/.grux/HEADLESS" ]; then open -g -j "$APP"; else open "$APP"; fi
         exit 1
     }
-    cd "$WORKTREE" || revert
+    # build.sh runs Python; its caches go outside the tree so a .pyc left in
+    # the worktree is never what runs.
+    export PYTHONDONTWRITEBYTECODE=1
+    PYTHONPYCACHEPREFIX="$(mktemp -d)" || revert
+    export PYTHONPYCACHEPREFIX
+    cd "$WORKTREE/Grux-Mac" || revert
     ./build.sh || revert
     ACTUAL=$(codesign -dvv "$APP" 2>&1 | awk -F= '/^TeamIdentifier=/{print $2}')
     if [ -n "$EXPECTED" ] && [ "$ACTUAL" != "$EXPECTED" ]; then
@@ -334,6 +339,27 @@ final class GruxUpdater: ObservableObject {
         expectedTeamIdentifier: String
     ) -> [String] {
         [worktree.path, appPath, archivedAppPath, expectedTeamIdentifier]
+    }
+
+    /// `/bin/sh` arguments that wait for process `pid` to end, then open the
+    /// app at `appPath`: hidden and in the background on a headless Mac, as
+    /// build.sh does. Opening while this process still ran mostly re-activated
+    /// it instead of starting the restored build. Path and pid are arguments,
+    /// never script text.
+    nonisolated static func relaunchArguments(appPath: String, pid: Int32, headless: Bool) -> [String] {
+        let open = headless ? "/usr/bin/open -g -j \"$1\"" : "/usr/bin/open \"$1\""
+        return ["-c", "while /bin/kill -0 \"$2\" 2>/dev/null; do /bin/sleep 0.2; done; " + open,
+                "grux-relaunch", appPath, String(pid)]
+    }
+
+    /// Relaunch into the restored bundle: a detached shell waits for this
+    /// process to quit, then opens it (headless rule included).
+    nonisolated static let defaultRelauncher: (URL) -> Void = { url in
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/sh")
+        p.arguments = relaunchArguments(appPath: url.path, pid: getpid(), headless: WindowFacade.isHeadless)
+        try? p.run()
+        DispatchQueue.main.async { NSApplication.shared.terminate(nil) }
     }
 
     nonisolated private static let detachedScriptRunner: (URL, [String]) throws -> Void = { script, args in
@@ -354,11 +380,30 @@ final class GruxUpdater: ObservableObject {
     // @MainActor or it freezes the UI).
     nonisolated func verifyBuildsGreen(
         worktree: URL,
-        timeoutSeconds: TimeInterval = 1200
+        // A clean release build: .build is deleted first, so nothing is reused.
+        timeoutSeconds: TimeInterval = 3600
     ) -> (ok: Bool, reason: String) {
         let packageDir = worktree.appendingPathComponent("Grux-Mac", isDirectory: true)
         guard FileManager.default.fileExists(atPath: packageDir.appendingPathComponent("Package.swift").path) else {
             return (false, "no Package.swift under \(packageDir.lastPathComponent).")
+        }
+        // Built from the graded files only: the worker's own builds left
+        // dependency checkouts (the security layer's sources among them),
+        // workspace state and build products in .build, none of which the grade
+        // reads. Deleting it makes SwiftPM resolve fresh from Package.resolved
+        // (protected) and compile everything, and build.sh reuses this build.
+        // The package folder must be the worktree's own, or this would clear
+        // another checkout's .build. A .build link is removed as a link (even
+        // dangling), never followed.
+        let fm = FileManager.default
+        if (try? fm.attributesOfItem(atPath: packageDir.path)[.type] as? FileAttributeType) != .typeDirectory {
+            return (false, "\(packageDir.lastPathComponent) is a link or not a folder, so Grux will not build or clear it.")
+        }
+        let buildDir = packageDir.appendingPathComponent(".build", isDirectory: true)
+        if (try? fm.attributesOfItem(atPath: buildDir.path)) != nil {
+            do { try fm.removeItem(at: buildDir) } catch {
+                return (false, "could not clear the worktree's .build before the install build: \(error.localizedDescription)")
+            }
         }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/env")
@@ -692,10 +737,7 @@ final class GruxUpdater: ObservableObject {
         }
 
         guard restored else { return }
-        let relaunch = relauncher ?? { url in
-            NSWorkspace.shared.open(url)
-            NSApplication.shared.terminate(nil)
-        }
+        let relaunch = relauncher ?? Self.defaultRelauncher
         relaunch(appURL)
     }
 

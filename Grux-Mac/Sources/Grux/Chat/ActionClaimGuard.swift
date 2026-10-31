@@ -110,10 +110,71 @@ enum ActionClaimGuard {
         return patterns.contains { $0.firstMatch(in: reply, range: range) != nil }
     }
 
+    /// True when this result is a write waiting in Approvals: the gate's `pending:`
+    /// status from a tool that writes. A read whose CONTENT starts with "pending" is not.
+    static func isWaiting(_ r: ToolResult) -> Bool {
+        !readOnlyTools.contains(r.tool)
+            && r.result.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().hasPrefix("pending:")
+    }
+
     /// `route` is the turn's provider tag (`ChatService.providerString`);
     /// `results` is every tool result of the turn, as the model saw it.
     static func vet(reply: String, route: String, results: [ToolResult]) -> (text: String, replaced: Bool) {
-        guard route == "local", claimsAnAction(reply), !results.contains(where: backsAClaim) else {
+        guard route == "local" else { return (reply, false) }
+        let (text, replaced) = claimCheck(reply: reply, results: results)
+        // A write waiting in Approvals is always named, by Grux, in its own paragraph
+        // after the reply (D28, live: "Got it. You're good to go." while
+        // foundry_upgrade_cycle sat waiting). Keyed on the RESULT, never on wording, and
+        // the model's text is left as the claim check left it: eight review rounds
+        // showed that rewriting free text (dropping sentences, replacing the reply)
+        // loses true answers and shows tool output. The paragraph opens "Not done yet"
+        // so it overrides any claim in the reply the claim check could not see.
+        let missing = waitingLines(results).filter { !text.contains($0) }
+        guard !missing.isEmpty else { return (text, replaced) }
+        var body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty else { return (missing.joined(separator: " "), true) }
+        // An open code fence would swallow the paragraph: close it, counting fences the
+        // way the renderer does (a line that starts with three backticks).
+        let fences = body.components(separatedBy: "\n")
+            .filter { $0.trimmingCharacters(in: .whitespaces).hasPrefix("```") }.count
+        if fences % 2 == 1 { body += "\n```" }
+        let joined = missing.joined(separator: " ")
+        let lowered = joined.prefix(1).lowercased() + joined.dropFirst()
+        return (body + "\n\n" + Self.notDoneYet + lowered, true)
+    }
+
+    /// Opens the paragraph that names what waits, after a reply that may have said otherwise.
+    static let notDoneYet = "Not done yet: "
+
+    /// Each waiting write's line, once per distinct write, in turn order. A different
+    /// write that would read the same is named by its subject, and more than one such
+    /// write by a count.
+    static func waitingLines(_ results: [ToolResult]) -> [String] {
+        var lines: [String] = []
+        var seen: Set<String> = []
+        var also: [(subject: String, count: Int)] = []
+        for w in results where isWaiting(w) {
+            // The same write asked twice is one wait.
+            let key = w.tool + "|" + w.input.keys.sorted().map { "\($0)=\(w.input[$0] ?? "")" }.joined(separator: "&")
+            guard seen.insert(key).inserted else { continue }
+            let line = ToolReplyCopy.forPerson(tool: w.tool, input: w.input, result: w.result)
+            if !lines.contains(line) { lines.append(line); continue }
+            let subject = ToolReplyCopy.subject(tool: w.tool, input: w.input)
+            if let i = also.firstIndex(where: { $0.subject == subject }) { also[i].count += 1 }
+            else { also.append((subject, 1)) }
+        }
+        for a in also {
+            let s = a.subject.prefix(1).uppercased() + a.subject.dropFirst()
+            lines.append(a.count == 1 ? "\(s) is also waiting for your OK in Approvals."
+                                      : "\(s) and \(a.count - 1) more like it are also waiting for your OK in Approvals.")
+        }
+        return lines
+    }
+
+    /// The claim check (A18, RV12): a reply may not say an action happened unless a
+    /// result this turn says one completed.
+    private static func claimCheck(reply: String, results: [ToolResult]) -> (text: String, replaced: Bool) {
+        guard claimsAnAction(reply), !results.contains(where: backsAClaim) else {
             return (reply, false)
         }
         // A write that is waiting or failed: say what did happen.

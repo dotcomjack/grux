@@ -52,7 +52,8 @@ final class WorkflowDryRunTests: XCTestCase {
             if let run = current(runId), run.status.isTerminal || run.status == .waitingForApproval {
                 return run
             }
-            try await Task.sleep(nanoseconds: 20_000_000)
+            // 1 ms, not 20: settles poll hundreds of times a class, and the 20 ms naps added up to seconds.
+            try await Task.sleep(nanoseconds: 1_000_000)
         }
         let run = try XCTUnwrap(current(runId), file: file, line: line)
         XCTFail("run stuck in \(run.status.rawValue) at \(run.currentPhaseId)", file: file, line: line)

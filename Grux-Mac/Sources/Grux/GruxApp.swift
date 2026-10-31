@@ -71,7 +71,9 @@ struct MenuBarLabel: View {
             Text("GRUX AI")
                 .font(.system(size: 12, weight: .black, design: .default))
                 .kerning(0.5)
-                .opacity(state.watching ? 1.0 : 0.45)
+                // Full strength only while something is really watched: on
+                // with no screen access dims like paused (D3).
+                .opacity(PanelCopy.watchingState(watching: state.watching, screenAccess: state.screenPermissionGranted) == .watching ? 1.0 : 0.45)
 
             // Energy-mode glyph. Blank in NORMAL to keep the menu bar clean.
             let glyph = state.config.currentMode.menuBarGlyph
@@ -212,6 +214,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // EPIPE errors instead. URLSession sockets already set SO_NOSIGPIPE;
         // this covers Pipe/FileHandle plumbing.
         signal(SIGPIPE, SIG_IGN)
+        // SIGTERM quits the way Quit does (D19): the clean-shutdown marker first, so a
+        // flush that stalls cannot make Self-Upgrade read the quit as a crash.
+        // Handled off the main thread, so a wedged main thread still ends within
+        // `fallbackExit` instead of ignoring the signal.
+        TerminationSignal.install(queue: .global(qos: .userInitiated)) { _ in
+            DispatchQueue.global().asyncAfter(deadline: .now() + TerminationSignal.fallbackExit) { exit(0) }
+            DispatchQueue.main.async {
+                WakeLog.shared.log("app: SIGTERM, quitting the way Quit does")
+                GruxUpdater.shared.markCleanShutdown()
+                NSApp.terminate(nil)
+            }
+        }
         // Shell commands that would make sound obey ~/.grux/SILENT like every other sound.
         _ = AudioOutput.wireShellDoors
         // An agent run that fails on an expired Claude sign-in says so in Now.
@@ -1348,6 +1362,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // full report of a day the app was not installed for, out of the person's own
         // project names, branches and commit messages. It sat 34 lines above this gate.
         WorkdayLogScheduler.shared.start()
+
+        // The update check: GitHub's public latest-release page, at most once a day, never
+        // during first run (this gate, and the check's own), off when Settings says off.
+        UpdateChecker.shared.start()
 
         // Frontmost app plus AX window title, on every activation. Exactly what
         // ScreenTimeWatcher is held back for, and idempotent, so the move is safe.

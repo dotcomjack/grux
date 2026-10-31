@@ -194,7 +194,8 @@ final class DecisionEngine {
     }
 
     static func summary(state: String, result: DecisionResult) -> String {
-        let heard = state.count > 60 ? String(state.prefix(57)) + "..." : state
+        let gist = DecisionUsageSummary.withoutPreamble(state)
+        let heard = gist.count > 60 ? String(gist.prefix(57)) + "..." : gist
         let decided = result.answers.map { name, a -> String in
             switch a {
             case .choice(let c, let conf, _): return "\(name)=\(c) \(String(format: "%.2f", conf))"

@@ -346,7 +346,7 @@ final class EmailTriageEngine {
     // Graph is not set up or errors. This is what lets the sweep run with no tab.
     private func readUnread(inbox: SupportInbox, fixturePath: String?) async -> [InboxMessage] {
         if let fixturePath, !fixturePath.isEmpty {
-            return OutlookReader.readUnread(inbox: inbox, fixturePath: fixturePath)
+            return await OutlookReader.readUnread(inbox: inbox, fixturePath: fixturePath)
         }
         if GraphMailStore.shared.isConfigured(forInbox: inbox.rawValue),
            let cfg = GraphMailStore.shared.clientConfig(),
@@ -359,7 +359,7 @@ final class EmailTriageEngine {
                 WakeLog.shared.log("emailTriage: graph read failed for \(inbox.rawValue) (\(error.localizedDescription)); falling back to tab")
             }
         }
-        return OutlookReader.readUnread(inbox: inbox, fixturePath: nil)
+        return await OutlookReader.readUnread(inbox: inbox, fixturePath: nil)
     }
 
     @discardableResult

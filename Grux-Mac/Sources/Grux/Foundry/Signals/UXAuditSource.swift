@@ -166,7 +166,9 @@ struct LiveGruxAppDriver: UXAppDriving {
         try? FileManager.default.createDirectory(at: outputDir, withIntermediateDirectories: true)
         var shots: [UXTabScreenshot] = []
         for tab in tabs {
-            openApp(tab: tab)
+            if await ForeignAppScript.open(["-a", appPath, "--args", "--open-tab=\(tab)"], purpose: "UXAuditSource") != nil {
+                break
+            }
             try? await Task.sleep(nanoseconds: UInt64(settleSeconds * 1_000_000_000))
             guard let image = try? await captureGruxWindow(),
                   let jpeg = await MainActor.run(body: {
@@ -177,14 +179,6 @@ struct LiveGruxAppDriver: UXAppDriving {
             shots.append(UXTabScreenshot(tab: tab, jpeg: jpeg))
         }
         return shots
-    }
-
-    private func openApp(tab: String) {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        p.arguments = ["-a", appPath, "--args", "--open-tab=\(tab)"]
-        try? p.run()
-        p.waitUntilExit()
     }
 
     private func captureGruxWindow() async throws -> CGImage {
@@ -230,7 +224,7 @@ struct FixtureUXVisionCritic: UXVisionCritiquing {
 // on the MainActor at wiring time); never stored anywhere on disk.
 struct ClaudeUXVisionCritic: UXVisionCritiquing {
     var apiKey: String
-    var model: String = "claude-haiku-4-5-20251001"
+    var model: String = FoundryModelIDs.vision
 
     func critique(tab: String, imageJPEG: Data) async throws -> String {
         // PINNED TO ANTHROPIC, DELIBERATELY. This is a vision call, and

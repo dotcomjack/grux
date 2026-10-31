@@ -1,6 +1,7 @@
 import AppKit
 import ApplicationServices
 import Foundation
+import GruxShellCore
 
 // User-defined voice macros. A macro is a phrase ("open the dashboard")
 // bound to a short sequence of actions the assistant will execute in order.
@@ -632,7 +633,7 @@ final class VoiceMacroRegistry: ObservableObject {
             }
             return r
         case .openURL(let url):
-            let r = BrowserTool.openURL(url)
+            let r = await BrowserTool.openURL(url)
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             return r
         case .spawnTerminalsToGrid(let rows, let cols):
@@ -644,7 +645,7 @@ final class VoiceMacroRegistry: ObservableObject {
             }
             return r
         case .prepareCleanWorkspace:
-            return WorkspacePreparer.makeCleanSlate()
+            return await WorkspacePreparer.makeCleanSlate()
         case .runShell(let command):
             return await ShellRunner.run(command: command)
         case .runInTerminalCell(let row, let col, let command):
@@ -677,7 +678,7 @@ final class VoiceMacroRegistry: ObservableObject {
             await speakAndWait(spoken)
             return "ok: spoke shell stdout (\(spoken.count) chars; exit \(r.status))"
         case .runAppleScript(let source):
-            return AppleScriptRunner.run(source: source)
+            return await AppleScriptRunner.run(source: source)
         case .speak(let text):
             let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !t.isEmpty else { return "ok: speak (empty, skipped)" }
@@ -761,7 +762,8 @@ final class VoiceMacroRegistry: ObservableObject {
 enum WorkspacePreparer {
     private static let terminalBundleId = "com.apple.Terminal"
 
-    static func makeCleanSlate() -> String {
+    static func makeCleanSlate() async -> String {
+        if let why = ForeignAppScript.refuse("WorkspacePreparer") { return "error: \(why)" }
         let gruxBundleId = Bundle.main.bundleIdentifier ?? "com.gruxai.grux"
         let keep: Set<String> = [terminalBundleId, gruxBundleId]
 
@@ -812,7 +814,7 @@ enum WorkspacePreparer {
                 return n
             end tell
             """
-            if let raw = runScript(script), let n = Int(raw.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            if let raw = await runScript(script), let n = Int(raw.trimmingCharacters(in: .whitespacesAndNewlines)) {
                 minimized = n
             }
         }
@@ -821,11 +823,8 @@ enum WorkspacePreparer {
     }
 
     @discardableResult
-    private static func runScript(_ source: String) -> String? {
-        var err: NSDictionary?
-        let result = NSAppleScript(source: source)?.executeAndReturnError(&err)
-        if err != nil { return nil }
-        return result?.stringValue
+    private static func runScript(_ source: String) async -> String? {
+        await ForeignAppScript.run(source, purpose: "WorkspacePreparer.runScript").stringValue
     }
 }
 
@@ -844,6 +843,7 @@ enum TerminalGridTiler {
     // is precisely-positionable without matching against any other window's
     // state.
     static func spawnAndTile(rows: Int, cols: Int) async -> String {
+        if let why = ForeignAppScript.refuse("TerminalGridTiler.spawnAndTile") { return "error: \(why)" }
         let target = max(1, rows * cols)
 
         // 1. Launch Terminal in the background (NOT activate - activating
@@ -851,7 +851,7 @@ enum TerminalGridTiler {
         // "app reopen" behavior, which auto-opens a fresh window BEFORE
         // our deliberate `do script` calls fire. That gave us 5 windows
         // instead of 4. `launch` starts the app without the reopen hook.
-        let launched = runScript("""
+        let launched = await runScript("""
         launch application "Terminal"
         tell application "Terminal"
             set t0 to current date
@@ -895,7 +895,7 @@ enum TerminalGridTiler {
                 end try
             end tell
             """
-            let r = runScript(spawnAndSet) ?? ""
+            let r = await runScript(spawnAndSet) ?? ""
             if r == "ok" { tiled += 1 }
             try? await Task.sleep(nanoseconds: 150_000_000)
         }
@@ -938,11 +938,8 @@ enum TerminalGridTiler {
     }
 
     @discardableResult
-    private static func runScript(_ source: String) -> String? {
-        var err: NSDictionary?
-        let result = NSAppleScript(source: source)?.executeAndReturnError(&err)
-        if err != nil { return nil }
-        return result?.stringValue
+    private static func runScript(_ source: String) async -> String? {
+        await ForeignAppScript.run(source, purpose: "TerminalGridTiler.runScript").stringValue
     }
 
     // Send a real zsh command into the Terminal window currently sitting at
@@ -955,10 +952,11 @@ enum TerminalGridTiler {
         let cmd = command.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cmd.isEmpty else { return "ok: terminal cell (empty command, skipped)" }
         guard row >= 0, col >= 0 else { return "error: row/col must be ≥ 0" }
+        if let why = ForeignAppScript.refuse("TerminalGridTiler.runInGridCell") { return "error: \(why)" }
 
         // Inspect Terminal's current windows (id + bounds). AppleScript
         // returns a flat comma-joined list: id1,l1,t1,r1,b1,id2,l2,…
-        let listing = runScript("""
+        let listing = await runScript("""
         tell application "Terminal"
             set out to {}
             repeat with w in windows
@@ -1021,7 +1019,7 @@ enum TerminalGridTiler {
             end try
         end tell
         """
-        let result = runScript(send) ?? ""
+        let result = await runScript(send) ?? ""
         if result == "ok" {
             return "ok: ran in Terminal cell (\(row),\(col)) → \(cmd.prefix(80))"
         }
@@ -1051,32 +1049,18 @@ enum ShellRunner {
         if let refusal = AudioOutput.shellRefusal(for: trimmed) {
             return RawResult(status: -1, stdout: refusal, truncated: refusal)
         }
-        return await withCheckedContinuation { (cont: CheckedContinuation<RawResult, Never>) in
-            let proc = Process()
-            proc.launchPath = "/bin/zsh"
-            proc.arguments = ["-lc", trimmed]
-            let pipe = Pipe()
-            proc.standardOutput = pipe
-            proc.standardError = pipe
-            do {
-                try proc.run()
-            } catch {
-                cont.resume(returning: RawResult(status: -1, stdout: "failed to launch shell - \(error.localizedDescription)", truncated: ""))
-                return
-            }
-            let deadline = DispatchTime.now() + .seconds(timeoutSeconds)
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: deadline) {
-                if proc.isRunning { proc.terminate() }
-            }
-            DispatchQueue.global(qos: .utility).async {
-                proc.waitUntilExit()
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                let raw = String(data: data, encoding: .utf8) ?? ""
-                let trunc: String = raw.count <= 4000 ? raw
-                    : String(raw.prefix(4000)) + "\n…(truncated, \(raw.count) chars total)"
-                cont.resume(returning: RawResult(status: proc.terminationStatus, stdout: raw, truncated: trunc))
-            }
-        }
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        // The headless guard first on PATH: see `ShellAppleEvents.guardDirectory`.
+        proc.arguments = ["-lc", ShellAppleEvents.guarded(command: trimmed)]
+        return result(await BoundedProcess.run(proc, timeout: TimeInterval(timeoutSeconds)))
+    }
+
+    private static func result(_ r: BoundedProcess.Result) -> RawResult {
+        let raw = r.output
+        let trunc: String = raw.count <= 4000 ? raw
+            : String(raw.prefix(4000)) + "\n…(truncated, \(raw.count) chars total)"
+        return RawResult(status: r.status, stdout: raw, truncated: trunc)
     }
 
     static func run(command: String) async -> String {
@@ -1093,56 +1077,36 @@ enum ShellRunner {
     // argument comes from external/untrusted data.
     @discardableResult
     static func runArgs(_ launchPath: String, _ args: [String], timeoutSeconds: Int = 30) async -> RawResult {
-        if let refusal = AudioOutput.shellRefusal(for: ([launchPath] + args).joined(separator: " ")) {
+        if let refusal = AudioOutput.argvRefusal([launchPath] + args) {
             return RawResult(status: -1, stdout: refusal, truncated: refusal)
         }
-        return await withCheckedContinuation { (cont: CheckedContinuation<RawResult, Never>) in
-            let proc = Process()
-            proc.launchPath = launchPath
-            proc.arguments = args
-            let pipe = Pipe()
-            proc.standardOutput = pipe
-            proc.standardError = pipe
-            do {
-                try proc.run()
-            } catch {
-                cont.resume(returning: RawResult(status: -1, stdout: "failed to launch \(launchPath) - \(error.localizedDescription)", truncated: ""))
-                return
-            }
-            let deadline = DispatchTime.now() + .seconds(timeoutSeconds)
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: deadline) {
-                if proc.isRunning { proc.terminate() }
-            }
-            DispatchQueue.global(qos: .utility).async {
-                proc.waitUntilExit()
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                let raw = String(data: data, encoding: .utf8) ?? ""
-                let trunc: String = raw.count <= 4000 ? raw
-                    : String(raw.prefix(4000)) + "\n…(truncated, \(raw.count) chars total)"
-                cont.resume(returning: RawResult(status: proc.terminationStatus, stdout: raw, truncated: trunc))
-            }
-        }
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: launchPath)
+        proc.arguments = args
+        var env = ProcessInfo.processInfo.environment
+        env["PATH"] = ShellAppleEvents.guardedPath(env["PATH"] ?? "/usr/bin:/bin")
+        proc.environment = env
+        return result(await BoundedProcess.run(proc, timeout: TimeInterval(timeoutSeconds)))
     }
 }
 
 // Runs an AppleScript source string; returns its string result or a
 // formatted error message (no throw).
 enum AppleScriptRunner {
-    static func run(source: String) -> String {
+    static func run(source: String) async -> String {
         let trimmed = source.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "ok: applescript (empty, skipped)" }
         if let refusal = AudioOutput.appleScriptRefusal(for: trimmed) { return "error: \(refusal)" }
-        guard let script = NSAppleScript(source: trimmed) else {
-            return "error: could not compile AppleScript"
+        if let refusal = ForeignAppScript.refuse("AppleScriptRunner") { return "error: \(refusal)" }
+        switch await ForeignAppScript.runOutOfProcess(trimmed, purpose: "AppleScriptRunner") {
+        case .ok(let result):
+            let str = result.stringValue ?? ""
+            return str.isEmpty ? "ok: applescript" : "ok: \(str)"
+        case .failed(let code, let message):
+            let num = code.map { " (\($0))" } ?? ""
+            return "error: applescript failed\(num) - \(message)"
+        case let other:
+            return "error: \(other.problem ?? "applescript failed")"
         }
-        var err: NSDictionary?
-        let result = script.executeAndReturnError(&err)
-        if let err = err {
-            let msg = (err[NSAppleScript.errorMessage] as? String) ?? "unknown error"
-            let num = (err[NSAppleScript.errorNumber] as? Int).map { " (\($0))" } ?? ""
-            return "error: applescript failed\(num) - \(msg)"
-        }
-        let str = result.stringValue ?? ""
-        return str.isEmpty ? "ok: applescript" : "ok: \(str)"
     }
 }

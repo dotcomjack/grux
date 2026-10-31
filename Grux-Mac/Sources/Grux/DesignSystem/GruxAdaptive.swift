@@ -36,6 +36,116 @@ struct GruxWidthSwitch<Wide: View, Narrow: View>: View {
     }
 }
 
+// MARK: - Title and actions
+
+/// A heading and its action chips on one row when every chip fits whole, and
+/// otherwise the heading over the chips, which wrap onto as many rows as the
+/// width needs. `GruxToolbar` does the same for a pane's own header; this is
+/// the shape for a header inside a card or an editor. A chip's label
+/// truncates rather than wraps (see `GruxChip`), so sharing one row that is
+/// too narrow cut the Presets editor's actions to "APPLY...", "DUPLI..." and
+/// "DELE...", leaving Delete a guess. PaneFitSweepTests fails on any cut chip.
+///
+/// A layout, not `ViewThatFits`: measured, that one also placed the
+/// arrangement it did not pick, its chips squeezed to 15 to 19pt, even on a
+/// 1200pt pane where the one row fit, so no probe could tell a real cut.
+struct GruxTitleActions<Heading: View, Actions: View>: View {
+    var spacing: CGFloat = GruxSpacing.s
+    @ViewBuilder var heading: () -> Heading
+    @ViewBuilder var actions: () -> Actions
+
+    var body: some View {
+        GruxTitleActionsLayout(spacing: spacing) {
+            // One subview, whatever the caller's builder holds.
+            VStack(alignment: .leading, spacing: 0) { heading() }
+            actions()
+        }
+    }
+}
+
+/// The first subview is the heading; every other one is an action, kept at
+/// its own width.
+struct GruxTitleActionsLayout: Layout {
+    var spacing: CGFloat
+
+    private struct Arrangement {
+        var oneRow: Bool
+        var heading: CGSize
+        /// Each action's origin, from the layout's top leading corner.
+        var origins: [CGPoint]
+        var sizes: [CGSize]
+        var size: CGSize
+    }
+
+    private func arrange(_ subviews: Subviews, width: CGFloat?) -> Arrangement {
+        guard let head = subviews.first else {
+            return Arrangement(oneRow: true, heading: .zero, origins: [], sizes: [], size: .zero)
+        }
+        let actions = Array(subviews.dropFirst())
+        let headIdeal = head.sizeThatFits(.unspecified)
+        let ideals = actions.map { $0.sizeThatFits(.unspecified) }
+        let actionsWidth = ideals.map(\.width).reduce(0, +) + spacing * CGFloat(max(0, ideals.count - 1))
+        let gap = ideals.isEmpty ? 0 : spacing
+        let rowWidth = headIdeal.width + gap + actionsWidth
+
+        if width.map({ rowWidth <= $0 }) ?? true {
+            let total = width ?? rowWidth
+            let height = max(headIdeal.height, ideals.map(\.height).max() ?? 0)
+            var x = total - actionsWidth
+            var origins: [CGPoint] = []
+            for size in ideals {
+                origins.append(CGPoint(x: x, y: (height - size.height) / 2))
+                x += size.width + spacing
+            }
+            return Arrangement(oneRow: true, heading: headIdeal, origins: origins, sizes: ideals,
+                               size: CGSize(width: total, height: height))
+        }
+
+        // Stacked: the heading at the full width, then the actions in rows,
+        // each at its own width, a new row whenever the next would not fit.
+        let total = width ?? rowWidth
+        let heading = head.sizeThatFits(ProposedViewSize(width: total, height: nil))
+        var y = heading.height + spacing
+        var x: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var origins: [CGPoint] = []
+        var sizes: [CGSize] = []
+        for (i, ideal) in ideals.enumerated() {
+            let size = ideal.width > total
+                ? actions[i].sizeThatFits(ProposedViewSize(width: total, height: nil)) : ideal
+            if x > 0, x + size.width > total {
+                y += rowHeight + spacing
+                x = 0
+                rowHeight = 0
+            }
+            origins.append(CGPoint(x: x, y: y))
+            sizes.append(size)
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        let height = ideals.isEmpty ? heading.height : y + rowHeight
+        return Arrangement(oneRow: false, heading: CGSize(width: min(heading.width, total), height: heading.height),
+                           origins: origins, sizes: sizes, size: CGSize(width: total, height: height))
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width.flatMap { $0.isFinite ? $0 : nil }
+        return arrange(subviews, width: width).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let a = arrange(subviews, width: bounds.width)
+        guard let head = subviews.first else { return }
+        let headY = a.oneRow ? (a.size.height - a.heading.height) / 2 : 0
+        head.place(at: CGPoint(x: bounds.minX, y: bounds.minY + headY), anchor: .topLeading,
+                   proposal: ProposedViewSize(a.heading))
+        for (i, view) in subviews.dropFirst().enumerated() {
+            view.place(at: CGPoint(x: bounds.minX + a.origins[i].x, y: bounds.minY + a.origins[i].y),
+                       anchor: .topLeading, proposal: ProposedViewSize(a.sizes[i]))
+        }
+    }
+}
+
 // MARK: - Flow
 
 /// Lays its children out in a row and wraps to a new row whenever the next

@@ -108,13 +108,65 @@ final class TodayModelTests: XCTestCase {
 
     func test_watchingSaysWhatGruxIsKeepingAnEyeOn() {
         XCTAssertEqual(TodayModel.watching(.init()), [])
-        let lines = TodayModel.watching(.init(focusTask: "Launch plan", drifting: true, jobsRunning: 2,
+        let lines = TodayModel.watching(.init(focusTask: "Launch plan", focusWatched: .yes, drifting: true, jobsRunning: 2,
                                               jobsWaitingOnYou: 1, proposals: 3, focusChecksToday: 40))
         XCTAssertEqual(lines.map(\.line), ["Focusing on Launch plan, and you have drifted",
                                            "1 agent job waiting on you", "2 agent jobs running", "3 improvements to review"])
         XCTAssertEqual(lines.map(\.tab), ["focus", "agents", "agents", "selfUpgrade"])
         // Seen live: "1306 improvements" would have read without grouping.
         XCTAssertEqual(TodayModel.watching(.init(proposals: 1306)).first?.line, "1,306 improvements to review")
+    }
+
+    /// D44 (sense pass 3, 2026-10-29): Today's Watching card said "Focusing on Back up the Mini"
+    /// on a Mac where macOS had not allowed screen recording, so nothing was watched. The focus
+    /// line claims watching (and drift) only when the watcher samples; otherwise it names the
+    /// task and the reason it is not watched, and with no reading at all it claims nothing.
+    func test_theFocusLineClaimsWatchingOnlyWhileGruxSamples() {
+        let reason = FocusWatcher.Skip.noScreenAccess.line
+        let denied = TodayModel.watching(.init(focusTask: "Back up the Mini", focusWatched: .no(because: reason), drifting: true))
+        XCTAssertEqual(denied.map(\.line), ["Focus: Back up the Mini"])
+        XCTAssertEqual(denied.map(\.detail), ["Not watched: macOS has not allowed screen recording."],
+                       "the reason has its own line, so the card never cuts it (seen cut live at two lines)")
+        XCTAssertEqual(denied.map(\.tab), ["focus"], "the line still opens the Focus log, which says how to fix it")
+        let unknown = TodayModel.watching(.init(focusTask: "Back up the Mini", drifting: true))
+        XCTAssertEqual(unknown.map(\.line), ["Focus: Back up the Mini"], "no reading: name the task, claim nothing")
+        XCTAssertEqual(unknown.map(\.detail), [nil])
+        let watched = TodayModel.watching(.init(focusTask: "Back up the Mini", focusWatched: .yes))
+        XCTAssertEqual(watched.map(\.line), ["Focusing on Back up the Mini"])
+        XCTAssertEqual(watched.map(\.detail), [nil])
+        for item in denied + unknown {
+            let text = item.line + " " + (item.detail ?? "")
+            XCTAssertFalse(text.contains("Focusing on") || text.contains("drifted"), text)
+        }
+    }
+
+    /// D44: the reading comes from the same state the foot and the Focus log read, in their order:
+    /// paused first, then screen access, then the watcher's own last skip.
+    func test_theFocusReadingFollowsTheWatcher() {
+        XCTAssertEqual(TodayModel.focusWatched(shown: .paused, skip: nil), .no(because: "Watching is paused."))
+        XCTAssertEqual(TodayModel.focusWatched(shown: .paused, skip: .snoozed), .no(because: "Watching is paused."))
+        XCTAssertEqual(TodayModel.focusWatched(shown: .needsScreenAccess, skip: nil),
+                       .no(because: FocusWatcher.Skip.noScreenAccess.line))
+        XCTAssertEqual(TodayModel.focusWatched(shown: .needsScreenAccess, skip: .focusOff),
+                       .no(because: FocusWatcher.Skip.noScreenAccess.line))
+        for skip in FocusWatcher.Skip.allCases {
+            XCTAssertEqual(TodayModel.focusWatched(shown: .watching, skip: skip), .no(because: skip.line))
+        }
+        XCTAssertEqual(TodayModel.focusWatched(shown: .watching, skip: nil), .yes)
+    }
+
+    /// Wave 11 review P3: a tick that found no task leaves `.noTask` until the next tick, so a
+    /// task focused in between read "Not watched: No task is set as Now". With a task on the
+    /// card that skip is stale: claim nothing until the next tick says.
+    func test_aStaleNoTaskSkipClaimsNothingBesideATask() {
+        let card = TodayModel.watching(.init(focusTask: "Back up the Mini",
+                                             focusWatched: TodayModel.focusWatched(shown: .watching, skip: .noTask)))
+        XCTAssertEqual(card.map(\.line), ["Focus: Back up the Mini"])
+        XCTAssertEqual(card.map(\.detail), [nil])
+        // Every other skip still says why.
+        let off = TodayModel.watching(.init(focusTask: "Back up the Mini",
+                                            focusWatched: TodayModel.focusWatched(shown: .watching, skip: .focusOff)))
+        XCTAssertEqual(off.map(\.detail), ["Not watched: The Focus feature is turned off."])
     }
 
     /// C11: with no task in focus, the Focus log is still one tap away on a

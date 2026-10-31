@@ -147,7 +147,7 @@ To run it as a daily backstop, create a Schedule with the action
 The feature renders `needs-setup` with a setup card showing these exact strings.
 
 - Watched folder: "Choose the folder Grux should guard in Settings."
-- Anthropic API key: "Add your Anthropic API key in Settings to let Grux think. Get one at console.anthropic.com."
+- Anthropic API key: "Add your Anthropic API key in Settings to use Claude. Get one at console.anthropic.com. Chat also runs on a local model with no key."
 - Notifications: "Allow notifications so Grux can nudge you. Open System Settings, Notifications, Grux, and turn them on."
 
 There is no default watched folder, and there should not be one. A tripwire around a folder

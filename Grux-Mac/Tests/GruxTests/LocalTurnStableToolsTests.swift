@@ -315,7 +315,7 @@ final class OllamaWireOrderTests: XCTestCase {
         for n in names.shuffled() { props[n] = ["type": "string", "description": n] }
         let wire: [String: Any] = ["model": "m", "tools": [["type": "function", "function": [
             "name": "t", "description": "d", "parameters": ["type": "object", "properties": props]]]]]
-        let text = String(decoding: try OpenAICompatBackend.wireData(wire, native: true), as: UTF8.self)
+        let text = String(decoding: try OpenAICompatBackend.wireData(wire), as: UTF8.self)
         let order = names.compactMap { n in text.range(of: "\"\(n)\":").map { ($0.lowerBound, n) } }
         XCTAssertEqual(order.count, names.count)
         XCTAssertEqual(order.sorted { $0.0 < $1.0 }.map(\.1), names, "tool parameter keys reached Ollama unsorted")
@@ -325,7 +325,7 @@ final class OllamaWireOrderTests: XCTestCase {
 
     func test_everyRequestIsEncodedThroughWireData() throws {
         let src = try macSource("Sources/Grux/Backend/OpenAICompatBackend.swift")
-        XCTAssertTrue(src.contains("req.httpBody = try Self.wireData(wire, native: native)"),
+        XCTAssertTrue(src.contains("req.httpBody = try Self.wireData(wire)"),
                       "the request body no longer goes through wireData, so Ollama may get unsorted keys")
         XCTAssertFalse(src.contains("req.httpBody = try JSONSerialization.data(withJSONObject: wire"))
     }
@@ -357,12 +357,13 @@ final class LocalTurnSteppedHistoryTests: XCTestCase {
         }
     }
 
-    func test_aCutForRoomAlsoMovesInSteps() {
-        // 25 messages, 13 fit: the 12 that must go round up to 20, and stay
-        // there while the cut grows to 20.
-        XCTAssertEqual(LocalTurn.historyStart(count: 25, fitting: 13), 20)
-        XCTAssertEqual(LocalTurn.historyStart(count: 26, fitting: 13), 20)
+    /// release/3.2 (the loop's wave 10 review, 2026-10-29): a cut for room
+    /// keeps every message that fits. Only the 30 window moves in steps.
+    func test_aCutForRoomKeepsWhatFits() {
+        XCTAssertEqual(LocalTurn.historyStart(count: 25, fitting: 13), 12)
+        XCTAssertEqual(LocalTurn.historyStart(count: 26, fitting: 13), 13)
         XCTAssertEqual(LocalTurn.historyStart(count: 30, fitting: 10), 20)
+        XCTAssertEqual(LocalTurn.historyStart(count: 45, fitting: 40), 20, "the window's step still applies")
         // A message too long for the window leaves only the newest.
         XCTAssertEqual(LocalTurn.historyStart(count: 25, fitting: 1), 24)
         XCTAssertEqual(LocalTurn.historyStart(count: 1, fitting: 1), 0)
@@ -389,8 +390,8 @@ final class LocalTurnSteppedHistoryTests: XCTestCase {
         XCTAssertEqual(firsts, ["message 10"], "the history's first message moved between turns")
     }
 
-    /// Real lean turns too long for an 8 GB window: the cut for room also
-    /// starts the history at a step, or sends only the newest message.
+    /// Real lean turns too long for an 8 GB window: the cut for room keeps
+    /// what fits, and the newest message stays last.
     func test_aCutForRoomStartsAtAStepInARealTurn() {
         let state = AppState.shared
         let saved = state.chat
@@ -406,8 +407,6 @@ final class LocalTurnSteppedHistoryTests: XCTestCase {
             let first = (turn.messages.first?["content"] as? String ?? "").split(separator: " ")
             let start = Int(first.count > 1 ? first[1] : "") ?? -1
             XCTAssertEqual(start + turn.messages.count, count, "the newest message was not last")
-            XCTAssertTrue(start.isMultiple(of: LocalTurn.historyStep) || start == count - 1,
-                          "count \(count): the history starts at message \(start)")
             if start > count - LocalTurn.historyMessages { cuts += 1 }
         }
         XCTAssertGreaterThan(cuts, 0, "no turn was cut for room, so this test proves nothing")

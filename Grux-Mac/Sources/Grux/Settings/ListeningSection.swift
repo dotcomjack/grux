@@ -28,28 +28,43 @@ struct ListeningSection: View {
 
     var body: some View {
         Section(Self.copy.title) {
-            Text("\(state.config.listeningMode.label). \(state.config.listeningMode.explanation)")
+            Text(Self.modeLine(mode: state.config.listeningMode, awaitingConsent: state.config.listeningAwaitingConsent))
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Text(Self.copy.body)
                 .font(.caption).foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            if state.config.listeningMode != .off {
-                Text(MicConsent.runningNote)
+            if state.config.listeningMode != .off,
+               let note = Self.costNote(mode: state.config.listeningMode, awaitingConsent: state.config.listeningAwaitingConsent) {
+                Text(note)
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            HStack {
-                Circle()
-                    .fill(isLive ? Color.green : Color.secondary)
-                    .frame(width: 8, height: 8)
-                Text(statusLine).font(.caption)
-                Spacer()
-                if state.config.listeningMode == .alwaysOn, ambient.isTranscribing {
-                    Label("hearing you", systemImage: "waveform")
-                        .font(.caption2).foregroundStyle(.secondary)
+            if state.config.listeningAwaitingConsent {
+                // Chosen, but no yes yet: the microphone is closed, so the
+                // row says what Home and the foot say and offers the yes.
+                HStack {
+                    Circle()
+                        .fill(GruxTheme.warnAmber)
+                        .frame(width: 8, height: 8)
+                    Text(ListeningTell.waiting.phrase).font(.caption)
+                    Spacer()
+                    Button(ListeningTell.allowTitle) { ListeningTell.allow() }
+                        .font(.caption)
+                }
+            } else {
+                HStack {
+                    Circle()
+                        .fill(isLive ? Color.green : Color.secondary)
+                        .frame(width: 8, height: 8)
+                    Text(statusLine).font(.caption)
+                    Spacer()
+                    if state.config.listeningMode == .alwaysOn, ambient.isTranscribing {
+                        Label("hearing you", systemImage: "waveform")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
                 }
             }
             if let err = ambient.error ?? wake.error {
@@ -65,6 +80,21 @@ struct ListeningSection: View {
                 .font(.caption).foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    /// The mode and what it does. While it waits for its yes nothing is
+    /// heard yet, so the description is conditional (wave 8 review of D29:
+    /// "Grux hears you all the time" sat above "the microphone stays closed").
+    static func modeLine(mode: ListeningMode, awaitingConsent: Bool) -> String {
+        awaitingConsent ? "\(mode.label). Once you allow it, \(mode.explanation)" : "\(mode.label). \(mode.explanation)"
+    }
+
+    /// The line under the mode: what listening costs while it runs, or, while
+    /// the mode waits for its yes, that the microphone is still closed (D29:
+    /// this said the microphone was open before anyone had agreed).
+    static func costNote(mode: ListeningMode, awaitingConsent: Bool) -> String? {
+        guard mode != .off else { return nil }
+        return awaitingConsent ? TodayModel.sayItLine(.waiting) : MicConsent.runningNote
     }
 
     private var isLive: Bool {

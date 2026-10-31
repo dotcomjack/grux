@@ -54,7 +54,7 @@ struct UsageCardContent: Equatable {
         let oldest = rows.map(\.at).min()
         if let oldest, oldest > monthStart {
             if !calendar.isDate(oldest, inSameDayAs: now) {
-                lines.append(Line(label: "Spent since " + dayLabel(oldest, calendar: calendar),
+                lines.append(Line(label: "Spent since " + DecisionUsageSummary.dayLabel(oldest, now: now, calendar: calendar),
                                   value: sentenceCase(DecisionUsageSummary.money(month.spendUSD) ?? "nothing")))
             }
         } else {
@@ -62,20 +62,12 @@ struct UsageCardContent: Equatable {
                               value: sentenceCase(DecisionUsageSummary.money(month.spendUSD) ?? "nothing")))
         }
 
-        if let last = DecisionUsageSummary.lastLine(rows.last) {
+        // Not today, it says which day, or it sits under "Decisions today:
+        // None yet" as if the two disagreed (D8).
+        if let last = DecisionUsageSummary.datedLastLine(rows.last, now: now, calendar: calendar) {
             lines.append(Line(label: "Last decision", value: last))
         }
         return UsageCardContent(lines: lines)
-    }
-
-    /// "Sep 18". English on purpose, like every other word on the card.
-    static func dayLabel(_ date: Date, calendar: Calendar) -> String {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.calendar = calendar
-        f.timeZone = calendar.timeZone
-        f.dateFormat = "MMM d"
-        return f.string(from: date)
     }
 
     static func sentenceCase(_ s: String) -> String {

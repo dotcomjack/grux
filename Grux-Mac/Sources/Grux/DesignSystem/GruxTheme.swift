@@ -246,6 +246,51 @@ struct GruxGlassCard<Content: View>: View {
     }
 }
 
+/// Where a chip that was handed less than its own label's width says so.
+/// The label truncates instead of wrapping (see `GruxChip`), so a cut chip
+/// reads "DELE..." and nothing else notices: PaneFitSweepTests sets one of
+/// these and fails on any entry. Nil in the app, where the probe does nothing.
+@MainActor
+final class GruxChipCuts {
+    struct Cut: Equatable { let title: String; let placed: CGFloat; let needed: CGFloat }
+    private(set) var cuts: [Cut] = []
+    func record(_ cut: Cut) { cuts.append(cut) }
+}
+
+private struct GruxChipCutsKey: EnvironmentKey {
+    static let defaultValue: GruxChipCuts? = nil
+}
+
+extension EnvironmentValues {
+    var gruxChipCuts: GruxChipCuts? {
+        get { self[GruxChipCutsKey.self] }
+        set { self[GruxChipCutsKey.self] = newValue }
+    }
+}
+
+/// Lays out its one child exactly as it would be laid out alone, and when
+/// it is placed narrower than the child's own width, records that.
+struct GruxChipCutProbe: Layout {
+    let title: String
+    let cuts: GruxChipCuts?
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        subviews.first?.sizeThatFits(proposal) ?? .zero
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard let child = subviews.first else { return }
+        child.place(at: bounds.origin, anchor: .topLeading, proposal: ProposedViewSize(bounds.size))
+        guard let cuts else { return }
+        let needed = child.sizeThatFits(.unspecified).width
+        if bounds.width + 0.5 < needed {
+            MainActor.assumeIsolated {
+                cuts.record(.init(title: title, placed: bounds.width, needed: needed))
+            }
+        }
+    }
+}
+
 // Standard action chip - used for Accept / Dismiss / Snooze on reminder cards.
 struct GruxChip: View {
     enum Style { case primary, secondary, destructive, success }
@@ -253,32 +298,35 @@ struct GruxChip: View {
     var systemImage: String? = nil
     let style: Style
     let action: () -> Void
+    @Environment(\.gruxChipCuts) private var cuts
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 5) {
-                if let icon = systemImage {
-                    Image(systemName: icon).font(.system(size: 10, weight: .bold))
+            GruxChipCutProbe(title: title, cuts: cuts) {
+                HStack(spacing: 5) {
+                    if let icon = systemImage {
+                        Image(systemName: icon).font(.system(size: 10, weight: .bold))
+                    }
+                    Text(title)
+                        .font(GruxTheme.Font.microCaps)
+                        .kerning(1.2)
+                        // A chip is a button, and a button label must never wrap.
+                        // Without these two, SwiftUI treats the Text as compressible
+                        // when a toolbar runs out of room and breaks it MID-WORD:
+                        // the Mailbox toolbar at the 840pt window floor rendered
+                        // "Compose" as "Compos / e" and "Accounts" as "Account / s".
+                        // lineLimit ONLY, and the absence of fixedSize is the whole
+                        // lesson. fixedSize does keep the label whole, but it makes
+                        // every chip rigid, which raises the toolbar's minimum past
+                        // what the detail pane can hand it. The HStack then
+                        // over-commits, the fixed nav rail is handed less than its
+                        // 240 while still DRAWING 240, and SwiftUI centres an
+                        // oversized child: measured on Mailbox at the 840pt floor,
+                        // the rail bled off both edges and the sidebar rendered
+                        // "MMAND" and "aused". Trading a truncated button label for
+                        // a mangled global sidebar is a bad trade.
+                        .lineLimit(1)
                 }
-                Text(title)
-                    .font(GruxTheme.Font.microCaps)
-                    .kerning(1.2)
-                    // A chip is a button, and a button label must never wrap.
-                    // Without these two, SwiftUI treats the Text as compressible
-                    // when a toolbar runs out of room and breaks it MID-WORD:
-                    // the Mailbox toolbar at the 840pt window floor rendered
-                    // "Compose" as "Compos / e" and "Accounts" as "Account / s".
-                    // lineLimit ONLY, and the absence of fixedSize is the whole
-                    // lesson. fixedSize does keep the label whole, but it makes
-                    // every chip rigid, which raises the toolbar's minimum past
-                    // what the detail pane can hand it. The HStack then
-                    // over-commits, the fixed nav rail is handed less than its
-                    // 240 while still DRAWING 240, and SwiftUI centres an
-                    // oversized child: measured on Mailbox at the 840pt floor,
-                    // the rail bled off both edges and the sidebar rendered
-                    // "MMAND" and "aused". Trading a truncated button label for
-                    // a mangled global sidebar is a bad trade.
-                    .lineLimit(1)
             }
             .foregroundStyle(foreground)
             .padding(.horizontal, 12).padding(.vertical, 6)

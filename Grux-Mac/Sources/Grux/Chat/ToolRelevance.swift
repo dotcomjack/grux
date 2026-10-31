@@ -4,12 +4,19 @@ import Foundation
 /// schemas, 79,725 characters, 61 percent of a 130k character prompt, on a
 /// turn that asked the time. Every tool a turn cannot use is cost, latency
 /// and, for a small model, a distraction. The core set (tasks, memory, music,
-/// mail, calendar, notes, documents, contacts, files, web search, macros,
+/// mail, calendar, notes, documents, contacts, files, macros,
 /// modes, MCP) always rides; the six heavy groups ride when the words call
 /// for them or when one of their tools ran within the last fifteen minutes,
 /// so a loop that started keeps its tools across turns.
+///
+/// The tools that bring another app to the front (Chrome, YouTube, any app) are a
+/// group of their own: measured 2026-10-22, llama3.2:3b answered "what is two plus
+/// two" by calling play_on_youtube, and Grux opened YouTube. They ride when the words
+/// ask to open, watch, play or search for something, or name a web address, and after
+/// a music tool ran (play_music_track's miss falls back to play_on_youtube).
+/// search_web is one of them: it opens Google in Chrome and returns no results.
 enum ToolRelevance {
-    enum Group: String, CaseIterable, Sendable { case core, developer, meetings, research, export, creative, screen }
+    enum Group: String, CaseIterable, Sendable { case core, developer, meetings, research, export, creative, screen, otherApps }
 
     struct Signals {
         var utterance: String
@@ -31,6 +38,7 @@ enum ToolRelevance {
             ("slack_", .export), ("notion_", .export), ("export_memory", .export), ("import_memory", .export),
             ("creative_", .creative),
             ("read_screen", .screen), ("control_screen", .screen), ("run_focus_check", .screen),
+            ("open_url", .otherApps), ("open_app", .otherApps), ("play_on_youtube", .otherApps), ("search_web", .otherApps),
         ]
         for (p, g) in prefixes where n.hasPrefix(p) { return g }
         return .core
@@ -52,9 +60,25 @@ enum ToolRelevance {
                     "illustration", "hero shot", "visual", "visuals", "creative", "bundle"],
         .screen: ["screen", "look at", "what's on", "read that", "click", "type", "scroll", "press", "control", "see this",
                   "seeing", "cursor", "button", "form", "fill", "am i focused", "focus check", "what app"],
+        .otherApps: ["launch", "open", "opens", "opening", "pull up", "bring up", "go to", "show me", "fire up", "boot up",
+                     "start", "switch to", "visit", "navigate", "youtube", "video", "videos", "watch", "play", "playing",
+                     "put on", "throw on", "queue up", "hear", "listen", "listening", "song", "songs", "music", "album",
+                     "playlist", "track", "chrome", "safari", "firefox", "browser", "tab", "website", "site", "page",
+                     "url", "link", "app", "google", "search", "search for", "look up", "online", "web", "http",
+                     "https", "www"],
     ]
 
+    /// A web address in the words ("github.com", "docs.swift.org/x") asks for a page.
+    private static let webAddress = try? NSRegularExpression(
+        pattern: "(?:^|[^a-z0-9.-])[a-z0-9-]+(?:\\.[a-z0-9-]+)*\\.(?:com|org|net|io|dev|app|ai|co|edu|gov|me|tv|us|uk)(?:[^a-z0-9-]|$)")
+
     static let recencyWindow: TimeInterval = 15 * 60
+
+    /// Music tools whose miss falls back to play_on_youtube.
+    static let musicTools: Set<String> = ["play_music_track", "list_library_tracks"]
+
+    /// The tools in `.otherApps`, named for the wake.log line.
+    static let otherAppsTools = ["open_url", "open_app", "play_on_youtube", "search_web"]
 
     static func groups(for s: Signals) -> Set<Group> {
         var out: Set<Group> = [.core]
@@ -62,7 +86,14 @@ enum ToolRelevance {
         if text.isEmpty { return Set(Group.allCases) }
         if s.hasImage { out.insert(.screen) }
         for (g, words) in keywords where ChatIntentClassifier.containsAnyWord(text, keywords: words) { out.insert(g) }
-        for name in s.recentToolNames { out.insert(group(for: name)) }
+        let lowered = text.lowercased()
+        if webAddress?.firstMatch(in: lowered, range: NSRange(lowered.startIndex..., in: lowered)) != nil {
+            out.insert(.otherApps)
+        }
+        for name in s.recentToolNames {
+            out.insert(group(for: name))
+            if musicTools.contains(name) { out.insert(.otherApps) }
+        }
         return out
     }
 

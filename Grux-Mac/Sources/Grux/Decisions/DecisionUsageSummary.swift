@@ -123,18 +123,67 @@ struct DecisionUsageSummary: Equatable {
     /// the menu bar shows what was said and not the engine's answer shape.
     static func lastLine(_ entry: DecisionLedgerEntry?) -> String? {
         guard let entry else { return nil }
-        return "\(heard(in: entry.summary)), \(entry.latencyMs) ms"
+        var said = heard(in: entry.summary)
+        // A row the engine clipped down to a stub ("S...") says what was decided.
+        if said.replacingOccurrences(of: "...", with: "").count < 3, let gist = surfaceGists[entry.surface] {
+            said = gist
+        }
+        // A sentence's own period before the comma read "approval., 144 ms" (D8).
+        if said.hasSuffix(".") && !said.hasSuffix("...") { said.removeLast() }
+        return "\(said), \(entry.latencyMs) ms"
     }
+
+    /// The last decision for a surface that sits beside today's numbers: the
+    /// Usage card under "Decisions today", the menu bar under a hover that says
+    /// "No decisions yet today". Not today, it names the day, and the year
+    /// when that differs, so the two never read as if they disagreed (D8, D54).
+    static func datedLastLine(_ entry: DecisionLedgerEntry?, now: Date = Date(),
+                              calendar: Calendar = .current) -> String? {
+        guard let entry, let line = lastLine(entry) else { return nil }
+        if calendar.isDate(entry.at, inSameDayAs: now) { return line }
+        return line + ", " + dayLabel(entry.at, now: now, calendar: calendar)
+    }
+
+    /// "Sep 18", or "Dec 31, 2025" in another year. English on purpose, like
+    /// every other word on these surfaces.
+    static func dayLabel(_ date: Date, now: Date, calendar: Calendar) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.calendar = calendar
+        f.timeZone = calendar.timeZone
+        let sameYear = calendar.component(.year, from: date) == calendar.component(.year, from: now)
+        f.dateFormat = sameYear ? "MMM d" : "MMM d, yyyy"
+        return f.string(from: date)
+    }
+
+    /// What a decision was, by surface, for a row whose own words were lost.
+    static let surfaceGists = [ApprovalRiskJudgment.surface: "Judged an approval's risk"]
+
+    /// The state with its opener dropped. The engine clips the ledger summary
+    /// after this, so the clip keeps what was asked about, not the opener.
+    static func withoutPreamble(_ state: String) -> String {
+        for preamble in statePreambles where state.hasPrefix(preamble) {
+            return String(state.dropFirst(preamble.count))
+        }
+        return state
+    }
+
+    /// Opening lines a gate puts above the state it asks about. They describe
+    /// the question, so the card shows the line after them (D8: the card read
+    /// "An action is waiting for the person's approval., 144 ms").
+    static let statePreambles = ["An action is waiting for the person's approval.\n"]
 
     /// The lead-ins each gate writes in front of its state. They are how a
     /// question is put to the provider, not something a person says, so the
     /// card shows what follows them. Seen live on the card on 2026-09-21:
     /// "Last decision: Heard: question, right?".
-    static let stateLeadIns = ["Heard: ", "The person said: ", "The action is: ", "The command about to run is: "]
+    static let stateLeadIns = ["Heard: ", "The person said: ", "The action is: ", "The command about to run is: ",
+                               "Action: "]
 
     static func heard(in summary: String) -> String {
         var text = summary
         if let arrow = text.range(of: " -> ") { text = String(text[text.startIndex..<arrow.lowerBound]) }
+        text = withoutPreamble(text)
         // A state can carry a second line (Grux's last reply); the card wants
         // only what was heard.
         text = String(text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false).first ?? "")

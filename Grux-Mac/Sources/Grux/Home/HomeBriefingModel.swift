@@ -430,10 +430,16 @@ final class HomeBriefingModel: ObservableObject {
         ApprovalQueue.shared.$items
             .sink { [weak self] _ in self?.refreshFromStore() }
             .store(in: &cancellables)
-        AppState.shared.$tasks
-            .sink { [weak self] _ in self?.refreshFromStore() }
-            .store(in: &cancellables)
-        AppState.shared.$lastVerdict
+        // The task stack and the Watching card's focus line (D44) read these from AppState. A
+        // @Published sink fires before the new value is stored, so the refresh hops to the next
+        // main-queue turn to read it. The hop would also deliver each current value after
+        // `armed`, so dropFirst skips those, as `armed` does for the sinks above.
+        Publishers.MergeMany(AppState.shared.$tasks.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+                             AppState.shared.$lastVerdict.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+                             AppState.shared.$watching.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+                             AppState.shared.$screenPermissionGranted.dropFirst().map { _ in () }.eraseToAnyPublisher(),
+                             AppState.shared.$focusSkip.dropFirst().map { _ in () }.eraseToAnyPublisher())
+            .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.refreshFromStore() }
             .store(in: &cancellables)
 
@@ -542,6 +548,9 @@ final class HomeBriefingModel: ObservableObject {
         let paused = jobs.filter { $0.status == .waiting || $0.status == .paused }.count
         let watch = TodayModel.WatchInput(
             focusTask: focused?.title,
+            focusWatched: TodayModel.focusWatched(
+                shown: PanelCopy.watchingState(watching: app.watching, screenAccess: app.screenPermissionGranted),
+                skip: app.focusSkip),
             drifting: app.lastVerdict == .drifting || app.lastVerdict == .offTask,
             jobsRunning: jobs.count - paused,
             jobsWaitingOnYou: paused,

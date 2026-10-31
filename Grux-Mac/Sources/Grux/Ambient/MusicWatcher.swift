@@ -208,14 +208,12 @@ final class MusicWatcher {
     }
 
     nonisolated private static func runScript(source: String, tag: String) -> String? {
-        guard let script = NSAppleScript(source: source) else { return nil }
-        var error: NSDictionary?
-        let result = script.executeAndReturnError(&error)
-        if let error = error {
-            logScriptErrorOnce(error, tag: tag)
+        let outcome = ForeignAppScript.runWaiting(source, purpose: "MusicWatcher")
+        if case .failed(let code, let message) = outcome {
+            logScriptErrorOnce(code: code ?? 0, message: message, tag: tag)
             return nil
         }
-        return result.stringValue
+        return outcome.stringValue
     }
 
     // Errors repeat every tick under steady-state failures (TCC denial -1743,
@@ -224,14 +222,12 @@ final class MusicWatcher {
     // new failure mode doesn't get swallowed.
     nonisolated private static let scriptErrorFlag = NSLock()
     nonisolated(unsafe) private static var loggedScriptErrorKeys: Set<String> = []
-    nonisolated private static func logScriptErrorOnce(_ error: NSDictionary, tag: String) {
-        let code = (error["NSAppleScriptErrorNumber"] as? Int) ?? 0
+    nonisolated private static func logScriptErrorOnce(code: Int, message: String, tag: String) {
         let key = "\(tag):\(code)"
         scriptErrorFlag.lock()
         defer { scriptErrorFlag.unlock() }
         guard loggedScriptErrorKeys.insert(key).inserted else { return }
-        let msg = (error["NSAppleScriptErrorMessage"] as? String) ?? "unknown"
-        WakeLog.shared.log("musicWatcher[\(tag)]: AppleScript error code=\(code) msg=\(msg)")
+        WakeLog.shared.log("musicWatcher[\(tag)]: AppleScript error code=\(code) msg=\(message)")
     }
 
     // MARK: - NDJSON layout

@@ -158,6 +158,28 @@ enum AppTriggers {
             }
         }
 
+        // Speed check trigger: write an installed local model id into
+        // ~/.grux/fire-speed-check and Grux times it the way it times a fresh
+        // download (one dictation repair, one chat turn with the lean prompt
+        // and everyday tools), logging each call to wake.log and the verdict to
+        // ~/.grux/speed-check-result.txt. Changes no setting and downloads nothing.
+        let speedCheckFile = dir.appendingPathComponent("fire-speed-check")
+        TriggerWatcher.shared.register(speedCheckFile) {
+            guard FileManager.default.fileExists(atPath: speedCheckFile.path) else { return }
+            let modelId = (try? String(contentsOf: speedCheckFile, encoding: .utf8))?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            try? FileManager.default.removeItem(at: speedCheckFile)
+            guard !modelId.isEmpty else { return }
+            Task { @MainActor in
+                let miss = await LocalModelSpeedGuard.measure(modelId: modelId)
+                let out = miss.map { m in
+                    "MISS \(modelId) \(m.check.rawValue) " + (m.seconds.map { String(format: "%.2f s", $0) } ?? "no answer")
+                } ?? "WITHIN \(modelId) dictation \(LocalModelSpeedCheck.dictationLimit) s chat \(LocalModelSpeedCheck.chatLimit) s"
+                WakeLog.shared.log("speed-check: \(out)")
+                try? out.write(to: dir.appendingPathComponent("speed-check-result.txt"), atomically: true, encoding: .utf8)
+            }
+        }
+
         // Debug issue-from-voice trigger: touch ~/.grux/fire-issue-from-voice-test
         // to run the spoken-frustration -> GitHub issue pipeline end to end,
         // bypassing the heuristic + debounce. File contents are optional:
@@ -1689,6 +1711,66 @@ enum AppTriggers {
             try? FileManager.default.removeItem(at: fireFoundryResume)
             WakeLog.shared.log("fire-foundry-resume: clearing auto-land pause")
             Task { @MainActor in GruxUpdater.shared.clearAutoLandPause() }
+        }
+
+        // fire-foundry-measure-baseline: Self-Upgrade's Measure on this Mac, for a
+        // Mac nobody can click on. Runs the full suite on the source checkout and
+        // records its failures and skips as the bar upgrades are graded against.
+        let fireFoundryBaseline = dir.appendingPathComponent("fire-foundry-measure-baseline")
+        TriggerWatcher.shared.register(fireFoundryBaseline) {
+            guard FileManager.default.fileExists(atPath: fireFoundryBaseline.path) else { return }
+            try? FileManager.default.removeItem(at: fireFoundryBaseline)
+            WakeLog.shared.log("fire-foundry-measure-baseline: measuring the test baseline")
+            Task { @MainActor in _ = await FoundryEngine.shared.measureBaseline() }
+        }
+
+        // fire-foundry-build (contents = the start of a proposal id): Self-Upgrade's
+        // Build it, for a Mac nobody can click on. Same path as the card's button;
+        // the outcome lands in wake.log as `fire-foundry-build:`.
+        let fireFoundryBuild = dir.appendingPathComponent("fire-foundry-build")
+        TriggerWatcher.shared.register(fireFoundryBuild) {
+            guard FileManager.default.fileExists(atPath: fireFoundryBuild.path) else { return }
+            let token = (try? String(contentsOf: fireFoundryBuild, encoding: .utf8)) ?? ""
+            try? FileManager.default.removeItem(at: fireFoundryBuild)
+            Task { @MainActor in
+                WakeLog.shared.log("fire-foundry-build: \(FoundryEngine.shared.buildRequested(token: token))")
+            }
+        }
+
+        // fire-update-check: the update check's "Check now", for a Mac nobody can click
+        // on. Same path as the Settings button: it asks even with the switch off or
+        // inside the day. The outcome lands in wake.log as `update-check: check now:`.
+        // Contents `not now`: the Now row's Not now for the version on offer.
+        let fireUpdateCheck = dir.appendingPathComponent("fire-update-check")
+        TriggerWatcher.shared.register(fireUpdateCheck) {
+            guard FileManager.default.fileExists(atPath: fireUpdateCheck.path) else { return }
+            let contents = ((try? String(contentsOf: fireUpdateCheck, encoding: .utf8)) ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            try? FileManager.default.removeItem(at: fireUpdateCheck)
+            Task { @MainActor in
+                if contents == "not now" {
+                    if let v = UpdateChecker.shared.available {
+                        UpdateChecker.shared.notNow(version: v)
+                    } else {
+                        WakeLog.shared.log("update-check: not now: no version on offer")
+                    }
+                } else {
+                    _ = await UpdateChecker.shared.run(manual: true)
+                }
+            }
+        }
+
+        // fire-cookbook-pull (contents = a Cookbook model id): the Cookbook's Pull
+        // button, for a Mac nobody can click on. Same pullToEnd path; catalog ids
+        // only. The outcome lands in wake.log as `fire-cookbook-pull:`.
+        let fireCookbookPull = dir.appendingPathComponent("fire-cookbook-pull")
+        TriggerWatcher.shared.register(fireCookbookPull) {
+            guard FileManager.default.fileExists(atPath: fireCookbookPull.path) else { return }
+            let token = (try? String(contentsOf: fireCookbookPull, encoding: .utf8)) ?? ""
+            try? FileManager.default.removeItem(at: fireCookbookPull)
+            Task { @MainActor in
+                WakeLog.shared.log("fire-cookbook-pull: \(await OllamaManager.shared.pullRequested(token: token))")
+            }
         }
 
         // fire-foundry-refresh (contents = an absolute path to a Grux source

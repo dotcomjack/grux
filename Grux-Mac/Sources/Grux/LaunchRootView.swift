@@ -640,11 +640,13 @@ struct LaunchRootView: View {
     private var statusBar: some View {
         VStack(alignment: .leading, spacing: 6) {
             Divider()
+            let shown = PanelCopy.watchingState(watching: state.watching, screenAccess: state.screenPermissionGranted)
             HStack(spacing: 6) {
                 Circle()
-                    .fill(state.watching ? GruxTheme.successMint : Color.secondary)
+                    .fill(shown == .watching ? GruxTheme.successMint
+                          : shown == .needsScreenAccess ? GruxTheme.warnAmber : Color.secondary)
                     .frame(width: 8, height: 8)
-                Text(state.watching ? "Watching" : "Paused")
+                Text(FocusLogView.statusTitle(shown))
                     .font(.caption)
                 Spacer()
                 Button(state.watching ? "Pause" : "Watch") {
@@ -1205,9 +1207,63 @@ struct FocusLogView: View {
                 .padding(.horizontal)
                 .padding(.top, 10)
 
-            List(state.events) { e in
-                FocusEventRow(event: e)
-            }.listStyle(.inset)
+            if state.events.isEmpty {
+                let shown = PanelCopy.watchingState(watching: state.watching, screenAccess: state.screenPermissionGranted)
+                Text(Self.emptyLine(shown, interval: "every \(max(1, state.config.tier.cadenceSeconds))s",
+                                    skip: state.focusSkip))
+                    .font(GruxType.caption)
+                    .foregroundStyle(GruxTheme.textTertiary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding()
+            } else {
+                List(state.events) { e in
+                    FocusEventRow(event: e)
+                }.listStyle(.inset)
+            }
+        }
+    }
+
+    /// The status word, from the one rule every surface asks (D3: this pane
+    /// read a green "Watching" with no screen access granted).
+    static func statusTitle(_ shown: PanelCopy.WatchingState) -> String {
+        switch shown {
+        case .watching: return PanelCopy.watching
+        case .needsScreenAccess: return PanelCopy.needsScreenAccess
+        case .paused: return PanelCopy.paused
+        }
+    }
+
+    /// What the banner says the watcher does. Without screen access it does
+    /// nothing, so the line says that first instead of "Grux samples".
+    static func samplingLine(_ shown: PanelCopy.WatchingState, interval: String, hours: String,
+                             model: String, drift: String, cooldown: String, skip: FocusWatcher.Skip? = nil) -> String {
+        let how = "Each sample is classified against your current task using \(model) analysis. After \(drift) in a row that read off task, Grux nudges you (respecting a \(cooldown) cooldown per app)."
+        switch shown {
+        case .watching:
+            if let skip {
+                return "Nothing is sampled right now. \(skip.line) When nothing stands in the way, Grux samples your active window \(interval) during \(hours). \(how)"
+            }
+            return "Grux samples your active window \(interval) during \(hours). \(how) Entries below are those samples, newest first."
+        case .needsScreenAccess:
+            // The grant alone may not be enough: name what else the last tick
+            // found missing, and promise nothing past it.
+            let also = skip.map { $0 == .noScreenAccess ? "" : " \($0.line)" } ?? ""
+            return "Nothing is sampled until macOS allows screen recording.\(also) When nothing stands in the way, Grux will sample your active window \(interval) during \(hours). \(how)"
+        case .paused:
+            return "Paused. When watching and nothing stands in the way, Grux will sample your active window \(interval) during \(hours). \(how)"
+        }
+    }
+
+    /// The empty list's one line, so 0 events never sits over a blank area.
+    static func emptyLine(_ shown: PanelCopy.WatchingState, interval: String, skip: FocusWatcher.Skip? = nil) -> String {
+        switch shown {
+        case .watching:
+            // The banner above names the reason; saying it twice reads as two problems.
+            if skip != nil { return "No samples yet." }
+            return "No samples yet. Grux checks \(interval)."
+        case .needsScreenAccess: return "No samples. Grux needs screen recording to see your active window; Grant asks macOS."
+        case .paused: return "Paused, so nothing is sampled."
         }
     }
 
@@ -1239,23 +1295,25 @@ struct FocusLogView: View {
         // the cloud vision call, so report that instead.
         let modelLabel = cfg.tier.useLocalPrescreen ? "OCR prescreen, then vision" : "vision"
         let cooldownLabel = "\(cfg.focusCooldownMinutes)m"
+        let shown = PanelCopy.watchingState(watching: state.watching, screenAccess: state.screenPermissionGranted)
+        let tone: Color = shown == .watching ? .green : shown == .needsScreenAccess ? .orange : .secondary
 
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Image(systemName: "eye.fill")
-                    .foregroundStyle(state.watching ? Color.green : Color.secondary)
-                Text(state.watching ? "Watching" : "Paused")
+                Image(systemName: shown == .needsScreenAccess ? "lock.shield" : "eye.fill")
+                    .foregroundStyle(tone)
+                Text(Self.statusTitle(shown))
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(state.watching ? Color.green : Color.secondary)
+                    .foregroundStyle(tone)
                 Spacer()
-                if !state.screenPermissionGranted {
-                    Label("Needs screen recording permission", systemImage: "lock.shield")
+                if shown == .needsScreenAccess {
+                    Button(PanelCopy.grantScreenAccess) { _ = ScreenCapturer.shared.requestPermission() }
                         .font(.caption)
-                        .foregroundStyle(.orange)
                 }
             }
 
-            Text("Grux samples your active window \(intervalLabel) during \(hoursLabel). Each sample is classified against your current task using \(modelLabel) analysis. After \(driftLabel) consecutive off-task samples, Grux nudges (respecting a \(cooldownLabel) cooldown per app). Entries below are those samples, newest first.")
+            Text(Self.samplingLine(shown, interval: intervalLabel, hours: hoursLabel, model: modelLabel,
+                                   drift: driftLabel, cooldown: cooldownLabel, skip: state.focusSkip))
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

@@ -40,7 +40,7 @@ struct WebhooksView: View {
                 recentDeliveries
             }
         }
-        .sheet(isPresented: $showAddSheet) {
+        .gruxSheet(isPresented: $showAddSheet) {
             WebhookEditSheet(existing: nil) { config, secret in
                 if !secret.isEmpty {
                     WebhookSecretStore.set(account: config.secretAccount, secret: secret)
@@ -48,7 +48,7 @@ struct WebhooksView: View {
                 store.upsert(config)
             }
         }
-        .sheet(item: $editingConfig) { config in
+        .gruxSheet(item: $editingConfig) { config in
             WebhookEditSheet(existing: config) { updated, secret in
                 if !secret.isEmpty {
                     WebhookSecretStore.set(account: updated.secretAccount, secret: secret)

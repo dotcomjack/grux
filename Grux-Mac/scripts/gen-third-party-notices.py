@@ -176,6 +176,12 @@ def main():
         print("      Run: python3 Grux-Mac/scripts/gen-third-party-notices.py",
               file=sys.stderr)
         return 1
+    # Unchanged: leave the file alone, so build.sh's stat only dirty check does
+    # not read every build of a clean checkout as dirty.
+    if existing == text:
+        print("%s is current (%d dependencies)"
+              % (os.path.relpath(OUT, REPO_ROOT), len(pins())))
+        return 0
     with open(OUT, "w", encoding="utf-8") as fh:
         fh.write(text)
     print("wrote %s (%d dependencies, %d bytes)"

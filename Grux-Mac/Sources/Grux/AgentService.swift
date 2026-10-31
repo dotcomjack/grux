@@ -152,8 +152,12 @@ final class AgentService: ObservableObject {
         budgetUSD: Double = 5.0,
         maxParallelWorkers: Int = 3
     ) async -> AgentJob {
-        let job = Self.plannedJob(title: title, goal: goal, template: template, rootDir: rootDir,
-                                  budgetUSD: budgetUSD, maxParallelWorkers: maxParallelWorkers)
+        await startSwarm(planned: Self.plannedJob(title: title, goal: goal, template: template, rootDir: rootDir,
+                                                  budgetUSD: budgetUSD, maxParallelWorkers: maxParallelWorkers))
+    }
+
+    // Starts a job already built by plannedJob, for a caller that sets worker fields.
+    func startSwarm(planned job: AgentJob) async -> AgentJob {
         try? await store.saveJob(job)
         await refreshJobs()
 
@@ -483,7 +487,8 @@ final class AgentService: ObservableObject {
         // status here, and treating that as a transition re-injected the same
         // 'UNPROCESSED FAILED SWARM' message into chat on every launch, five
         // launches running, as the first thing the person read.
-        if let previousStatus, previousStatus != job.status, !previousStatus.isTerminal, job.isTerminal {
+        if let previousStatus, previousStatus != job.status, !previousStatus.isTerminal, job.isTerminal,
+           Self.reportsEndToChat(job) {
             notifyChatOfJobCompletion(job)
         }
     }
@@ -496,6 +501,18 @@ final class AgentService: ObservableObject {
     // the failure instead of going silent. Idempotent: scoped to the
     // status-transition above, so it can't re-fire on subsequent
     // jobs-list refreshes.
+    // Whether a job's end is posted into chat: only a job a person started.
+    /// A Self-Upgrade job stored before `startedBy` existed is known by the
+    /// title its escalation gives it (wave 13 review).
+    /// When `startedBy` arrived (2026-10-30 0:00 UTC). Only a job stored
+    /// before it is judged by its title.
+    nonisolated static let startedByIntroduced = Date(timeIntervalSince1970: 1_793_318_400)
+
+    nonisolated static func reportsEndToChat(_ job: AgentJob) -> Bool {
+        guard job.startedBy == nil else { return false }
+        return job.createdAt >= startedByIntroduced || !job.title.hasPrefix(RDWorker.escalationTitlePrefix)
+    }
+
     private func notifyChatOfJobCompletion(_ job: AgentJob) {
         let rootDir = (job.rootDir as NSString).expandingTildeInPath
         let candidates = ["concept-brief.md", "brief.md", "plan.md", "research.md", "summary.md", "spec.md"]

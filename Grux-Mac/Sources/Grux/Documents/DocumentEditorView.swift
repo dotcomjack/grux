@@ -160,7 +160,7 @@ struct DocumentEditorView: View {
             .overlay(Capsule().stroke(Color.white.opacity(0.25), lineWidth: 0.8))
         }
         .buttonStyle(.plain)
-        .popover(isPresented: $showAssist, arrowEdge: .bottom) {
+        .gruxPopover(isPresented: $showAssist, arrowEdge: .bottom) {
             assistPopover
         }
     }

@@ -74,6 +74,19 @@ private struct SettingsTabBar: View {
 // keeps working through SettingsTabAliases (old tags resolve to the new
 // pane + sub-pane + scroll anchor).
 struct SettingsView: View {
+    /// The button that puts the system input back on this Mac's own mic,
+    /// drawn only on a Mac that has one (D7: a Mac with no built-in mic was offered "Revert
+    /// to MacBook built-in mic" under "No input devices detected").
+    static func builtInMicButtonTitle(builtInPresent: Bool) -> String? {
+        builtInPresent ? "Use this Mac's built-in mic" : nil
+    }
+    /// Under the microphone list: only what the voice processing caption above does not say,
+    /// and only when a listed microphone carries the toggle it names (D48).
+    static func micFidelityFooter(hasDevices: Bool) -> String? {
+        hasDevices ? "Tick \"Preserve speaker fidelity\" on any external mic that already cleans up its own sound, like the DJI Mic, and Grux skips voice processing on it." : nil
+    }
+    /// The update check's last outcome, shown beside Check now.
+    @ObservedObject private var updateChecker = UpdateChecker.shared
     @EnvironmentObject var state: AppState
     // The Workday Log's two switches. @AppStorage rather than @State because the keys ARE
     // the storage: WorkdayLogStore reads the same two strings, so there is no copy to keep
@@ -144,6 +157,8 @@ struct SettingsView: View {
     // names resolve through SettingsTabAliases. Defaults to "general",
     // which is the first pane, so normal opens are unchanged.
     @State private var selectedTab: String = SettingsPane.general.rawValue
+    /// This view's identity for the deep-link handback (D52).
+    @State private var viewID = UUID()
 
     // Sub-pane selections for the consolidated panes.
     @State private var voiceAmbientSub: String = "voice"
@@ -303,9 +318,12 @@ struct SettingsView: View {
                alignment: .top)
         .onAppear {
             loadFromState()
+            state.settingsViewAppeared()
             applyRequestedSettingsTab(appearing: true)
             mountRestOfGeneral()
         }
+        // A Settings rebuilt under a deep link hands it to its replacement (D52).
+        .onDisappear { state.settingsViewDisappeared(viewID: viewID) }
         .onChange(of: state.requestedSettingsTab) { _, _ in
             // A Settings already on screen spends the request too; a closed
             // window kept alive does not (PR 40 review, W2d-6).
@@ -323,7 +341,7 @@ struct SettingsView: View {
     // through the alias map, switches the pane (+ sub-pane + scroll anchor),
     // and clears the request so it never re-fires on a later Settings open.
     private func applyRequestedSettingsTab(appearing: Bool = false) {
-        guard let tab = state.takeSettingsRequest(appearing: appearing) else { return }
+        guard let tab = state.takeSettingsRequest(appearing: appearing, viewID: viewID) else { return }
         navigate(to: SettingsTabAliases.resolve(tab))
     }
 
@@ -787,6 +805,26 @@ if showGeneral(9) && sectionVisible("general.permissions") {
                 Text("One agent for everything you run on your Mac").foregroundStyle(.secondary)
                 Text("Version \(Self.aboutVersion)")
                     .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                // The update check (spec 2026-10-17-update-check-scope.md): the switch,
+                // what it does and what off means, and Check now, which asks even when off.
+                Toggle("Check for new versions", isOn: Binding(
+                    get: { state.config.updateCheckEnabled },
+                    set: { v in
+                        state.config.updateCheckEnabled = v
+                        state.saveConfig()
+                    }
+                ))
+                Text(UpdateCheck.settingsExplanation)
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack {
+                    Button("Check now") {
+                        Task { @MainActor in await UpdateChecker.shared.run(manual: true) }
+                    }
+                    if let line = updateChecker.lastLine {
+                        Text(line).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
                 Link("Built by DotcomJack", destination: URL(string: "https://dotcomjack.com")!)
                     .font(.caption)
                     .gruxLink()
@@ -1415,11 +1453,18 @@ if showGeneral(9) && sectionVisible("general.permissions") {
                                 Text("Installed: " + modelRegistry.localTags.joined(separator: ", "))
                                     .font(.caption).foregroundStyle(.secondary)
                             }
-                            if state.offlineMode && !modelRegistry.localUsable {
-                                Text("Offline mode is on but no local model is ready to use. Chat falls back to the cloud until one is.")
+                            if OfflineModeCaption.showsNotReady(offlineMode: state.offlineMode,
+                                                                activeProvider: modelRegistry.activeProvider,
+                                                                localUsable: modelRegistry.localUsable) {
+                                Text(OfflineModeCaption.notReady)
                                     .font(.caption).foregroundStyle(.orange)
                             }
-                            Text("Offline mode routes chat to a local model; web research and cloud voice are disabled. The model and base URL persist; the on/off switch resets to cloud on relaunch so a flaky local server never strands you. Works with Ollama (default), vLLM, or llama.cpp on the OpenAI-compatible endpoint.")
+                            if let overridden = OfflineModeCaption.overridden(offlineMode: state.offlineMode,
+                                                                              activeProvider: modelRegistry.activeProvider) {
+                                Text(overridden)
+                                    .font(.caption).foregroundStyle(.orange)
+                            }
+                            Text(OfflineModeCaption.footer)
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         .id("models.offline")
@@ -1668,7 +1713,7 @@ if showGeneral(9) && sectionVisible("general.permissions") {
                                     state.saveConfig()
                                 }
                             ))
-                            Text("Off by default, and takes effect on next launch. When on, Grux looks over how you have been using it once a night, writes up changes it thinks would help, and asks you before building any of them. That nightly pass sends what it found to a model, so it spends against your key. With it off Grux never proposes anything and never spends on this.")
+                            Text("Off by default, and takes effect on next launch. When on, Grux looks over how you have been using it when you ask (\"Grux, upgrade yourself\"), writes up changes it thinks would help, and asks you before building any of them. It runs by itself only on a schedule you choose in Self-Upgrade (nightly, Sundays, or when your Mac is idle), and every one of those starts off. Each pass sends what it found to a model, so it spends against your key or subscription. With it off Grux never proposes anything and never spends on this.")
                                 .font(.caption).foregroundStyle(.secondary)
                             TuningPointer(text: TuningCopy.selfUpgradePointer)
                         }
@@ -2075,7 +2120,7 @@ if showGeneral(9) && sectionVisible("general.permissions") {
     // keeping Music/Safari/YouTube in full stereo.
     //
     // The "Use as default input" radio sets the system default input device
-    // (via CoreAudio, no 3rd-party tools), and "Revert to MacBook built-in"
+    // (via CoreAudio, no 3rd-party tools), and "Use this Mac's built-in mic"
     // clears it + restores the internal mic.
 
     private var micsSection: some View {
@@ -2175,11 +2220,13 @@ if showGeneral(9) && sectionVisible("general.permissions") {
             }
 
             HStack(spacing: 12) {
-                Button {
-                    MicWhitelist.revertToBuiltIn()
-                    micsRefreshTick &+= 1
-                } label: {
-                    Label("Revert to MacBook built-in mic", systemImage: "arrow.counterclockwise")
+                if let title = Self.builtInMicButtonTitle(builtInPresent: MicDevices.builtInMicUID() != nil) {
+                    Button {
+                        MicWhitelist.revertToBuiltIn()
+                        micsRefreshTick &+= 1
+                    } label: {
+                        Label(title, systemImage: "arrow.counterclockwise")
+                    }
                 }
                 Spacer()
                 Button {
@@ -2192,9 +2239,11 @@ if showGeneral(9) && sectionVisible("general.permissions") {
             }
             .padding(.top, 4)
 
-            Text("Dictation turns on Apple's voice processing (echo cancellation and noise suppression) when you listen on speakers. Background listening never does, because it closes the microphone while Grux speaks and so has no echo to cancel. Your music and video keep full quality either way. What voice processing does cost is other apps: while it runs, an app that is recording, a call or a screen capture, can lose its microphone. Tick \"Preserve speaker fidelity\" on any external mic that already cleans up its own sound, like the DJI Mic, to skip it entirely.")
-                .font(.caption).foregroundStyle(.secondary)
-                .id(micsRefreshTick) // force caption redraw when toggles change
+            if let footer = Self.micFidelityFooter(hasDevices: !devices.isEmpty) {
+                Text(footer)
+                    .font(.caption).foregroundStyle(.secondary)
+                    .id(micsRefreshTick) // force caption redraw when toggles change
+            }
         }
         // Auto-whitelist (DJI Mic etc.) and a mid-session reconnect both
         // post .gruxMicWhitelistChanged. Bump the tick so the toggles
@@ -2541,4 +2590,25 @@ enum SettingsHandoff {
             return OptimizeCopy.handoffFailed(error.localizedDescription)
         }
     }
+}
+
+// The two captions under "Offline mode (local model)", named so a test can hold
+// each one against the behaviour it describes (OfflineModeCaptionTests). Both
+// used to promise the opposite of the code: a cloud fallback ChatReadiness
+// refuses, and a switch that reset on relaunch while AppState saves it.
+enum OfflineModeCaption {
+    /// The not-ready line is true only while the local model is the provider chat
+    /// uses: a provider picked under Models (Use, or a model from the chat chip) beats
+    /// the switch, and chat then sends there (wave 7 review P2-1).
+    static func showsNotReady(offlineMode: Bool, activeProvider: ActiveProvider, localUsable: Bool) -> Bool {
+        offlineMode && activeProvider == .local && !localUsable
+    }
+
+    /// Said instead when the switch is on and chat goes to a provider chosen under Models.
+    static func overridden(offlineMode: Bool, activeProvider: ActiveProvider) -> String? {
+        guard offlineMode, activeProvider != .local else { return nil }
+        return "Offline mode is on, but you picked another provider under Models, so chat uses that provider. Web research and cloud voice stay off while the switch is on. Turn the switch off and on again to send chat to your local model."
+    }
+    static let notReady = "Offline mode is on but no local model is ready to use. Chat will not send until one is: start your local model server, or turn offline mode off to use the cloud."
+    static let footer = "Offline mode routes chat to a local model; web research and cloud voice are disabled. The switch, the model and the base URL are saved, so offline mode is still on after a relaunch, and if the local server is not running then, chat waits for it instead of using the cloud. Picking another provider under Models sends chat there instead, until you turn this switch on again. Works with Ollama (default), vLLM, or llama.cpp on the OpenAI-compatible endpoint."
 }

@@ -78,7 +78,7 @@ struct CalendarView: View {
             checkedAccess = true
             reload()
         }
-        .sheet(isPresented: $showNewEvent) {
+        .gruxSheet(isPresented: $showNewEvent) {
             NewEventSheet(defaultDay: selectedDay) { created in
                 if created { reload() }
             }

@@ -73,6 +73,41 @@ final class FoundryRepoRootTests: XCTestCase {
                      "a folder with no Package.swift and no .git is not a source checkout")
     }
 
+    /// build.sh runs from Grux-Mac (`cd "$(dirname "$0")"`) and records
+    /// `$(pwd)`, so source.json holds the package folder, not the repo root.
+    /// The resolver demanded `<path>/Grux-Mac/Package.swift` and refused it,
+    /// so every card on a build.sh install read "Grux cannot build this here".
+    func testWhatBuildShRecordsResolvesToTheRepoRoot() throws {
+        let root = try makeCheckout("built")
+        let file = try writeSource(path: root.appendingPathComponent("Grux-Mac").path)
+        let resolved = FoundryEngine.resolveRepoRoot(environment: [:], sourceFile: file)
+        XCTAssertEqual(resolved?.standardizedFileURL, root.standardizedFileURL)
+        let fromEnv = FoundryEngine.resolveRepoRoot(
+            environment: ["GRUX_REPO_ROOT": root.appendingPathComponent("Grux-Mac").path],
+            sourceFile: scratch.appendingPathComponent("absent.json"))
+        XCTAssertEqual(fromEnv?.standardizedFileURL, root.standardizedFileURL)
+    }
+
+    /// The other half of that contract, read from build.sh itself so the two
+    /// cannot drift apart again.
+    func testBuildShRecordsThePackageFolder() throws {
+        let buildSh = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("build.sh")
+        let text = try String(contentsOf: buildSh, encoding: .utf8)
+        XCTAssertTrue(text.contains("cd \"$(dirname \"$0\")\""), "build.sh runs from Grux-Mac")
+        XCTAssertTrue(text.contains("python3 -I - \"$(pwd)\""), "build.sh records the folder it runs from")
+    }
+
+    func testAPackageFolderOutsideACheckoutIsRefused() throws {
+        let loose = scratch.appendingPathComponent("loose/Grux-Mac", isDirectory: true)
+        try FileManager.default.createDirectory(at: loose, withIntermediateDirectories: true)
+        try "// swift-tools-version:5.9".write(to: loose.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+        let file = try writeSource(path: loose.path)
+        XCTAssertNil(FoundryEngine.resolveRepoRoot(environment: [:], sourceFile: file),
+                     "a package folder whose parent has no .git is not a checkout")
+    }
+
     func testNothingRecordedAndNothingSetResolvesToNil() {
         let missing = scratch.appendingPathComponent("absent.json")
         XCTAssertNil(FoundryEngine.resolveRepoRoot(environment: [:], sourceFile: missing))

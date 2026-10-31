@@ -63,9 +63,11 @@ public enum SoundingCommand {
         "youtube.com", "youtu.be", "vimeo.com", "twitch.tv", "soundcloud.com", "open.spotify.com",
         "music.apple.com", "podcasts.apple.com", "tv.apple.com", "netflix.com", "pandora.com",
     ]
-    /// Words that run the command after them.
+    /// Words that run the command after them: wrappers, and the shell keywords that put a
+    /// command after them (`for f in *; do open "$f"; done`).
     static let wrappers: Set<String> = [
-        "sudo", "env", "nohup", "exec", "command", "time", "nice", "caffeinate", "xargs", "eval",
+        "sudo", "env", "nohup", "exec", "command", "time", "nice", "caffeinate", "xargs", "eval", "arch",
+        "do", "then", "else", "elif", "if", "while", "until", "!", "{",
     ]
     /// Shells that run the string after `-c` as a command (review RV6).
     static let shells: Set<String> = ["sh", "bash", "zsh", "dash", "ksh", "fish"]
@@ -97,13 +99,17 @@ public enum SoundingCommand {
         }
     }
 
-    static func sounding(_ words: [String]) -> String? {
+    /// The program a simple command runs and its arguments, past leading assignments
+    /// (`VAR=value`), wrappers (`env`, `sudo`, ...) and the wrappers' flags.
+    static func head(of words: [String]) -> (program: String, args: [String])? {
         var rest = words[...]
         // Skip leading assignments (`VAR=value`), wrappers and their flags.
         while let first = rest.first {
             if first.contains("=") && !first.hasPrefix("-") && !first.hasPrefix("/") {
                 rest = rest.dropFirst()
-            } else if wrappers.contains(first)
+            } else if first == "-arch" && rest.startIndex != words.startIndex {
+                rest = rest.dropFirst(2)  // `arch -arch x86_64 open`: the flag takes a value
+            } else if wrappers.contains((first as NSString).lastPathComponent)
                         || (rest.startIndex != words.startIndex && (first.hasPrefix("-") || Int(first) != nil)) {
                 rest = rest.dropFirst()
             } else {
@@ -111,8 +117,11 @@ public enum SoundingCommand {
             }
         }
         guard let head = rest.first else { return nil }
-        let program = (head as NSString).lastPathComponent
-        let args = Array(rest.dropFirst())
+        return ((head as NSString).lastPathComponent, Array(rest.dropFirst()))
+    }
+
+    static func sounding(_ words: [String]) -> String? {
+        guard let (program, args) = head(of: words) else { return nil }
         let tail = args.joined(separator: " ").lowercased()
         switch program {
         case _ where shells.contains(program):

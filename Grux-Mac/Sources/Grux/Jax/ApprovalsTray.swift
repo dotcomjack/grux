@@ -47,7 +47,7 @@ struct ApprovalsTrayButton: View {
             .buttonStyle(.borderless)
             .help(ApprovalsTray.help)
             .accessibilityLabel("\(count) approvals waiting")
-            .popover(isPresented: $tray.isOpen, arrowEdge: .trailing) {
+            .gruxPopover(isPresented: $tray.isOpen, arrowEdge: .trailing) {
                 ApprovalsTrayPanel(queue: queue)
             }
         }

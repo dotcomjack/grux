@@ -91,6 +91,66 @@ final class UsageCardTests: XCTestCase {
         XCTAssertEqual(text(card), ["Decisions today: None yet", "Spent today: Nothing", "Spent this month: Nothing"])
     }
 
+    // MARK: - D8: the last decision says when, and what
+
+    /// Seen on the Mini (`logs/s3-shots/settings-models-1.png`): "Decisions
+    /// today: None yet" two rows above "Last decision: ..., 144 ms", which read
+    /// as a contradiction because the last one was days ago. It names its day.
+    func test_aLastDecisionFromAnotherDaySaysWhichDay() {
+        let card = UsageCardContent.build(from: [row(144, .local, at: at(9, 18, 9))], now: at(9, 21, 15), calendar: utc)
+        XCTAssertEqual(text(card).first, "Decisions today: None yet")
+        XCTAssertEqual(text(card).last, "Last decision: open my calendar, 144 ms, Sep 18")
+    }
+
+    /// Off by one in time: earlier the same day is today, and says no day.
+    func test_aLastDecisionEarlierTodaySaysNoDay() {
+        let card = UsageCardContent.build(from: [row(9, .local, at: at(9, 21, 0, 1))], now: at(9, 21, 23, 59), calendar: utc)
+        XCTAssertEqual(text(card).last, "Last decision: open my calendar, 9 ms")
+    }
+
+    /// "An action is waiting for the person's approval., 144 ms": the risk
+    /// judgment's prompt opener, and a period stuck before the comma.
+    func test_anApprovalJudgmentShowsTheActionItJudged() {
+        let item = PendingApproval(action: ProposedAction(kind: .other, summary: "Save your note \"Milk\".",
+                                                          target: "create_note"),
+                                   reason: DecisionGate.asksFirstReason)
+        let entry = DecisionLedgerEntry(surface: ApprovalRiskJudgment.surface, provider: .local, latencyMs: 144,
+                                        inputTokens: 0, outputTokens: 0, at: at(9, 21, 9),
+                                        summary: ApprovalRiskJudgment.state(for: item) + " -> 0 at 0")
+        XCTAssertEqual(DecisionUsageSummary.lastLine(entry), "Save your note \"Milk\", 144 ms")
+    }
+
+    /// The engine clips a ledger summary to 57 characters, and the judgment's
+    /// opener and "Action: " took 56 of them, so the Mini's ledger holds
+    /// "An action is waiting for the person's approval.\nAction: S... -> risk=1.6".
+    /// The opener is dropped before the clip, so the action is what is kept.
+    func test_theLedgerKeepsTheActionAnApprovalJudgmentJudged() {
+        let item = PendingApproval(action: ProposedAction(kind: .other, summary: "Save your note \"The gate code is on the fridge\".",
+                                                          target: "create_note"),
+                                   reason: DecisionGate.asksFirstReason)
+        let result = DecisionResult(answers: ["risk": .score(1.6, confidence: 0.9)], latencyMs: 144,
+                                    inputTokens: 0, outputTokens: 0, provider: .local)
+        let summary = DecisionEngine.summary(state: ApprovalRiskJudgment.state(for: item), result: result)
+        let entry = DecisionLedgerEntry(surface: ApprovalRiskJudgment.surface, provider: .local, latencyMs: 144,
+                                        inputTokens: 0, outputTokens: 0, at: at(9, 21, 9), summary: summary)
+        XCTAssertEqual(DecisionUsageSummary.lastLine(entry), "Save your note \"The gate code is on the fridge\", 144 ms")
+    }
+
+    /// A row already clipped to a stub says what the decision was instead.
+    func test_aRowClippedToAStubSaysWhatWasDecided() {
+        let entry = DecisionLedgerEntry(surface: ApprovalRiskJudgment.surface, provider: .jev, latencyMs: 144,
+                                        inputTokens: 427, outputTokens: 17, at: at(9, 21, 9),
+                                        summary: "An action is waiting for the person's approval.\nAction: S... -> risk=1.6")
+        XCTAssertEqual(DecisionUsageSummary.lastLine(entry), "Judged an approval's risk, 144 ms")
+    }
+
+    func test_aSentencesClosingPeriodIsDroppedBeforeTheComma() {
+        XCTAssertEqual(DecisionUsageSummary.lastLine(row(7, .local, at: at(9, 21), heard: "Heard: turn it off.")),
+                       "turn it off, 7 ms")
+        XCTAssertEqual(DecisionUsageSummary.lastLine(row(7, .local, at: at(9, 21), heard: "is it on?")),
+                       "is it on?, 7 ms", "a question keeps its mark")
+    }
+
     // MARK: - The status line P-R-3 fills
 
     func test_theStatusLineIsEmptyToday() {

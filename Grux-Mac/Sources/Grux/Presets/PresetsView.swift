@@ -191,12 +191,12 @@ struct PresetsView: View {
     }
 
     private func editorHeader(_ preset: Preset) -> some View {
-        HStack(spacing: 8) {
+        GruxTitleActions {
             Text(preset.name)
                 .font(GruxTheme.Font.title)
                 .foregroundStyle(GruxTheme.textPrimary)
                 .lineLimit(1)
-            Spacer()
+        } actions: {
             if preset.kind == .chat {
                 if store.activeChatPresetId == preset.id {
                     GruxChip(title: "ACTIVE, CLEAR", systemImage: "checkmark", style: .success) {
@@ -216,16 +216,18 @@ struct PresetsView: View {
             GruxChip(title: "DELETE", systemImage: "trash", style: .destructive) {
                 confirmingDelete = true
             }
-            .confirmationDialog(
-                "Delete \"\(preset.name)\"?",
-                isPresented: $confirmingDelete,
-                titleVisibility: .visible
-            ) {
-                Button("Delete preset", role: .destructive) { deleteSelected() }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("This can't be undone.")
-            }
+        }
+        // On the header, not the chip: the header draws its chips in one of
+        // two arrangements, and the dialog belongs to neither.
+        .confirmationDialog(
+            "Delete \"\(preset.name)\"?",
+            isPresented: $confirmingDelete,
+            titleVisibility: .visible
+        ) {
+            Button("Delete preset", role: .destructive) { deleteSelected() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This can't be undone.")
         }
     }
 

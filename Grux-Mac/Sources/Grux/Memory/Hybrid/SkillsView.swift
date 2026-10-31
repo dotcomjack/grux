@@ -39,7 +39,7 @@ struct SkillsView: View {
                 }
             }
         }
-        .sheet(item: $editorState) { state in
+        .gruxSheet(item: $editorState) { state in
             SkillEditorSheet(state: state) { name, trigger, procedure in
                 store.upsert(name: name, trigger: trigger, procedure: procedure)
             }
@@ -172,7 +172,7 @@ struct SkillsView: View {
     }
 }
 
-// Identifiable wrapper so .sheet(item:) drives both "new" and "edit".
+// Identifiable wrapper so .gruxSheet(item:) drives both "new" and "edit".
 private struct SkillEditorState: Identifiable {
     let id = UUID()
     var name: String = ""
