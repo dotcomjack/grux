@@ -202,8 +202,9 @@ so a web search opens Google in Chrome.
 
 The disk image and the app are signed with a Developer ID, notarized by Apple and
 stapled, so Grux opens on a Mac that has never seen it, with no right click and no trip
-through System Settings. There is no installer and no updater phoning home. To check
-what you got before you run it:
+through System Settings. There is no installer. Grux checks GitHub's public release page
+once a day to tell you about new versions. It sends nothing about you, never installs
+anything by itself, and you can turn it off. To check what you got before you run it:
 
 ```sh
 shasum -a 256 ~/Downloads/Grux.dmg     # compare against the checksum in the release notes
@@ -447,8 +448,9 @@ skipped and come back to later.
 Ollama with no key at all.
 
 If you would rather not send anything to a hosted model at all, install
-[Ollama](https://ollama.com), pull a model, and Grux will use it. The Local Models
-tab picks it up automatically.
+[Ollama](https://ollama.com), pull a model, and turn on Offline mode in
+Settings, Models: Grux then uses it with no key. Ask Grux to open Local Models
+to see the models you have and the ones that fit your Mac.
 
 Credentials go to the macOS Keychain under the service `com.gruxai.grux`. They are
 never written to disk in plaintext and never leave the machine except to the
