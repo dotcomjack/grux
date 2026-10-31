@@ -93,7 +93,7 @@ final class FoundryEngine: ObservableObject {
         return validatedCheckout(at: source.path)
     }
 
-    private nonisolated static func validatedCheckout(at path: String) -> URL? {
+    nonisolated static func validatedCheckout(at path: String) -> URL? {
         let fm = FileManager.default
         let root = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
         guard fm.fileExists(atPath: root.appendingPathComponent("Grux-Mac/Package.swift").path),
@@ -199,9 +199,7 @@ final class FoundryEngine: ObservableObject {
     func runCycle(_ pass: FoundryCyclePass) async {
         WakeLog.shared.log("foundry: \(pass.rawValue) cycle started")
 
-        // Sense: refresh the signal book. Synthesis into fresh proposals is
-        // the ProposalEngine's job (Phase A book + later passes); this keeps
-        // the evidence stream warm for the next synthesize pass.
+        // Sense: refresh the signal book, then synthesize proposals from it.
         let report = await SignalHarvester.standard().harvest()
         FoundryTimelineStore.shared.append(FoundryTimelineEntry(
             kind: .cycle,
@@ -209,6 +207,15 @@ final class FoundryEngine: ObservableObject {
             detail: "Harvested \(report.signals.count) signal\(report.signals.count == 1 ? "" : "s")"
                 + (report.sourceErrors.isEmpty ? "." : "; \(report.sourceErrors.count) source error(s).")
         ))
+
+        // Synthesize: the signals become proposals. Before 2026-10-30 this
+        // stage did not exist and the harvest above went nowhere.
+        // Not on an opportunistic pass: that one runs while the person is
+        // away and must stand down when they return, and a synthesis run
+        // cannot be interrupted part way. Nor after the governor yielded.
+        if pass != .opportunistic, case .running = FoundryGovernor.shared.phase {
+            _ = await ProposalSynthesizer.refresh(sourceRoot: ProposalSynthesizer.sourceRoot(), harvested: report)
+        }
 
         // Build: every accepted proposal rides the rail, one at a time.
         // Stand down mid-cycle on a session limit (the user's work comes first).

@@ -163,4 +163,9 @@ struct UpgradeProposal: Codable, Identifiable, Equatable, Sendable {
     // Every file path this proposal expects to touch (mined from the
     // prompt by the engine; used for protected-zone pinning).
     var touchedPaths: [String] = []
+
+    // True when the proposal pass retired it for sitting unbuilt too long,
+    // rather than a person rejecting it or its build failing. Only these
+    // may be proposed again. Absent in older files, which decode as nil.
+    var retiredStale: Bool? = nil
 }

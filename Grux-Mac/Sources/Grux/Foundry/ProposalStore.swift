@@ -76,6 +76,17 @@ final class ProposalStore: ObservableObject {
         return proposals[idx]
     }
 
+    /// Reject a proposal the proposal pass found sitting unbuilt too long,
+    /// marked so it may be proposed again (a person's Reject is not).
+    @discardableResult
+    func retireStale(id: UUID) -> UpgradeProposal? {
+        guard transition(id: id, to: .rejected) != nil,
+              let idx = proposals.firstIndex(where: { $0.id == id }) else { return nil }
+        proposals[idx].retiredStale = true
+        scheduleSave()
+        return proposals[idx]
+    }
+
     func delete(id: UUID) {
         proposals.removeAll { $0.id == id }
         scheduleSave()

@@ -1691,6 +1691,64 @@ enum AppTriggers {
             Task { @MainActor in GruxUpdater.shared.clearAutoLandPause() }
         }
 
+        // fire-foundry-refresh (contents = an absolute path to a Grux source
+        // checkout, or empty for the one this install recorded, else the one
+        // named in ~/.grux/foundry-proposal-source): one Self-Upgrade
+        // proposal pass now, on the user's Claude plan, whether or not the
+        // nightly loop is on, since asking for it is the decision. Retires the
+        // stale queue, files fresh proposals, and writes foundry-refresh.json
+        // (running, filed, retired, signals, error, writtenAt) when it starts
+        // and when it ends. A refusal (notACheckout, noCheckout,
+        // alreadyRunning) goes to foundry-refresh-refused.json instead, so it
+        // never overwrites the state of a pass still running. Never a
+        // proposal's text.
+        let fireFoundryRefresh = dir.appendingPathComponent("fire-foundry-refresh")
+        let foundryRefreshOut = dir.appendingPathComponent("foundry-refresh.json")
+        let foundryRefreshRefused = dir.appendingPathComponent("foundry-refresh-refused.json")
+        TriggerWatcher.shared.register(fireFoundryRefresh) {
+            guard FileManager.default.fileExists(atPath: fireFoundryRefresh.path) else { return }
+            let named = ((try? String(contentsOf: fireFoundryRefresh, encoding: .utf8)) ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            try? FileManager.default.removeItem(at: fireFoundryRefresh)
+            WakeLog.shared.log("fire-foundry-refresh: proposal pass requested")
+            func write(_ fields: [String: Any], to url: URL? = nil) {
+                let url = url ?? foundryRefreshOut
+                var json = fields
+                json["writtenAt"] = ISO8601DateFormatter().string(from: Date())
+                if let data = try? JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys]) {
+                    try? data.write(to: url, options: .atomic)
+                }
+            }
+            let root: URL
+            if named.isEmpty {
+                guard let recorded = ProposalSynthesizer.sourceRoot() else {
+                    write(["refused": "noCheckout"], to: foundryRefreshRefused)
+                    return
+                }
+                root = recorded
+            } else if named.hasPrefix("/"), let checkout = FoundryEngine.validatedCheckout(at: named) {
+                root = checkout
+            } else {
+                write(["refused": "notACheckout"], to: foundryRefreshRefused)
+                return
+            }
+            Task { @MainActor in
+                try? FileManager.default.removeItem(at: foundryRefreshRefused)
+                write(["running": true])
+                guard let outcome = await ProposalSynthesizer.refresh(sourceRoot: root) else {
+                    write(["refused": "alreadyRunning"], to: foundryRefreshRefused)
+                    return
+                }
+                var fields: [String: Any] = [
+                    "running": false, "filed": outcome.filed, "retired": outcome.retired,
+                    "signals": outcome.signals, "dropped": outcome.dropped,
+                    "droppedFor": outcome.droppedFor,
+                ]
+                if let error = outcome.error { fields["error"] = error }
+                write(fields)
+            }
+        }
+
         // fire-jax-goalcycle: run one Jax goal-pursuit cycle now (respects the
         // current autonomy mode; SIMULATE by default, so it plans + logs only).
         // Reusable for verification and on-demand "what would you do next".
