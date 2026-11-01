@@ -70,7 +70,7 @@ final class PullRetryTests: XCTestCase {
     /// so the next try starts long before Ollama would give up on its own.
     func test_aStalledDownloadEndsTheTry() async {
         let clock = PullRetry.ProgressClock()
-        clock.note(downloading: true, completed: 100)
+        clock.note(layer: "pulling aaaa", downloading: true, completed: 100)
         let started = Date()
         let outcome = await PullRetry.withWatchdog(limit: 0.3, poll: 0.05, clock: clock) {
             try? await Task.sleep(nanoseconds: 5_000_000_000)
@@ -83,10 +83,10 @@ final class PullRetryTests: XCTestCase {
 
     func test_aDownloadThatKeepsMovingIsLeftAlone() async {
         let clock = PullRetry.ProgressClock()
-        let outcome = await PullRetry.withWatchdog(limit: 0.3, poll: 0.05, clock: clock) {
+        let outcome = await PullRetry.withWatchdog(limit: 1, poll: 0.05, clock: clock) {
             for i in 0..<12 {
-                clock.note(downloading: true, completed: Double(i + 1) * 1_000)
-                try? await Task.sleep(nanoseconds: 60_000_000)
+                clock.note(layer: "pulling aaaa", downloading: true, completed: Double(i + 1) * 1_000)
+                try? await Task.sleep(nanoseconds: 50_000_000)
             }
             return .installed
         }
@@ -94,12 +94,32 @@ final class PullRetryTests: XCTestCase {
     }
 
     func test_verifyingIsNotAStall() {
-        let clock = PullRetry.ProgressClock()
         let long = Date().addingTimeInterval(-600)
-        clock.note(downloading: true, completed: 5, at: long)
+        let clock = PullRetry.ProgressClock(at: long)
+        clock.note(layer: "pulling aaaa", downloading: true, completed: 5, at: long)
         XCTAssertGreaterThan(clock.idle(), 500, "control: a silent download is idle")
-        clock.note(downloading: false, completed: nil)
+        clock.note(layer: "verifying sha256 digest", downloading: false, completed: nil)
         XCTAssertEqual(clock.idle(), 0, "verifying or writing counted as a stall")
+    }
+
+    /// Ollama counts bytes per layer: a smaller layer after a big one is
+    /// progress, not a stall (review round 7, P2).
+    func test_aSmallerLayerAfterABigOneIsProgress() {
+        let start = Date().addingTimeInterval(-100)
+        let clock = PullRetry.ProgressClock(at: start)
+        clock.note(layer: "pulling aaaa", downloading: true, completed: 1_000, at: start)
+        clock.note(layer: "pulling bbbb", downloading: true, completed: 10, at: start.addingTimeInterval(50))
+        clock.note(layer: "pulling bbbb", downloading: true, completed: 20, at: start.addingTimeInterval(99))
+        XCTAssertLessThan(clock.idle(now: start.addingTimeInterval(100)), 2, "a moving second layer read as a stall")
+        clock.note(layer: "pulling aaaa", downloading: true, completed: 1_000, at: start.addingTimeInterval(100))
+        XCTAssertLessThan(clock.idle(now: start.addingTimeInterval(101)), 2, "a retry re-reporting a finished layer")
+    }
+
+    /// The clock starts in the download phase: a hang before the first line
+    /// (connecting, the manifest) is a stall too.
+    func test_aHangBeforeTheFirstLineIsAStall() {
+        let clock = PullRetry.ProgressClock(at: Date().addingTimeInterval(-60))
+        XCTAssertGreaterThan(clock.idle(), 45)
     }
 
     /// Try again shows only under the line a stopped download left.

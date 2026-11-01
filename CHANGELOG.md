@@ -7,6 +7,377 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-11-10
+
+Instant and private by default. A Mac with Ollama gets Grux Local, the model trained
+for Grux, in one click at first run and sized to its memory, and a reply on a local
+model starts in about 2 seconds instead of 15. Grux says when a new version is out,
+and asks nothing about you to find out. Self-Upgrade runs end to end: it reads its own
+source, proposes its next version, builds it, verifies it, and waits for your approval,
+and the ways we found for that chain to claim more than it did are closed. And a
+second stranger's five minutes: what still confused a person on a fresh Mac, in Now,
+Settings, Approvals and the setup cards, is fixed.
+
+### Added
+
+- **Grux Local in one click at first run.** With Ollama running and no model yet, the
+  model step offers the Grux Local made for this Mac's memory, "Use Grux Local 4B,
+  recommended for this Mac (4.3 GB download)": 2B on an 8 GB Mac, 4B on 16 GB, 9B on
+  24 GB and up. One press downloads it from gruxai.com through Ollama and points chat
+  at it; nothing downloads before the press, and the screen says so. Without Ollama the
+  step links to ollama.com, and Skip for now still works.
+- **Grux tells you when a new version is out.** Once a day it asks GitHub's public
+  release page, the same page anyone can open, and if a newer Grux AI exists, Now says
+  so with Download (or the `brew upgrade --cask grux` command on a Homebrew install)
+  and Not now. The request carries nothing about you, Grux never downloads or installs
+  anything by itself, and Settings, General, Check for new versions turns it off; Check
+  now asks once even when it is off.
+- **Self-Upgrade says when it last looked and when it will look next.** Under the
+  on/off line the pane reads, for example, "Last pass: today at 3:48 AM. Next: tomorrow
+  at 2:00 AM, or sooner when your Mac is idle on power.", so a quiet schedule no longer
+  looks like a broken one.
+- **Compact tool signatures for a Grux Local v3 model.** When the local model is a
+  Grux Local tag ending in `-v3`, each tool it was trained on goes out as a one-line
+  signature instead of its full description, so a chat turn carries far fewer tokens.
+  Every other model, and every tool a v3 was not trained on, gets the full description
+  as before, and a test fails the build if a trained tool's shape changes.
+
+### Changed
+
+- **Grux recommends Grux Local, its own local model.** The Local Models list carries
+  Grux Local 2B, 4B and 9B, trained on Grux's own jobs and to ignore instructions hidden
+  in pasted text, and leads with the one made for this Mac's memory; it scores above
+  every other local model on those jobs. Under memory pressure it steps down a size,
+  then falls back to the measured score order. Pull downloads it from gruxai.com with
+  no Ollama account.
+- **The first local reply after a pause starts sooner.** Grux warms the part of the
+  prompt that never changes when it opens and when you come back to it, so the first
+  reply after a quiet stretch no longer waits for a full read of it. The warm-up skips
+  a model that is not installed and a chat routed to a cloud provider, and only memory
+  pressure stops it.
+- **A model download that stalls tries again,** up to five times, and resumes where it
+  stopped. A server answer that says the request itself is wrong ends the download
+  instead of retrying it, and Try again revives a server that went away.
+- **Self-Upgrade builds one upgrade at a time, and never on a nearly full disk.** A
+  second build waits while one is running (a larger upgrade's build used to let the
+  next one start beside it), and none starts with under 4 GB free; each other card
+  reads "Waiting to build" and says why, in place of a Build it that did nothing.
+- **Self-Upgrade builds on Claude Sonnet 5.5.** It was Sonnet 4.6, and its usage line
+  now prices Sonnet 5.5 and Opus 5.5 at their own rates.
+- **Self-Upgrade grades an upgrade's tests against your Mac's own numbers.** The pane
+  says what an upgrade's full test run must meet and where that bar came from, and
+  Measure on this Mac sets it from a full run on your unmodified source, so an upgrade
+  is no longer refused (or let through) by a default that was never measured on your
+  Mac.
+- **Turning on self-upgrade no longer schedules a nightly pass you did not choose.** It
+  runs when you ask ("Grux, upgrade yourself"), and by itself only on the schedule you
+  pick in Self-Upgrade (nightly, Sundays, or when your Mac is idle on power), every one
+  off until you turn it on. The pane says which.
+- **A model Grux downloads for you is timed on your Mac before it becomes the
+  default.** After first run or Settings, Connect a model downloads a model bigger than
+  Qwen 3.5 4B, Grux times one dictation repair (3 seconds allowed) and one chat reply
+  (8 seconds allowed) on your own Mac. If either is too slow, Grux keeps Qwen 3.5 4B as
+  the default and the Local Models pane says which check missed and by how much.
+- **Grux recommends the local model that does Grux's jobs best on your Mac, measured,
+  not the biggest one that fits.** The Local Models list ranks by a measured score on
+  Grux's own jobs (chat, titles, triage, summaries, dictation repair) and by measured
+  memory use, so among the stock models an 8 GB Mac gets Qwen 3.5 2B as a Great fit, a
+  16 GB Mac Qwen 3.5 4B, a 32 GB Mac Gemma 4 12B and a 64 GB or larger Mac Gemma 4 26B.
+- **Grux recommends only local models your Ollama can run.** Most local models now need
+  Ollama 0.30 or newer, and Grux used to offer one your Ollama was too old for, so Pull
+  failed. Grux now reads your Ollama's version, recommends the best model it runs, and
+  lists the rest under "Needs a newer Ollama" with the version each needs and how to
+  update.
+- **Quitting Grux from Terminal is an ordinary quit.** `killall Grux` (or anything that
+  sends it SIGTERM) used to end Grux mid-save, so edits from the last second or two
+  could be lost, and with self-upgrade on, two such quits close together read as
+  crashes and put the previous build back. Grux now saves and quits the way Quit does.
+
+### Fixed: chat on a local model
+
+- **A local model answers in about 2 seconds instead of 15.** Every chat turn on a
+  local model used to read the whole 5,000 to 6,000 token prompt again, because Grux
+  sent its tools in a different order each time. Grux now sends what stays the same in
+  the same order and the same bytes, so the model picks up where it left off; measured
+  on a 16 GB Mac with Qwen 3.5 4B, the first word came 2.3 to 2.9 seconds after
+  sending, down from 14 to 20.
+- **Local models that think answer every job again, and faster.** Grux now tells an
+  Ollama model with a thinking mode (qwen3, qwen3.5, qwen3-vl) not to think, so chat
+  replies, thread titles, notification triage and meeting summaries come back with an
+  answer instead of empty. This applies to an Ollama on this Mac or on your local
+  network (localhost, a `.local` name, or a 10.x, 172.16 to 31.x or 192.168.x address);
+  one reached over Tailscale or a public address is not recognized as Ollama and still
+  gets the old request.
+- **A question never opens YouTube or Chrome.** A small local model could answer "what
+  is two plus two" by opening YouTube. Grux now offers the tools that open a page, an
+  app, a video or a Google search in Chrome only when you ask to open, watch, play or
+  look something up, or name a web address.
+- **Grux no longer freezes while macOS asks whether it may control another app.** The
+  first time Grux opens a page in Chrome or plays from Music, macOS asks whether to
+  allow it, and Grux used to stop answering until someone did (up to 2 minutes). It now
+  keeps working, and if the app has not answered within 20 seconds the reply says so;
+  the request goes through once you allow it.
+- **When Grux needs your OK, it says so.** A local model could answer "Got it. You're
+  good to go." while what you asked for sat waiting in Approvals; now Grux adds, after
+  the reply, "Not done yet:" and what is waiting for your OK.
+- **Grux never says it started something it did not.** A local model could answer
+  "Grux, upgrade yourself" with "The cycle's started; I'm waiting for your OK" when
+  nothing had run or been queued; Grux now says it has not done that and offers to.
+- **Grux answers when you ask whether something happened.** A local model's answer
+  about your inbox, calendar or an earlier request ("Maria's sent you two emails",
+  "it's queued for your approval") could be replaced with "I have not done that. Want
+  me to?"; Grux now keeps the answer, and when it cannot be sure it adds one plain line
+  saying it did not start, send or queue anything just now.
+- **Grux says what really waits for your OK.** When a local model answered "Did the
+  Foundry build start?" with "it's still waiting for your OK in the Approvals tray" and
+  nothing like that was there, the answer stood; Grux now adds what Approvals holds
+  right now, and that it did not start anything just now.
+- **"Grux, upgrade yourself" works on the first ask.** A local model could answer it
+  with only an offer; the exact ask now starts a self-upgrade cycle (or puts it in
+  Approvals for your OK), and says plainly when self-upgrade is off.
+- **Settings says what offline mode really does.** With offline mode on and no local
+  model running, chat waits for one instead of using the cloud, and the switch stays on
+  after a relaunch. The two lines under Offline mode used to say the opposite of both.
+- **The offline mode caption matches where chat goes.** With offline mode on and a
+  cloud provider picked under Models, Settings no longer says chat will not send; it
+  says chat uses that provider.
+- **Design Studio starts on a route your Mac can run.** With no Anthropic key and a
+  local model running, it used to open on "API key", whose run could only fail; it now
+  starts on Local model (a key still starts on the API), and the cost line names every
+  other route, including the API.
+- **Design Studio's cost line reads one way.** It said "$0.0418 estimated, API key |
+  subscription, $0 metered (" and stopped; it now names the route you picked, lists the
+  other routes after "Other routes:", and wraps instead of being cut off.
+- **Research runs on a local model.** With a web search key and a local model, Research
+  said it needed 2 more things, one of them an Anthropic key it never uses; it now asks
+  for the web search key and either the key or a local model, as Chat does.
+- **Grux no longer says it needs an Anthropic key to think.** The key's line in
+  Settings and in `grux why` now says the key is for Claude, and that chat also runs on
+  a local model with no key.
+- **`grux next` and `grux doctor` name a missing model.** With Chat, Research or Design
+  Studio on and neither an Anthropic key nor a local model, `grux next` said there was
+  nothing to do and `grux doctor` said everything was in order; both now say to set up
+  one of the two, and when one key would also unblock another feature, they name that
+  key for both.
+
+### Fixed: Self-Upgrade
+
+- **A self-upgrade can install.** Approving an upgrade Grux built and verified used to
+  fail every time, because Grux looked for its build script in the wrong folder.
+- **Build it works on a Mac that built Grux from source.** Every proposal said Grux
+  could not build it here, because Grux looked for its source one folder too deep.
+- **"Grux, upgrade yourself" now finds upgrades.** A self-upgrade pass used to look over
+  how Grux was doing and then file nothing, so the Self-Upgrade pane stayed empty. Each
+  pass now files what it found as proposals you can read, build or turn down, at most
+  five at a time, and never files the same one twice. With self-upgrade off, Grux says
+  so instead of claiming it started.
+- **A self-upgrade only installs what its reviewer read.** An edit left uncommitted, a
+  file never added, a change hidden as binary, a branch moved onto an older commit, or
+  a diff too long to read in one pass is now refused with that reason, and what an
+  upgrade changed is read from the files themselves, so no git setting hides a file
+  from the safety check.
+- **Self-upgrade never installs a change to Grux's own safety checks by itself.** What
+  an upgrade actually changed is now checked, not only what it set out to change, and
+  the shell's safety checks (the command gate, the trust limit, the headless guard)
+  count as protected. Such a build is not offered for install; Grux says which files it
+  touched and leaves the change on its branch for you to review.
+- **Self-upgrade no longer passes an upgrade whose test run ran zero tests.** On a Mac
+  where `swift test` finds no tests and exits cleanly, the check used to read that as a
+  green suite. It now fails with "ran zero tests" and says how to fix it: name the
+  command that runs your suite in `config.json` (`foundrySuiteCommand`).
+- **Self-upgrade refuses an upgrade whose test run crashed, or that failed a
+  swift-testing test.** A test process killed partway, or a swift-testing failure, used
+  to be able to hide behind the known XCTest failures the baseline allows.
+- **A medium self-upgrade can finish on a Mac with a slow test suite.** Its builder runs
+  only the tests for what it touched, leaves the full run to Grux's own check, and gets
+  an hour instead of being cut off at 30 minutes.
+- **Self-Upgrade proposes fixes for problems you hit, not for its own test runs.**
+  Running Grux's test suite no longer writes into your audit logs.
+- **Self-Upgrade no longer files its own failed builds as problems to fix.** A build
+  that could not finish (an expired Claude sign-in, a red test run) used to come back as
+  a new proposal, which failed the same way.
+- **Self-Upgrade never offers to build a fix for an expired sign-in.** An agent job that
+  failed only because Claude's sign-in had expired became a Self-Upgrade proposal to
+  spend money on code; signing in fixes it, and Now already says so.
+- **Self-Upgrade never proposes building something because nothing happened.** A quiet
+  filesystem log (nobody used the filesystem tools that week) became a Self-Upgrade
+  proposal; it no longer does.
+- **A self-upgrade that fails no longer writes into your chat.** A failed build posted
+  "UNPROCESSED FAILED SWARM - HANDLE THIS FIRST" into the open chat as if you had typed
+  it, and Grux asked you to choose retry or abandon for a build Self-Upgrade had already
+  closed; its builds now report on the Self-Upgrade pane only.
+- **A self-upgrade that could not start says why.** When Claude's sign-in on your Mac
+  has expired, the build's reason now says to sign in again and build it again, and
+  chat is told the same, instead of "ended failed; nothing to verify".
+- **A self-upgrade build or agent job no longer sits on "building" after its worker
+  finished.** Grux could miss the moment the Claude CLI exited and wait forever; it now
+  always notices.
+- **Self-Upgrade cards redraw when a build leaves the rail.** A card kept "Waiting to
+  build" after a failed build because nothing redrew; a held Build it now says why, and
+  stored approval wording is rewritten in place.
+- **Self-Upgrade's "Next" time is one Grux will keep.** If self-upgrade was turned on
+  after Grux opened, it says the schedule starts once Grux relaunches; while a pass runs
+  it says the next comes after it; and while a Claude session limit holds passes it
+  says until when.
+- **A paused self-upgrade says why and has a Resume button.** After Grux crashed twice at
+  launch, self-upgrade paused itself with only a file to clear it; the Self-Upgrade pane
+  now says when it paused, what happened and whether it went back to the last build
+  that worked, with Resume self-upgrade beside it.
+- **A rollback never takes a headless Mac's screen.** When Grux restores the previous
+  build after a bad upgrade, it reopens hidden and in the background on a Mac set to
+  headless, and it now really starts the restored build.
+- **Self-Upgrade's cost reads as usage, not a price:** "About $8 worth of usage, counted
+  against your subscription".
+
+### Fixed: everything else a stranger hit
+
+- **A link to a Settings pane opens that pane.** Opening Settings at a named pane
+  (Models, Presets, a setup card's field) when no other pane was open landed on
+  General, and a fresh link was dropped as a stale handback.
+- **Every pointer to Settings names a place you can find.** Help and error lines sent
+  people to "Settings, Offline mode", "Settings, Upgrades" and other places Settings
+  does not have; each now names its pane, the Integrations page or macOS System
+  Settings, and the README says to turn on Offline mode in Settings, Models to use a
+  local model.
+- **A setup card says when Claude needs signing in again.** Jax Command (and any
+  feature that hands work to an agent) said "Everything else is ready" while Claude's
+  sign-in had expired and no agent could run; the card now lists "Claude sign-in
+  expired" with a Sign in button, and the row stays in Now until a run works or you
+  sign in.
+- **A feature you did not pick at setup says what it needs when you open it.** Opening
+  Meetings (or any feature left out at first run) from Recent or search showed it ready
+  to use, with Start enabled and the microphone refused; it now shows the same setup
+  card a chosen feature shows, naming each missing permission with a way to allow it.
+- **Setup cards say why, and say it once.** Focus log's card listed the Anthropic key
+  with Chat's line; it now says Focus log checks your screen with Claude and that no
+  local model can. The line under a headline no longer repeats the count four ways;
+  the headline carries it and the line reads "Everything else is ready." or "Nothing
+  else is needed." "Run setup again" is now "Restart onboarding" and asks right on the
+  card.
+- **A failed agent job is told in chat in plain words.** A job you started that could
+  not run used to appear as a message from you ("UNPROCESSED FAILED SWARM ...") and come
+  back as "the solo worker's OAuth session expired"; Grux now says itself that Claude's
+  sign-in has expired and to sign in again, or that the job stopped and Agents shows
+  why.
+- **An agent worker never waits forever for a child that exited.**
+- **Approvals asks once, and says why.** Asking for the same thing twice no longer
+  leaves two cards waiting, and a held action says "This waits for your OK before it
+  runs." instead of "Not clearly routine and reversible."
+- **Approvals and every popup read in Light.** With Grux set to Light (or Auto on a
+  light Mac), the Approvals tray, Optimize Grux, the chat threads list and every sheet
+  showed near-white titles on a near-white background. They now sit on Grux's own dark
+  surface in every appearance.
+- **Deleting asks first, everywhere.** A trash icon deleted a calendar event, a note, a
+  schedule or a webhook on one click, and Chat's trash icon wiped the whole
+  conversation; each one, and deleting a conversation, roadmap item, agent job, voice,
+  MCP server, custom endpoint, skill, comparison, ambient memory or mail account, now
+  asks first and names what goes, in the window you clicked in (Settings included).
+- **Grux asks before it puts anything on your calendar.** A time Grux heard while
+  listening ("I'll call the dentist in 2 hours") used to go straight onto your
+  calendar, overheard fragments included. It now waits in Approvals as "Add ... to
+  your calendar, <time>?" and goes on only when you say yes.
+- **Calendar offers delete only where it can delete.** An event from a read-only
+  calendar (US Holidays, a subscribed calendar) showed a delete button that could only
+  fail; it no longer does.
+- **The Reactor's Calendar card says Today, not "11h ago".** On a holiday or any day
+  with an all-day event, the card counted from the event's midnight start and read like
+  it was over; it now reads Today (Now for a meeting underway, Tomorrow, the weekday
+  within six days or the date for one coming up), and a meeting still ahead today is
+  shown before the all-day event.
+- **The Reactor no longer says "Inbox zero" when no mailbox is set up.** Its Mailbox
+  card says "Not set up" until you add one, and its Meta Ads card says "Not set up"
+  instead of "$0.00" when no ad account is connected.
+- **Meta Ads no longer offers KILL when nothing is connected.** It showed a live KILL
+  button beside "Not connected"; it appears once Grux has reached an ad engine.
+- **`grux doctor` names what is still missing.** It said "Everything this command can
+  check is in order." while `grux next` said Mail server was blocking Mailbox; doctor
+  now says the same thing next does, and each command's step bar only moves forward.
+- **Jax Command shows only plans grounded in what Grux sees.** A local model could fill
+  a Goal Pursuit card with a command and ids it made up and say approvals were "stuck";
+  a plan must now advance one of the real signals word for word and name nothing they
+  do not, or Grux shows its own plain next step instead. A plan that strays into
+  Approvals keeps its own goal, and what waits in Approvals is left to you: Jax never
+  plans to pay an agent to answer your approvals.
+- **A yes in Approvals starts Jax's plan, and the card says what it may spend.** A
+  goal-pursuit plan queued for your approval was marked Approved and nothing ran;
+  saying yes now starts the Claude Code session it planned, and the card reads "Run a
+  Claude Code session: <plan>. It may spend up to $5.00."
+- **Jax Command stops repeating itself.** A stretch of idle cycles is one card that
+  counts them, a cycle with no plan carries no badge, and a planned one says in words
+  whether it was only simulated or sent to Approvals.
+- **Agents shows money like money.** The Agents pane read "$0.0000 of $5.00"; every
+  amount there now reads "$0.00", "under $0.01" or "$1.23", the same as Settings,
+  Usage; a job that went over its budget reads "$5.00, over the $5.00 budget"; and
+  asked what a job spent, Grux quotes it the way the Agents pane does.
+- **Settings, Usage and the menu bar say when the last decision was.** They showed a
+  last decision from days ago beside "Decisions today: None yet"; both now name that
+  day, and the year when it differs, and show what was decided.
+- **Grux no longer says a Decisions key makes it faster.** Setup, Tuning and the setup
+  list said a TypeSafe key makes decisions faster; measured, deciding on your Mac is
+  faster. They now say what the key adds, judging what you meant when your words do
+  not match a phrase exactly, and Integrations quotes today's measured typical speed
+  instead of "about half a second".
+- **Settings fields name what they hold.** In Settings, Models (custom endpoints, MCP
+  servers), Voice (ElevenLabs) and Security (the Always allow and Always deny hosts),
+  fields were labelled with an example; each now names the setting, with the example
+  as a hint inside the field, and the MCP Env field shows its format by example
+  ("KEY=value, OTHER=value") instead of asking for newlines a one-line field cannot
+  take.
+- **A key's row in Settings says what it unlocks.** Settings, Data & Capabilities read
+  "Add your Anthropic API key in Settings to use Claude." right above the field; each
+  row now says only what the key is for, and Credentials says how many keys are set
+  instead of saying they are all empty on a Mac that has one.
+- **Integrations says what really leaves your Mac.** It said "Nothing is sent to a
+  server" above Slack, Notion and webhooks; it now says your tokens stay in the
+  Keychain and Grux talks to each service you connect straight from your Mac, with no
+  Grux server in between.
+- **The contrast line under the accent slider tells the truth.** Settings, Appearance
+  said "Passes WCAG AA" while the small chip labels sat at 4.2:1, under the 4.5:1 AA
+  asks of text that size; it now names the pair and its bar, says those labels are
+  below AA with an amber mark, and calls an accent a pass only when every pair meets
+  AA.
+- **Settings, Voice says why it lists no microphone,** and offers a built-in
+  microphone only on a Mac that has one. It said "No input devices detected. Connect a
+  microphone" on a Mac that has one, because Grux reads no microphone until macOS lets
+  it use one; it now says that, or that access is off in System Settings, or that none
+  is connected, whichever is true. "Revert to MacBook built-in mic" is "Use this Mac's
+  built-in mic", and only where there is one.
+- **Settings, Voice no longer says the same thing twice,** and no longer says the
+  microphone is open before you agreed: with listening chosen but not yet allowed, it
+  says the microphone stays closed until you agree and offers Allow listening, the same
+  as Home.
+- **Today never says Watching while it is not.** Without screen recording, while
+  paused, or while Focus is off, Today names the task and the reason instead of
+  "Focusing on", the Focus log says "Needs screen access" with Grant and that nothing
+  is sampled until macOS allows it, and the nudge sentence reads plainly: "After 2
+  checks in a row that read off task, Grux nudges you." Outside your active hours, or
+  with no key for the check, the Focus log and the rail said "Watching" above "Nothing
+  is sampled right now"; they now say "Not sampling now".
+- **Every action button reads whole.** In Settings, Presets the buttons read
+  "APPLY...", "DUPLI..." and "DELE..." at the default window, so Delete was a guess; on
+  a narrow pane the Local Models Pull and Use buttons and a Self-Upgrade card's handoff
+  button were cut the same way. Buttons now sit beside their title only when every one
+  fits, and otherwise under it, and the Now list's instructions wrap the same way
+  instead of reading "Agents cannot run until you si...".
+- **A macro or workflow step that starts something in the background now finishes.** A
+  shell step like `start-server &` used to hold the step until the background job
+  ended, and a step with a lot of output stalled until its 30 second limit. Both now
+  finish when the command does.
+- **Grux never scripts or opens another app in headless mode, and asking for a video in
+  silent mode is refused like music.** A small local model could answer a question by
+  opening YouTube in Chrome and bringing it to the front; on a Mac set to headless that
+  can no longer happen through a chat tool, a shell command (`grux shell` says so and
+  exits 2), a workflow step or an agent, and on a Mac set to silent a video is refused.
+- **A Mac running Grux headless never gets a Keychain dialog.** With `~/.grux/HEADLESS`
+  present, a key Grux could only read through a macOS dialog now reads as not set,
+  instead of a dialog sitting on a screen nobody is watching.
+- **A copied Approvals line is cut whole,** full stops and all, and replaced wherever it
+  sits.
+- **The README says what still needs Claude.** It promised you could run "the whole
+  thing" on a local model; it now says Chat and Design Studio run locally, Focus log and
+  Compare need an Anthropic API key, and Agents and Self-Upgrade use the Claude Code CLI
+  with your own sign-in.
+
 ## [3.1.0] - 2026-10-17
 
 The first five minutes. A stranger installed 3.0, used it for five minutes and
@@ -986,7 +1357,8 @@ listed because each was a promise the app made and did not keep.
   deliberately unwired. It is declared as unused rather than removed, because it
   is a half-built feature and not a false claim.
 
-[Unreleased]: https://github.com/dotcomjack/grux/compare/v3.1.0...HEAD
+[Unreleased]: https://github.com/dotcomjack/grux/compare/v3.2.0...HEAD
+[3.2.0]: https://github.com/dotcomjack/grux/compare/v3.1.0...v3.2.0
 [3.1.0]: https://github.com/dotcomjack/grux/compare/v3.0.0...v3.1.0
 [3.0.0]: https://github.com/dotcomjack/grux/compare/v1.2.1...v3.0.0
 [1.2.1]: https://github.com/dotcomjack/grux/compare/v1.2.0...v1.2.1

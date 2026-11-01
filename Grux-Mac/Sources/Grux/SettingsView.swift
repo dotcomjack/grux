@@ -1179,12 +1179,23 @@ if showGeneral(9) && sectionVisible("general.permissions") {
                                     TextField("", text: Binding(
                                         get: { state.config.localLLMModel },
                                         set: { v in state.config.localLLMModel = v; state.saveConfig() }
-                                    ), prompt: Text(GruxConfig.defaultLocalModel))
+                                    ), prompt: Text(GruxConfig.backgroundLocalModel(local: "",
+                                                                                    offline: state.config.offlineLLMModel,
+                                                                                    endpoint: state.config.localLLMEndpoint)))
                                     .textFieldStyle(.roundedBorder)
                                     Button("Ping") {
                                         Task { @MainActor in await pingLocalLLM() }
                                     }
                                 }
+                            }
+                            // The stored default follows chat's Grux Local
+                            // (backgroundLocalModel), so the field's text is not
+                            // what runs; say what does.
+                            if let inUse = GruxConfig.backgroundFieldNote(local: state.config.localLLMModel,
+                                                                          offline: state.config.offlineLLMModel,
+                                                                          endpoint: state.config.localLLMEndpoint,
+                                                                          ambientOn: state.config.useLocalQwenForAmbient) {
+                                Text(inUse).font(.caption).foregroundStyle(.secondary)
                             }
                             if let status = localLLMStatus {
                                 Text(status).font(.caption).foregroundStyle(.secondary)
@@ -2403,7 +2414,9 @@ if showGeneral(9) && sectionVisible("general.permissions") {
     private func pingLocalLLM() async {
         localLLMStatus = "pinging…"
         let endpoint = state.config.localLLMEndpoint
-        let modelName = state.config.localLLMModel.isEmpty ? GruxConfig.defaultLocalModel : state.config.localLLMModel
+        let modelName = GruxConfig.backgroundLocalModel(local: state.config.localLLMModel,
+                                                        offline: state.config.offlineLLMModel,
+                                                        endpoint: endpoint)
         let started = Date()
         do {
             let client = LocalLLMClient(timeoutSeconds: 30)

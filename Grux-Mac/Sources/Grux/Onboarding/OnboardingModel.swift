@@ -285,7 +285,11 @@ final class OnboardingModel: ObservableObject {
     }
 
     @Published private(set) var stage: Stage = .done {
-        didSet { if stage != oldValue { setupFirstNotice = nil } }
+        didSet {
+            if stage != oldValue { setupFirstNotice = nil }
+            // An asked press belongs to the model step; leaving it drops the ask.
+            if stage != .modelKey { localPressPending = false }
+        }
     }
 
     /// One line at the top of the flow after something outside it (the menu
@@ -526,6 +530,28 @@ final class OnboardingModel: ObservableObject {
 
     func completeIdentity() { advance(from: .identity) }
 
+    /// The Grux Local button's press, asked from outside the window
+    /// (`fire-first-run-local`), so the one-click first run can be proved on a
+    /// Mac nobody can click on. ModelKeyStep takes it and runs its own press.
+    @Published private(set) var localPressPending = false
+
+    /// Brings a showing flow to the model step and asks that step to press
+    /// its Grux Local button. False when no flow is showing.
+    @discardableResult
+    func requestLocalPress() -> Bool {
+        guard isPresenting else { return false }
+        if stage != .modelKey { stage = .modelKey; persist() }
+        localPressPending = true
+        return true
+    }
+
+    /// True once per request, for the step that runs the press.
+    func takeLocalPress() -> Bool {
+        guard localPressPending else { return false }
+        localPressPending = false
+        return true
+    }
+
     /// Record that the user was offered something and passed on it.
     ///
     /// Takes the capability's own id, so the re-offer surface and the registry
@@ -570,6 +596,7 @@ final class OnboardingModel: ObservableObject {
     /// `fire-first-run-finish` trigger): the first-run answer is the person's
     /// to send, so a script ends the flow without speaking for them.
     func finish(skippedFirstLook: Bool, sendFirstExchange: Bool = true) {
+        localPressPending = false
         stage = .done
         self.skippedFirstLook = skippedFirstLook
         persist()
@@ -619,6 +646,7 @@ final class OnboardingModel: ObservableObject {
     /// into a run they explicitly started would be answering a question they did
     /// not ask.
     func reset() {
+        localPressPending = false
         apply(State.initial)
         keyError = nil
         persist()

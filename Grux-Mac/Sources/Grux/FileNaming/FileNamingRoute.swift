@@ -202,10 +202,11 @@ enum FileNamingRoute {
         }
     }
 
-    /// The installed Grux Local for this Mac, else any installed Grux Local,
-    /// else the chat model already configured. Using the chat model rather
-    /// than pulling a second one keeps one model in memory, which is what
-    /// fits beside chat on a 16 GB Mac.
+    /// Chat's own Grux Local when the server holds it, else the installed
+    /// Grux Local for this Mac, else any installed Grux Local, else the chat
+    /// model already configured. Using the chat model rather than pulling or
+    /// loading a second one keeps one model in memory, which is what fits
+    /// beside chat on a 16 GB Mac.
     ///
     /// Both names count. Ollama lists a model pulled from the registry as
     /// `gruxai.com/grux/grux-local:4b` and one built or copied locally as
@@ -220,6 +221,11 @@ enum FileNamingRoute {
     /// chat model is used only when the server actually holds it.
     nonisolated static func pickModel(memoryGB: Double, installed: [String], fallback: String) -> String? {
         let onThisMac = installed.filter { !isCloudTag($0) }
+        // release/3.2, one local model: when chat already runs an installed
+        // Grux Local, naming uses that one rather than loading another size
+        // beside it (measured 2026-10-31 on a 48 GB MacBook: two models
+        // resident, one grown to 13 GB, swap full).
+        if isGruxLocal(fallback), let chat = onThisMac.first(where: { sameTag($0, fallback) }) { return chat }
         let ideal = idealGruxLocalTag(memoryGB: memoryGB)
         if let hit = onThisMac.first(where: { sameTag($0, ideal) }) { return hit }
         if let any = onThisMac.first(where: { isGruxLocal($0) }) { return any }

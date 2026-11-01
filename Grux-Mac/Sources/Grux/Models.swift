@@ -621,11 +621,33 @@ struct GruxConfig: Codable {
     /// final answer. This value is one tag for every Mac, so an 8 GB laptop and a
     /// 128 GB workstation were handed the identical 3B while the Cookbook sat
     /// beside them scoring the whole catalog against real hardware and deciding
-    /// nothing. `Cookbook.defaultModelID(for:userHasChosen:current:)` upgrades it
-    /// once, on the first successful local discovery, and ONLY on a config still
+    /// nothing. `Cookbook.installedDefault(for:installed:userHasChosen:current:)`
+    /// upgrades it once, on the first successful local discovery, and ONLY on a config still
     /// carrying this exact string. Anything else is somebody's decision and is
     /// left alone, which is the same line `migratingLocalModel` below draws.
     static let defaultLocalModel = "llama3.2:3b"
+
+    /// The model the background local path (AmbientLLM, the Settings ping)
+    /// asks for at `endpoint`. A field nobody set (empty or the shipped
+    /// default) follows chat's model when that is a Grux Local and the
+    /// endpoint is on this Mac, so a Mac runs one local model, not two
+    /// (measured 2026-10-31: a 48 GB MacBook held Grux Local and llama3.2:3b
+    /// resident at once and filled swap). A proxy on another machine has its
+    /// own server, which may not hold chat's model. A typed choice stands.
+    static func backgroundLocalModel(local: String, offline: String, endpoint: String) -> String {
+        let unset = local.isEmpty || local == defaultLocalModel
+        if unset, FileNamingRoute.isGruxLocal(offline), LocalTurn.isLoopback(baseURL: endpoint) { return offline }
+        return local.isEmpty ? defaultLocalModel : local
+    }
+
+    /// The line under the background Model field when what it holds is not
+    /// what runs, else nil. The field shows the stored text as typed. Nil
+    /// while the local ambient switch is off: then nothing runs there.
+    static func backgroundFieldNote(local: String, offline: String, endpoint: String, ambientOn: Bool) -> String? {
+        let inUse = backgroundLocalModel(local: local, offline: offline, endpoint: endpoint)
+        guard ambientOn, !local.isEmpty, inUse != local else { return nil }
+        return "In use: \(inUse), chat's model, so one local model stays loaded."
+    }
 
     /// Which installed model the local route should adopt, or nil to keep what
     /// is configured.

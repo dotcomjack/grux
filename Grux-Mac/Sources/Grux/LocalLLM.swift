@@ -263,7 +263,8 @@ enum AmbientLLM {
         if cfg.useLocalQwenForAmbient && !cfg.localLLMEndpoint.isEmpty {
             do {
                 let local = LocalLLMClient()
-                let modelName = cfg.localLLMModel.isEmpty ? GruxConfig.defaultLocalModel : cfg.localLLMModel
+                let modelName = GruxConfig.backgroundLocalModel(local: cfg.localLLMModel, offline: cfg.offlineLLMModel,
+                                                                endpoint: cfg.localLLMEndpoint)
                 let reply = try await local.complete(
                     endpoint: cfg.localLLMEndpoint,
                     model: modelName,

@@ -283,6 +283,7 @@ All under `~/.grux/`:
 | `fire-mic-status` | Write `mic-status.json` with no side effects |
 | `fire-ambient-enable` / `fire-wake-enable` | Turn a listening feature on, which presents its consent dialog, then write `mic-status.json` |
 | `fire-optimize` (contents = the request) | Write an Optimize Grux work order to `~/.grux/work-orders/<id>/`, ack in `optimize-ack.json`. Never touches the clipboard |
+| `fire-first-run-local` | Press the first run's Grux Local button (the same press a click makes, `OnboardingModel.requestLocalPress`), bringing a showing flow to the model step first. `wake.log` says `fire-first-run-local: asked for a press` (or `no first run is showing`), then `pressed on the model step` when the step runs it, or `press dropped` when the step is busy or gone. Leaving the step, finishing or resetting the flow drops an unanswered ask |
 | `fire-first-run-reset` | Put the first-run flow back at its first screen and clear the feature selection. Keys, consent and permissions stay |
 | `fire-chat-status` | Write `chat-status.json` about the live Chat transcript, with no side effects |
 | `fire-chat-show-earlier` | Tap the transcript's Show earlier row, then write `chat-status.json` once the view settles |

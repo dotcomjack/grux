@@ -33,14 +33,20 @@ machine, your data.
 
 Star the repository on GitHub, and watch its releases to hear about new versions.
 
-> **New: Grux Local, a model trained for Grux.** No key, no account, and chat that no
-> model provider sees: a local model built for exactly the jobs Grux hands it.
-> On a 16 GB Mac mini the 4B got **454 of 464** held-out Grux tasks right, against 396
-> for the same model before training, and ignored instructions hidden in pasted text
+> **Grux Local, the model trained for Grux, is one click at first run in 3.2.** No key,
+> no account, and chat that no model provider sees: a local model built for exactly the
+> jobs Grux hands it. With Ollama on the Mac, first run offers the Grux Local made for
+> this Mac's memory (2B on 8 GB, 4B on 16 GB, 9B on 24 GB and up), and one press
+> downloads it from gruxai.com and points chat at it; nothing downloads before the
+> press. On a 16 GB Mac mini the 4B got **454 of 464** held-out Grux tasks right, against
+> 396 for the same model before training, and ignored instructions hidden in pasted text
 > in 65 of 70 held-out cases, against 55. The 2B, made for 8 GB Macs, went from 295 to
 > **435** of 464 on the same Mac mini. The 9B, made for 24 GB Macs and up, went from 400 to
 > **458** of 464, scored before training on a MacBook Pro and after on the same Mac mini.
-> Needs Apple silicon and Ollama 0.40.8 or later.
+> Needs Apple silicon and Ollama 0.40.8 or later; Grux links you to ollama.com and does
+> not install it.
+>
+> Already running Ollama, or still on Grux 3.1? The manual path is the same as before:
 >
 > ```
 > ollama pull gruxai.com/grux/grux-local:4b
@@ -49,10 +55,10 @@ Star the repository on GitHub, and watch its releases to hear about new versions
 > Then **Settings, Models, Offline mode (local model)**: turn on **Route chat to a local
 > model** and enter `gruxai.com/grux/grux-local:4b` in **Model**
 > (`gruxai.com/grux/grux-local:2b` on an 8 GB Mac, `gruxai.com/grux/grux-local:9b` on a
-> Mac with 24 GB or more). Works in Grux 3.1 today.
+> Mac with 24 GB or more).
 > [How it was trained and measured](#grux-local).
 
-**Status: shipping, currently 3.1.** 37 features ship in 14 surfaces, and a command line drives all of them. 25 are
+**Status: shipping, currently 3.2.** 37 features ship in 14 surfaces, and a command line drives all of them. 25 are
 core and 12 are labs: real, but rough at the edges, and labelled so. Those are
 two different counts on purpose. A feature is a capability the app has; a surface
 is a place to open. 3.0 folded nine things into where they belonged, so the list
@@ -194,7 +200,7 @@ so a web search opens Google in Chrome.
 
 ## Install
 
-**[Download Grux AI 3.1 for Apple silicon](https://github.com/dotcomjack/grux/releases/latest/download/Grux.dmg)** (Grux.dmg, 27 MB, macOS 14 or later)
+**[Download Grux AI 3.2 for Apple silicon](https://github.com/dotcomjack/grux/releases/latest/download/Grux.dmg)** (Grux.dmg, 27 MB, macOS 14 or later)
 
 1. Open `Grux.dmg`.
 2. Drag Grux into Applications.
@@ -440,7 +446,9 @@ skipped and come back to later.
    with, and the next screen shows the pick before asking for anything, so you can
    change it. Would rather choose yourself? "I would rather pick from a list" asks how
    much to set up now instead.
-2. **Your name and a model**, then a short look at how Grux works.
+2. **Your name and a model**, then a short look at how Grux works. With Ollama running
+   and no model yet, the model step offers the Grux Local made for this Mac's memory;
+   one press downloads it and points chat at it, and nothing downloads before the press.
 3. **Setup, one thing at a time:** only what the picked features need. Every macOS
    permission gets its own screen that says what it is for before macOS asks.
 
@@ -570,7 +578,7 @@ catches already happened here:
 
 ```sh
 cd Grux-Mac
-swift test                          # 4038 tests
+swift test                          # 4878 tests
 python3 scripts/check-contract.py   # the setup contract is frozen
 ```
 

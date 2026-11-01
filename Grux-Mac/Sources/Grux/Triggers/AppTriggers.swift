@@ -1529,6 +1529,21 @@ enum AppTriggers {
             }
         }
 
+        // fire-first-run-local: press the Grux Local button on the model step,
+        // the same press a click makes (OnboardingModel.requestLocalPress), so
+        // the one-click first run is provable on a Mac nobody can click on.
+        // Brings a showing flow to that step first. Logs whether a flow was up.
+        let fireFirstRunLocal = dir.appendingPathComponent("fire-first-run-local")
+        TriggerWatcher.shared.register(fireFirstRunLocal) {
+            guard FileManager.default.fileExists(atPath: fireFirstRunLocal.path) else { return }
+            try? FileManager.default.removeItem(at: fireFirstRunLocal)
+            Task { @MainActor in
+                let asked = OnboardingModel.shared.requestLocalPress()
+                // The step logs the press itself when it takes it.
+                WakeLog.shared.log("fire-first-run-local: \(asked ? "asked for a press" : "no first run is showing")")
+            }
+        }
+
         // fire-first-run-finish: end the first-run flow where it stands, the
         // same way "I am already set up" does. An install left on a setup
         // screen shows no tab to any command, and the only way past it was a
@@ -1925,8 +1940,9 @@ enum AppTriggers {
             let sys = "You are Grux summarizing one hour of the user's ambient speech. Produce ONE short sentence (≤40 words). If pure filler, reply quiet. No emoji, no markdown."
             Task { @MainActor in
                 let started = Date()
-                let intent = AppState.shared.config.useLocalQwenForAmbient
-                    ? "local/\(AppState.shared.config.localLLMModel)"
+                let cfg = AppState.shared.config
+                let intent = cfg.useLocalQwenForAmbient
+                    ? "local/\(GruxConfig.backgroundLocalModel(local: cfg.localLLMModel, offline: cfg.offlineLLMModel, endpoint: cfg.localLLMEndpoint))"
                     : "claude"
                 do {
                     let res = try await AmbientLLM.completeTagged(

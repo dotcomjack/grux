@@ -640,4 +640,24 @@ enum Cookbook {
         guard !userHasChosen else { return current }
         return headline(for: profile, ollamaVersion: ollamaVersion)?.id ?? current
     }
+
+    /// The model discovery may write as chat's default, given what the server
+    /// holds: the headline when it is installed, else the best-ranked installed
+    /// Grux Local that fits (as the server names it), else `current`. Never
+    /// touches a model somebody chose, and takes no headroom, for the reason
+    /// above. Measured 2026-10-31 on a 48 GB MacBook: the headline (the 9B) was
+    /// not installed, so chat stayed on the shipped default llama3.2:3b while
+    /// file naming ran the installed Grux Local 4B, and both stayed resident.
+    static func installedDefault(for profile: HardwareProfile, installed: [String],
+                                 userHasChosen: Bool, current: String,
+                                 ollamaVersion: String? = Cookbook.knownOllamaVersion) -> String {
+        guard !userHasChosen else { return current }
+        let fitting = recommended(for: profile, ollamaVersion: ollamaVersion)
+        if let headline = fitting.first,
+           let tag = installed.first(where: { FileNamingRoute.sameTag($0, headline.id) }) { return tag }
+        for model in fitting where FileNamingRoute.isGruxLocal(model.id) {
+            if let tag = installed.first(where: { FileNamingRoute.sameTag($0, model.id) }) { return tag }
+        }
+        return current
+    }
 }

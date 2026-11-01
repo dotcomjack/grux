@@ -489,16 +489,15 @@ final class ModelRegistry: ObservableObject {
             // knows BOTH facts it needs: what the hardware can afford, and what
             // is actually installed.
             //
-            // `tags.contains(picked)` IS LOAD BEARING and it is deliberately
-            // not folded into the pure function. The hardware pick is very
+            // ONLY AN INSTALLED TAG IS EVER WRITTEN. The hardware pick is very
             // often a model the user has never pulled: a 64 GB Mac scores
             // gemma4:26b as the headline whether or not those 18 GB were ever
             // downloaded. Writing an uninstalled tag into `offlineLLMModel`
             // would leave chat pointing at a model the server answers 404 for,
             // so the next turn breaks and the user has no idea why the field
-            // changed. The pure function decides what is BEST; this line is the
-            // only thing that knows what is PRESENT, and it keeps the two
-            // responsibilities in the files that can test them.
+            // changed. `installedDefault` picks from the server's own list (as
+            // the server names it), and `tags.contains(picked)` stays as the
+            // second lock on the same door.
             //
             // `userHasChosenModel` is what stops this running away with the
             // field. Anything other than the shipped default counts as somebody
@@ -507,9 +506,9 @@ final class ModelRegistry: ObservableObject {
             // forever rather than re-deciding on every discovery.
             if !tags.isEmpty {
                 let cfg = AppState.shared.config
-                let picked = Cookbook.defaultModelID(for: HardwareProfile.detect(),
-                                                     userHasChosen: Cookbook.userHasChosenModel(cfg.offlineLLMModel),
-                                                     current: cfg.offlineLLMModel)
+                let picked = Cookbook.installedDefault(for: HardwareProfile.detect(), installed: tags,
+                                                       userHasChosen: Cookbook.userHasChosenModel(cfg.offlineLLMModel),
+                                                       current: cfg.offlineLLMModel)
                 if picked != cfg.offlineLLMModel, tags.contains(picked) {
                     AppState.shared.config.offlineLLMModel = picked
                     AppState.shared.saveConfig()

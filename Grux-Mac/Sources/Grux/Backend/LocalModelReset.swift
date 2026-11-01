@@ -154,7 +154,9 @@ final class LocalModelReset {
             || (preset?.providerOverride == nil && registry.activeProvider == .anthropic
                 && !KeychainStore.exists(.anthropicApiKey))
         guard routedLocal else { return }
-        if registry.local == nil { await registry.discoverLocal() }
+        // Discovery only when no usable local model is known yet (localUsable,
+        // the one helper for that question).
+        if !registry.localUsable { await registry.discoverLocal() }
         let local = ChatService.isLocalTurn(providerOverride: preset?.providerOverride,
                                             resolved: registry.resolvedProvider)
         let base = AppState.shared.config.ollamaBaseURL

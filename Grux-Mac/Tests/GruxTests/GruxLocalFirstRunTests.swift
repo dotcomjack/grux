@@ -32,7 +32,13 @@ final class GruxLocalFirstRunTests: XCTestCase {
             .deletingLastPathComponent().deletingLastPathComponent()
         let src = try String(contentsOf: root.appendingPathComponent("Sources/Grux/Onboarding/OnboardingView.swift"),
                              encoding: .utf8)
-        XCTAssertEqual(src.components(separatedBy: "useLocalModel(fetchRecommended: true)").count - 1, 2)
+        // The button, its Try again, and the same press asked from outside
+        // (fire-first-run-local), on appearing and while the step is up.
+        XCTAssertEqual(src.components(separatedBy: "useLocalModel(fetchRecommended: true)").count - 1, 3)
+        XCTAssertTrue(src.contains("guard model.stage == .modelKey, !probingLocal, !model.validating else {"),
+                      "the asked press runs while the step is busy or gone")
+        XCTAssertTrue(src.contains("guard !probingLocal, !model.validating else { return }\n        localError = nil"),
+                      "a second press runs beside the first")
         XCTAssertTrue(src.contains("installed: recommendedLocal.map { ollama.isInstalled($0.id) } ?? false)) {\n                        useLocalModel(fetchRecommended: true)"),
                       "the Grux Local button does not fetch")
         XCTAssertTrue(src.contains("Button(ModelGate.tryAgain) { useLocalModel(fetchRecommended: true) }"),
@@ -50,5 +56,47 @@ final class GruxLocalFirstRunTests: XCTestCase {
         let ids = Cookbook.catalog.filter { $0.displayName == "Grux Local" }.map(\.id)
         XCTAssertEqual(ids.sorted(), ["gruxai.com/grux/grux-local:2b", "gruxai.com/grux/grux-local:4b",
                                       "gruxai.com/grux/grux-local:9b"])
+    }
+
+    /// fire-first-run-local brings a showing flow to the model step and asks
+    /// for one press; with no flow showing it asks nothing; finishing,
+    /// resetting or leaving the step drops an unanswered ask.
+    func test_anAskedPressReachesTheModelStepOnce() throws {
+        let m = OnboardingModel.shared
+        let url = Persistence.supportDir.appendingPathComponent("onboarding.json")
+        let savedBytes = try? Data(contentsOf: url)
+        let savedStage = m.stage, savedSkipped = m.skippedFirstLook
+        let savedHub = OptimizeHubState.shared.isExpanded, savedTab = AppState.shared.requestedTab
+        defer {
+            if savedStage == .done {
+                if m.stage != .done { m.finish(skippedFirstLook: savedSkipped, sendFirstExchange: false) }
+            } else {
+                m.reset()
+                var hops = 0
+                while m.stage != savedStage, m.stage != .done, hops < 20 { m.advance(from: m.stage); hops += 1 }
+            }
+            if let savedBytes { try? savedBytes.write(to: url, options: .atomic) } else { try? FileManager.default.removeItem(at: url) }
+            OptimizeHubState.shared.isExpanded = savedHub
+            AppState.shared.requestedTab = savedTab
+        }
+        m.reset()
+        XCTAssertTrue(m.requestLocalPress())
+        XCTAssertEqual(m.stage, .modelKey)
+        XCTAssertTrue(m.takeLocalPress())
+        XCTAssertFalse(m.takeLocalPress(), "one request pressed twice")
+
+        XCTAssertTrue(m.requestLocalPress())
+        m.finish(skippedFirstLook: true, sendFirstExchange: false)
+        XCTAssertFalse(m.takeLocalPress(), "an ask outlived the finished flow")
+        XCTAssertFalse(m.requestLocalPress(), "pressed with no first run showing")
+
+        m.reset()
+        XCTAssertTrue(m.requestLocalPress())
+        m.reset()
+        XCTAssertFalse(m.takeLocalPress(), "an ask outlived a reset")
+
+        XCTAssertTrue(m.requestLocalPress())
+        m.completeModelKey()
+        XCTAssertFalse(m.takeLocalPress(), "an ask outlived leaving the step")
     }
 }

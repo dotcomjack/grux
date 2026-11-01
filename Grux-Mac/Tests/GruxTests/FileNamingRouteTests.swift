@@ -241,6 +241,41 @@ final class FileNamingRouteTests: XCTestCase {
         XCTAssertFalse(other.requestLines.contains { $0.hasPrefix("POST ") })
     }
 
+    /// ONE LOCAL MODEL, END TO END (release/3.2). A server holding the
+    /// shipped default and locally built Grux Local sizes (short names): for an
+    /// unchosen chat model, discovery writes the Grux Local this Mac should
+    /// run, as the server names it, and naming then picks that same model
+    /// rather than loading a second one. The old exact-name check wrote
+    /// nothing here, so chat stayed on llama3.2:3b while naming loaded Grux
+    /// Local beside it (measured 2026-10-31, 48 GB MacBook, swap full).
+    func testDiscoveryAdoptsAnInstalledGruxLocalAndNamingUsesIt() async throws {
+        let installed = ["llama3.2:3b", "grux-local:2b", "grux-local:4b", "grux-local:9b"]
+        // The stub's version, so a version another test recorded cannot
+        // change which sizes run.
+        let savedVersion = Cookbook.knownOllamaVersion
+        Cookbook.knownOllamaVersion = "0.22.0"
+        defer { Cookbook.knownOllamaVersion = savedVersion }
+        let expected = Cookbook.installedDefault(for: HardwareProfile.detect(), installed: installed,
+                                                 userHasChosen: false, current: GruxConfig.defaultLocalModel)
+        // Skipped only on a host too small for the 2B, decided by the fit
+        // alone, not the function under test, so a regression there fails
+        // rather than skips.
+        let twoB = try XCTUnwrap(Cookbook.catalog.first { $0.id == "gruxai.com/grux/grux-local:2b" })
+        guard Cookbook.fit(of: twoB, in: HardwareProfile.detect()) != .tooBig else {
+            throw XCTSkip("no Grux Local size fits this host (\(HardwareProfile.detect().modelBudgetGB) GB budget)")
+        }
+        XCTAssertTrue(FileNamingRoute.isGruxLocal(expected), "no installed Grux Local adopted: \(expected)")
+        var routes = Self.ollama
+        routes["/api/tags"] = Self.tags(installed)
+        let server = try stub(routes)
+        AppState.shared.config.ollamaBaseURL = server.baseURL
+        AppState.shared.config.offlineLLMModel = GruxConfig.defaultLocalModel
+        await ModelRegistry.shared.discoverLocal()
+        XCTAssertEqual(AppState.shared.config.offlineLLMModel, expected, "discovery left chat on the shipped default")
+        let resolved = await FileNamingRoute.resolution()
+        XCTAssertEqual(resolved.route?.model, expected, "naming loads a second model beside chat")
+    }
+
     // MARK: - The model
 
     func testTheGruxLocalSizeFollowsMemory() {

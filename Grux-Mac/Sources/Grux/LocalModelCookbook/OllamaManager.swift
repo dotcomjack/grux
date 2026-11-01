@@ -972,7 +972,7 @@ final class OllamaManager: ObservableObject {
                 }
                 // Only the download phase can stall; verifying and writing
                 // a large blob may say nothing for a while and is not idle.
-                clock.note(downloading: status.hasPrefix("pulling ") && obj["total"] != nil,
+                clock.note(layer: status, downloading: status.hasPrefix("pulling "),
                            completed: obj["completed"] as? Double)
                 publish(PullProgress(status: status, fraction: fraction,
                                      completedBytes: completedBytes, totalBytes: totalBytes))
@@ -1023,15 +1023,30 @@ enum PullRetry {
     nonisolated static let stallLimit: TimeInterval = 45
 
     /// When a pull last moved. Written by the stream, read by the watchdog.
+    /// Ollama reports bytes per layer, so the watermark is per layer: a new
+    /// layer (or a new phase) starts it again. Starts in the download phase,
+    /// so a pull that hangs before its first line (connecting, the manifest)
+    /// is covered too.
     final class ProgressClock: @unchecked Sendable {
         private let lock = NSLock()
-        private var lastMove = Date()
+        private var lastMove: Date
         private var lastBytes: Double = -1
-        private var downloading = false
+        private var layer = ""
+        private var downloading = true
 
-        func note(downloading now: Bool, completed: Double?, at date: Date = Date()) {
+        init(at date: Date = Date()) { lastMove = date }
+
+        /// `layer` is the status Ollama sent ("pulling 357e4bd45ff0"), and
+        /// `downloading` whether that phase can stall (verifying and writing
+        /// a large blob may say nothing for a while and are not idle).
+        func note(layer now: String, downloading phase: Bool, completed: Double?, at date: Date = Date()) {
             lock.lock(); defer { lock.unlock() }
-            if now != downloading { downloading = now; lastMove = date }
+            if now != layer || phase != downloading {
+                layer = now
+                downloading = phase
+                lastBytes = -1
+                lastMove = date
+            }
             if let completed, completed > lastBytes { lastBytes = completed; lastMove = date }
         }
 

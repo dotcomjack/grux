@@ -380,6 +380,12 @@ struct ModelKeyStep: View {
             }
         }
         .task { await probeForLocalModel() }
+        // A press asked from outside (fire-first-run-local): taken once, on
+        // arriving at this step or while it is up.
+        .onAppear { takeAskedPress() }
+        .onChange(of: model.localPressPending) { _, pending in
+            if pending { takeAskedPress() }
+        }
         .onboardingPrimary(primaryTitle, stage: .modelKey, enabled: primaryEnabled, run: runPrimary)
     }
 
@@ -418,9 +424,14 @@ struct ModelKeyStep: View {
         await ModelRegistry.shared.discoverLocal()
         guard ModelRegistry.shared.local != nil else { return }
         await OllamaManager.shared.refreshInstalled()
-        guard let usable = GruxConfig.usableLocalModels(OllamaManager.shared.installedTags).first
+        // The model chat is set to when the server holds it: discovery may
+        // just have adopted an installed Grux Local, and "found llama3.2:3b"
+        // beside a chat on Grux Local would name the wrong one.
+        let usable = GruxConfig.usableLocalModels(OllamaManager.shared.installedTags)
+        let chat = AppState.shared.config.offlineLLMModel
+        guard let shown = usable.first(where: { FileNamingRoute.sameTag($0, chat) }) ?? usable.first
         else { return }
-        probe = .found(usable)
+        probe = .found(shown)
     }
 
     /// The third way in: one key for many models, billed by OpenRouter.
@@ -493,6 +504,9 @@ struct ModelKeyStep: View {
                 return
             }
             openRouterKey = ""
+            // Only from this step, as the local button: the flow may have
+            // finished or restarted while the model list answered.
+            guard model.stage == .modelKey else { return }
             model.completeModelKey()
         }
     }
@@ -522,6 +536,19 @@ struct ModelKeyStep: View {
         return configured.isEmpty ? "your local model host" : configured
     }
 
+    /// The press fire-first-run-local asked for, taken (always, so it cannot
+    /// linger) and run as the button runs only while this step is the one
+    /// showing and nothing else is working: the button is disabled then too.
+    private func takeAskedPress() {
+        guard model.takeLocalPress() else { return }
+        guard model.stage == .modelKey, !probingLocal, !model.validating else {
+            WakeLog.shared.log("fire-first-run-local: press dropped, the model step is busy or gone")
+            return
+        }
+        WakeLog.shared.log("fire-first-run-local: pressed on the model step")
+        useLocalModel(fetchRecommended: true)
+    }
+
     /// Probe, and only leave the gate on an answer.
     ///
     /// The order matters. Discovery has to come first, because turning offline
@@ -541,6 +568,8 @@ struct ModelKeyStep: View {
     /// it is not here yet, even beside another model, and points chat at it.
     /// The pinned "use the model on this Mac" passes false.
     private func useLocalModel(fetchRecommended: Bool = false) {
+        // One press at a time, whoever pressed (a click, Try again, the hook).
+        guard !probingLocal, !model.validating else { return }
         localError = nil
         downloadStoppedLine = nil
         probingLocal = true
@@ -693,6 +722,9 @@ struct ModelKeyStep: View {
                 localError = "Found a model at \(localHost), but Grux is still routing chat somewhere else. Open Settings, then Models, and press Use on the local model."
                 return
             }
+            // Only from this step: a download that outlived it (the flow
+            // finished or restarted meanwhile) must not move the flow.
+            guard model.stage == .modelKey else { return }
             model.completeModelKey()
         }
     }
@@ -704,6 +736,7 @@ struct ModelKeyStep: View {
             // Keychain, never the config file on disk. KeychainStore is the
             // only sanctioned home for a secret in this app.
             _ = KeychainStore.set(.anthropicApiKey, pasted)
+            guard model.stage == .modelKey else { return }
             model.completeModelKey()
         }
     }
