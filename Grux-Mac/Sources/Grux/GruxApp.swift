@@ -705,6 +705,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Bounds the local model's memory once it sits idle (LocalModelReset).
         // Sends nothing until Grux has kept a model on this Mac.
         LocalModelReset.shared.startIfNeeded()
+        // And reads the stable prefix now when the local model is not loaded,
+        // so the first turn after launch is not a cold read (warmIfCold).
+        Task { @MainActor in await LocalModelReset.shared.warmIfCold() }
 
         // Live workspace awareness MOVED TO startConsentGatedWork(). It records the same
         // two facts ScreenTimeWatcher is held back for, the frontmost app and its window
@@ -1804,6 +1807,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // return (throttled), probe auth status and auto-resume any limit-paused
     // job if a logged-in account is present.
     func applicationDidBecomeActive(_ notification: Notification) {
+        // The local model may have been unloaded while Grux sat in the
+        // background: read the stable prefix again before the next turn.
+        Task { @MainActor in await LocalModelReset.shared.warmIfCold() }
         let now = Date()
         guard now.timeIntervalSince(lastReauthProbeAt) > 20 else { return }
         lastReauthProbeAt = now

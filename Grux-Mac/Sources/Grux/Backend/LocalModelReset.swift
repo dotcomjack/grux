@@ -116,6 +116,46 @@ final class LocalModelReset {
         }
     }
 
+    // A COLD FIRST TURN, measured 2026-10-31 on the 16 GB Mac mini (release/3.2,
+    // grux-local:2b, a 10 minute pause after launch): /api/ps was empty, so
+    // turn 1 loaded the model and read all 5,233 tokens (6.18 s) and turn 2
+    // read them again for Qwen 3.5's snapshot (5.46 s); from turn 3, about 1 s.
+    // Nothing warmed the prefix until a reset. So at launch and whenever Grux
+    // becomes active, a local route whose model Ollama does not hold gets the
+    // same two background calls (warmLocalPrefix), which a person's turn
+    // cancels (cancelWarmUp) and which wait behind LocalModelGate.
+
+    /// Whether to warm now: a local turn, on this Mac's server, nobody
+    /// thinking, no warm-up already running, and Ollama answered that the
+    /// model is not loaded. Not when Ollama did not answer (`listed` nil).
+    static func shouldWarm(localTurn: Bool, loopback: Bool, listed: Bool?,
+                           thinking: Bool, warming: Bool) -> Bool {
+        localTurn && loopback && listed == false && !thinking && !warming
+    }
+
+    /// At launch and on becoming active: warm the stable prefix when the
+    /// local model is not loaded (`shouldWarm`).
+    func warmIfCold() async {
+        guard warmTask == nil, !running, !LocalModelUnload.isUnderTest else { return }
+        let registry = ModelRegistry.shared
+        if registry.local == nil { await registry.discoverLocal() }
+        let preset = PresetStore.shared.activeChatApplication()
+        let local = ChatService.isLocalTurn(providerOverride: preset?.providerOverride,
+                                            resolved: registry.resolvedProvider)
+        let base = AppState.shared.config.ollamaBaseURL
+        let model = registry.resolvedRouting(provider: preset?.providerOverride,
+                                             modelOverride: preset?.modelIdOverride).modelId
+        let loopback = LocalTurn.isLoopback(baseURL: base)
+        let listed = local && loopback ? await Self.isListed(baseURL: base, model: model) : nil
+        guard Self.shouldWarm(localTurn: local, loopback: loopback, listed: listed,
+                              thinking: AppState.shared.isThinking, warming: warmTask != nil) else { return }
+        let task = Task { await ChatService.shared.warmLocalPrefix() }
+        warmTask = task
+        let warmed = await task.value
+        warmTask = nil
+        WakeLog.shared.log("local warm-up: \(model) was not loaded, prefix \(warmed ? "warmed" : "not warmed (a turn came first)")")
+    }
+
     /// Whether /api/ps lists `model`: nil when Ollama did not answer, so a
     /// failed request is never read as "unloaded".
     static func isListed(baseURL: String, model: String) async -> Bool? {
