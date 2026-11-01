@@ -8,20 +8,42 @@ import XCTest
 @MainActor
 final class LocalWarmAtLaunchTests: XCTestCase {
     func test_warmsOnlyALocalRouteWhoseModelIsNotLoaded() {
-        XCTAssertTrue(LocalModelReset.shouldWarm(localTurn: true, loopback: true, listed: false,
-                                                 thinking: false, warming: false))
-        XCTAssertFalse(LocalModelReset.shouldWarm(localTurn: false, loopback: true, listed: false,
-                                                  thinking: false, warming: false), "a cloud route")
-        XCTAssertFalse(LocalModelReset.shouldWarm(localTurn: true, loopback: false, listed: false,
-                                                  thinking: false, warming: false), "a server elsewhere")
-        XCTAssertFalse(LocalModelReset.shouldWarm(localTurn: true, loopback: true, listed: true,
-                                                  thinking: false, warming: false), "already loaded")
-        XCTAssertFalse(LocalModelReset.shouldWarm(localTurn: true, loopback: true, listed: nil,
-                                                  thinking: false, warming: false), "Ollama did not answer")
-        XCTAssertFalse(LocalModelReset.shouldWarm(localTurn: true, loopback: true, listed: false,
-                                                  thinking: true, warming: false), "a person's turn wins")
-        XCTAssertFalse(LocalModelReset.shouldWarm(localTurn: true, loopback: true, listed: false,
-                                                  thinking: false, warming: true), "one warm-up at a time")
+        func warm(local: Bool = true, loopback: Bool = true, installed: Bool = true, listed: Bool? = false,
+                  thinking: Bool = false, warming: Bool = false, headroom: MachineLoad.Headroom = .full) -> Bool {
+            LocalModelReset.shouldWarm(localTurn: local, loopback: loopback, installed: installed, listed: listed,
+                                       thinking: thinking, warming: warming, headroom: headroom)
+        }
+        XCTAssertTrue(warm())
+        XCTAssertFalse(warm(local: false), "a cloud route")
+        XCTAssertFalse(warm(loopback: false), "a server elsewhere")
+        XCTAssertFalse(warm(installed: false), "a model the server does not hold")
+        XCTAssertFalse(warm(listed: true), "already loaded")
+        XCTAssertFalse(warm(listed: nil), "Ollama did not answer")
+        XCTAssertFalse(warm(thinking: true), "a person's turn wins")
+        XCTAssertFalse(warm(warming: true), "one warm-up at a time")
+        XCTAssertFalse(warm(headroom: .reduced), "memory pressure: MachineLoad unloads, a warm-up would reload")
+        XCTAssertFalse(warm(headroom: .minimal))
+    }
+
+    /// A failed warm call warmed nothing and must not read as warmed; a route
+    /// that is not local does not probe for a server at every activation; and
+    /// a warm-up's own calls do not count as use for the idle reset.
+    func test_theWarmUpReportsFailureAndLeavesCloudRoutesAlone() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let chat = try String(contentsOf: root.appendingPathComponent("Sources/Grux/ChatService.swift"), encoding: .utf8)
+        let warmFn = try XCTUnwrap(chat.range(of: "func warmLocalPrefix() async -> Bool {"))
+        let body = chat[warmFn.upperBound...].prefix(2_000)
+        XCTAssertFalse(body.contains("try? await routing.backend.completeWithTools"), "a failed call counts as warmed")
+        XCTAssertTrue(body.contains("} catch {\n                return false"))
+        let reset = try String(contentsOf: root.appendingPathComponent("Sources/Grux/Backend/LocalModelReset.swift"),
+                               encoding: .utf8)
+        let fn = try XCTUnwrap(reset.range(of: "func warmIfCold() async {"))
+        let cold = String(reset[fn.upperBound...].prefix(3_000))
+        let guardAt = try XCTUnwrap(cold.range(of: "guard routedLocal else { return }"))
+        let discover = try XCTUnwrap(cold.range(of: "await registry.discoverLocal()"))
+        XCTAssertLessThan(guardAt.lowerBound, discover.lowerBound, "a cloud route probes for a server first")
+        XCTAssertTrue(cold.contains("checkedThrough = LocalModelUnload.lastUse() ?? checkedThrough"))
     }
 
     /// Launch and becoming active both ask; the warm-up itself is the one a

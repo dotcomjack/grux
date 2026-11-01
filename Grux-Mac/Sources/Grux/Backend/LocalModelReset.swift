@@ -125,12 +125,15 @@ final class LocalModelReset {
     // same two background calls (warmLocalPrefix), which a person's turn
     // cancels (cancelWarmUp) and which wait behind LocalModelGate.
 
-    /// Whether to warm now: a local turn, on this Mac's server, nobody
-    /// thinking, no warm-up already running, and Ollama answered that the
-    /// model is not loaded. Not when Ollama did not answer (`listed` nil).
-    static func shouldWarm(localTurn: Bool, loopback: Bool, listed: Bool?,
-                           thinking: Bool, warming: Bool) -> Bool {
-        localTurn && loopback && listed == false && !thinking && !warming
+    /// Whether to warm now: a local turn, on this Mac's server, whose model
+    /// the server holds (`installed`) and Ollama answered is not loaded,
+    /// nobody thinking, no warm-up already running, and the Mac not under
+    /// memory pressure: MachineLoad unloads on critical pressure, and a
+    /// reload on the next activation would undo it (an 8 GB Mac could loop).
+    /// Not when Ollama did not answer (`listed` nil).
+    static func shouldWarm(localTurn: Bool, loopback: Bool, installed: Bool, listed: Bool?,
+                           thinking: Bool, warming: Bool, headroom: MachineLoad.Headroom) -> Bool {
+        localTurn && loopback && installed && listed == false && !thinking && !warming && headroom == .full
     }
 
     /// At launch and on becoming active: warm the stable prefix when the
@@ -138,22 +141,33 @@ final class LocalModelReset {
     func warmIfCold() async {
         guard warmTask == nil, !running, !LocalModelUnload.isUnderTest else { return }
         let registry = ModelRegistry.shared
-        if registry.local == nil { await registry.discoverLocal() }
         let preset = PresetStore.shared.activeChatApplication()
+        // A route that is not local never warms, so it never probes for a
+        // server either: with no Ollama, every activation would wait out a
+        // failed discovery and rewrite the registry's status line.
+        let routedLocal = preset?.providerOverride == "local"
+            || (preset?.providerOverride == nil && registry.activeProvider == .local)
+        guard routedLocal else { return }
+        if registry.local == nil { await registry.discoverLocal() }
         let local = ChatService.isLocalTurn(providerOverride: preset?.providerOverride,
                                             resolved: registry.resolvedProvider)
         let base = AppState.shared.config.ollamaBaseURL
         let model = registry.resolvedRouting(provider: preset?.providerOverride,
                                              modelOverride: preset?.modelIdOverride).modelId
         let loopback = LocalTurn.isLoopback(baseURL: base)
-        let listed = local && loopback ? await Self.isListed(baseURL: base, model: model) : nil
-        guard Self.shouldWarm(localTurn: local, loopback: loopback, listed: listed,
-                              thinking: AppState.shared.isThinking, warming: warmTask != nil) else { return }
+        let installed = registry.localTags.contains { Self.sameModel($0, model) }
+        let listed = local && loopback && installed ? await Self.isListed(baseURL: base, model: model) : nil
+        guard Self.shouldWarm(localTurn: local, loopback: loopback, installed: installed, listed: listed,
+                              thinking: AppState.shared.isThinking, warming: warmTask != nil,
+                              headroom: MachineLoad.shared.headroom) else { return }
         let task = Task { await ChatService.shared.warmLocalPrefix() }
         warmTask = task
         let warmed = await task.value
         warmTask = nil
-        WakeLog.shared.log("local warm-up: \(model) was not loaded, prefix \(warmed ? "warmed" : "not warmed (a turn came first)")")
+        // The warm-up's own calls are not use, as in tick: the next idle check
+        // waits for a real turn rather than resetting what was just loaded.
+        if warmed, !AppState.shared.isThinking { checkedThrough = LocalModelUnload.lastUse() ?? checkedThrough }
+        WakeLog.shared.log("local warm-up: \(model) was not loaded, prefix \(warmed ? "warmed" : "not warmed")")
     }
 
     /// Whether /api/ps lists `model`: nil when Ollama did not answer, so a

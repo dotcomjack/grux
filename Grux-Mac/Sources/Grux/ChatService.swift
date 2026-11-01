@@ -959,10 +959,16 @@ final class ChatService {
             await LocalModelGate.shared.acquire()
             defer { Task { await LocalModelGate.shared.release() } }
             guard !AppState.shared.isThinking, !Task.isCancelled else { return false }
-            _ = try? await routing.backend.completeWithTools(
-                apiKey: routing.apiKey, model: routing.modelId, system: prefix.system,
-                messages: [["role": "user", "content": word]], tools: prefix.tools, maxTokens: 1,
-                temperature: 0, spanName: "local.warmup", feature: "local_warmup")
+            // A failed call warmed nothing (a model never pulled, a server
+            // gone): say so, rather than count the warm-up as done.
+            do {
+                _ = try await routing.backend.completeWithTools(
+                    apiKey: routing.apiKey, model: routing.modelId, system: prefix.system,
+                    messages: [["role": "user", "content": word]], tools: prefix.tools, maxTokens: 1,
+                    temperature: 0, spanName: "local.warmup", feature: "local_warmup")
+            } catch {
+                return false
+            }
             // Cancelled mid-call (a person's turn started): the call was dropped.
             if Task.isCancelled { return false }
         }
