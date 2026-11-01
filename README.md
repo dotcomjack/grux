@@ -7,6 +7,8 @@ Your own API key, or a local model through Ollama and no key at all.
 **[Download Grux for Mac](https://github.com/dotcomjack/grux/releases/latest/download/Grux.dmg)** (Grux.dmg, 28 MB, Apple silicon, macOS 14 or later).
 Open it, drag Grux into Applications, and open it from there.
 
+![Grux first run: the Connect a model step offers Grux Local 9B (7.2 GB), the download starts, a local model replies in the Chat pane, and a shell command waits for your OK in Approvals](docs/media/first-run.gif)
+
 [![CI](https://github.com/dotcomjack/grux/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dotcomjack/grux/actions/workflows/ci.yml)
 [![Download](https://img.shields.io/github/v/release/dotcomjack/grux?label=download&color=7C5CFF)](https://github.com/dotcomjack/grux/releases/latest/download/Grux.dmg)
 [![Licence](https://img.shields.io/badge/licence-MIT-7C5CFF)](LICENSE)
