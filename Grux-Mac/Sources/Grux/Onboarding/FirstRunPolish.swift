@@ -62,6 +62,8 @@ enum ModelGate {
     static let localLine = "Runs on this Mac. No key, no account, and nothing leaves the machine. "
         + "With Ollama running, Grux fetches the best model this Mac can run."
     static let ollamaLink = "Get Ollama, free, at ollama.com"
+    /// Under a download that gave up: the same press again, which resumes.
+    static let tryAgain = "Try again"
 
     /// The headline when it is a Grux Local, the one first run recommends.
     static func recommendedLocal(_ headline: CookbookModel?) -> CookbookModel? {

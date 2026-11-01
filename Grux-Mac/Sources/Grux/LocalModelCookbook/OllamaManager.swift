@@ -884,6 +884,48 @@ final class OllamaManager: ObservableObject {
             publish(PullProgress(status: "bad base URL", fraction: nil, failed: true))
             return
         }
+        // A STALLED PULL TRIES AGAIN (release/3.2). Measured 2026-10-31 on a
+        // MacBook: the first-run press of Grux Local 9B ended after 3m50s with
+        // Ollama's "context canceled" during a registry stall, and the one
+        // click was spent. Ollama keeps the parts it already has, so a new
+        // pull of the same tag resumes rather than restarts (PullRetry).
+        let ended = await PullRetry.run(
+            attempt: { [weak self] _ in
+                await self?.pullOnce(modelId: modelId, url: url, publish: publish) ?? .cancelled
+            },
+            sleep: { try? await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) },
+            onRetry: { [weak self] attempt, wait, why in
+                guard let self else { return }
+                let last = self.pulls[modelId]
+                WakeLog.shared.log("pull \(modelId): try \(attempt) of \(PullRetry.maxAttempts) ended at "
+                    + PullRetry.whereItStopped(last) + ": \(why)")
+                publish(PullProgress(status: PullRetry.retryLine(attempt: attempt, wait: wait, why: why),
+                                     fraction: last?.fraction, completedBytes: last?.completedBytes,
+                                     totalBytes: last?.totalBytes))
+            })
+        switch ended {
+        case .installed:
+            publish(PullProgress(status: "installed", fraction: 1.0))
+            CookbookStore.shared.notePulled(modelId)
+        case .failed(let why, let attempts):
+            let last = pulls[modelId]
+            WakeLog.shared.log("pull \(modelId): gave up after \(attempts) tr\(attempts == 1 ? "y" : "ies") at "
+                + PullRetry.whereItStopped(last) + ": \(why)")
+            publish(PullProgress(status: PullRetry.giveUpLine(attempts: attempts, why: why),
+                                 fraction: last?.fraction, failed: true,
+                                 completedBytes: last?.completedBytes, totalBytes: last?.totalBytes))
+        case .cancelled:
+            // Nothing to write: both cancellers, cancelPull and stop(), stamp
+            // the terminal row themselves before clearing this pull's
+            // generation, so a write here would either duplicate theirs or be
+            // dropped by the guard above.
+            break
+        }
+    }
+
+    /// One `/api/pull` stream, to its end.
+    private func pullOnce(modelId: String, url: URL,
+                          publish: (PullProgress) -> Void) async -> PullRetry.Outcome {
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -894,11 +936,10 @@ final class OllamaManager: ObservableObject {
             let (bytes, resp) = try await URLSession.shared.bytes(for: req)
             guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
                 let code = (resp as? HTTPURLResponse)?.statusCode ?? -1
-                publish(PullProgress(status: "HTTP \(code)", fraction: nil, failed: true))
-                return
+                return .failed("HTTP \(code)", attempts: 1)
             }
             for try await line in bytes.lines {
-                if Task.isCancelled { return }
+                if Task.isCancelled { return .cancelled }
                 guard let data = line.data(using: .utf8),
                       let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
                 let status = (obj["status"] as? String) ?? "working"
@@ -912,33 +953,88 @@ final class OllamaManager: ObservableObject {
                     totalBytes = total
                 }
                 if let err = obj["error"] as? String {
-                    publish(PullProgress(status: err, fraction: fraction, failed: true))
-                    return
+                    return .failed(err, attempts: 1)
                 }
                 publish(PullProgress(status: status, fraction: fraction,
                                      completedBytes: completedBytes, totalBytes: totalBytes))
                 if status == "success" {
-                    publish(PullProgress(status: "installed", fraction: 1.0))
                     await refreshInstalled()
-                    CookbookStore.shared.notePulled(modelId)
-                    return
+                    return .installed
                 }
             }
+            if Task.isCancelled { return .cancelled }
             // Stream ended without an explicit success line; trust /api/tags.
             await refreshInstalled()
-            if isInstalled(modelId) {
-                publish(PullProgress(status: "installed", fraction: 1.0))
-                CookbookStore.shared.notePulled(modelId)
-            } else {
-                publish(PullProgress(status: "stream ended early", fraction: nil, failed: true))
-            }
+            return isInstalled(modelId) ? .installed : .failed("stream ended early", attempts: 1)
         } catch is CancellationError {
-            // Nothing to write: both cancellers, cancelPull and stop(), stamp
-            // the terminal row themselves before clearing this pull's
-            // generation, so a write here would either duplicate theirs or be
-            // dropped by the guard above.
+            return .cancelled
         } catch {
-            publish(PullProgress(status: error.localizedDescription, fraction: nil, failed: true))
+            if Task.isCancelled { return .cancelled }
+            return .failed(error.localizedDescription, attempts: 1)
         }
+    }
+}
+
+/// The retry rule for a pull: up to `maxAttempts` streams of the same tag,
+/// `delay` apart, so a stall Ollama ends as "context canceled" resumes from
+/// the parts already on disk. An error that another try cannot change (no
+/// such model, no disk, an Ollama too old) ends it at once.
+@MainActor
+enum PullRetry {
+    enum Outcome: Equatable {
+        case installed
+        case failed(String, attempts: Int)
+        case cancelled
+    }
+
+    static let maxAttempts = 5
+
+    /// Seconds before try `attempt + 1`: 2, 4, 8, 16.
+    static func delay(afterAttempt attempt: Int) -> TimeInterval {
+        TimeInterval(2 << max(0, min(attempt - 1, 4)))
+    }
+
+    static let permanent = ["not found", "file does not exist", "manifest unknown", "no space left",
+                            "requires a newer version", "unauthorized", "bad base url", "invalid model name"]
+
+    static func isRetryable(_ why: String) -> Bool {
+        let w = why.lowercased()
+        return !permanent.contains { w.contains($0) }
+    }
+
+    static func run(maxAttempts: Int = maxAttempts,
+                    attempt: (Int) async -> Outcome,
+                    sleep: (TimeInterval) async -> Void,
+                    onRetry: (Int, TimeInterval, String) -> Void) async -> Outcome {
+        var n = 0
+        while true {
+            n += 1
+            switch await attempt(n) {
+            case .installed: return .installed
+            case .cancelled: return .cancelled
+            case .failed(let why, _):
+                guard n < maxAttempts, isRetryable(why) else { return .failed(why, attempts: n) }
+                let wait = delay(afterAttempt: n)
+                onRetry(n, wait, why)
+                await sleep(wait)
+                if Task.isCancelled { return .cancelled }
+            }
+        }
+    }
+
+    /// Where a pull stood when it stopped: "45% (3.2 of 7.2 GB)", or "0%".
+    static func whereItStopped(_ p: OllamaManager.PullProgress?) -> String {
+        guard let done = p?.completedBytes, let total = p?.totalBytes, total > 0 else {
+            return p?.fraction.map { "\(Int($0 * 100))%" } ?? "0%"
+        }
+        return String(format: "%d%% (%.1f of %.1f GB)", Int(min(1, done / total) * 100), done / 1e9, total / 1e9)
+    }
+
+    static func retryLine(attempt: Int, wait: TimeInterval, why: String) -> String {
+        "trying again in \(Int(wait)) s (try \(attempt + 1) of \(maxAttempts)) after: \(why)"
+    }
+
+    static func giveUpLine(attempts: Int, why: String) -> String {
+        attempts > 1 ? "\(why), after \(attempts) tries" : why
     }
 }
