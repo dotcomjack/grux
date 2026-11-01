@@ -4,7 +4,7 @@
 gives the agent your mail, your calendar, your meetings and a shell it can undo.
 Your own API key, or a local model through Ollama and no key at all.
 
-**[Download Grux for Mac](https://github.com/dotcomjack/grux/releases/latest/download/Grux.dmg)** (Grux.dmg, 27 MB, Apple silicon, macOS 14 or later).
+**[Download Grux for Mac](https://github.com/dotcomjack/grux/releases/latest/download/Grux.dmg)** (Grux.dmg, 28 MB, Apple silicon, macOS 14 or later).
 Open it, drag Grux into Applications, and open it from there.
 
 [![CI](https://github.com/dotcomjack/grux/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/dotcomjack/grux/actions/workflows/ci.yml)
@@ -82,8 +82,10 @@ Optimize Grux is where you make it yours. Say what you want different and Grux
 writes a work order your coding agent builds. Nothing about Grux changes without
 your yes.
 
-Grux reads your hardware and tells you which local models actually fit it, so you
-can run the whole thing without sending a token to anyone. Credentials go to your
+Grux reads your hardware and tells you which local models actually fit it; with a
+local model, chat, file naming and the background jobs run on this Mac and what you
+type goes to no model provider, while mail and calendar still come from your own
+accounts and Research still searches the web with your own key. Credentials go to your
 Keychain and services are called directly from your machine. There is no server
 in the middle because there is no server.
 
@@ -200,7 +202,7 @@ so a web search opens Google in Chrome.
 
 ## Install
 
-**[Download Grux AI 3.2 for Apple silicon](https://github.com/dotcomjack/grux/releases/latest/download/Grux.dmg)** (Grux.dmg, 27 MB, macOS 14 or later)
+**[Download Grux AI 3.2 for Apple silicon](https://github.com/dotcomjack/grux/releases/latest/download/Grux.dmg)** (Grux.dmg, 28 MB, macOS 14 or later)
 
 1. Open `Grux.dmg`.
 2. Drag Grux into Applications.
@@ -305,8 +307,9 @@ The short version: one Command Panel that opens each surface as a pane beside it
 and an assistant that can reach the things a Mac assistant should be able to reach.
 
 - **Chat** with tool use, against Anthropic or a local model.
-- **Local models** through Ollama, so you can run the whole thing without sending
-  a token to anyone.
+- **Local models** through Ollama: chat, file naming and the background jobs run on
+  this Mac and what you type goes to no model provider; mail and calendar still come
+  from your own accounts, and Research still searches the web with your own key.
 - **Mailbox, Calendar, Contacts, Notes, Documents** against your real accounts,
   not a hosted copy of them.
 - **Meetings** that record both the microphone and system audio, transcribe on
