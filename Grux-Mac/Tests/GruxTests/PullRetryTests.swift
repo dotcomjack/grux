@@ -57,4 +57,61 @@ final class PullRetryTests: XCTestCase {
         XCTAssertEqual(PullRetry.whereItStopped(p), "45% (3.2 of 7.2 GB)")
         XCTAssertEqual(PullRetry.whereItStopped(nil), "0%")
     }
+
+    func test_aClientErrorIsNotRetried() {
+        for code in [400, 401, 403, 404] {
+            XCTAssertFalse(PullRetry.isRetryable("HTTP \(code)"), "HTTP \(code)")
+        }
+        XCTAssertTrue(PullRetry.isRetryable("HTTP 500"), "control: a server error may pass")
+        XCTAssertTrue(PullRetry.isRetryable("no progress for 45 s"), "a stall is retried")
+    }
+
+    /// The watchdog ends a try whose download moves no byte for the limit,
+    /// so the next try starts long before Ollama would give up on its own.
+    func test_aStalledDownloadEndsTheTry() async {
+        let clock = PullRetry.ProgressClock()
+        clock.note(downloading: true, completed: 100)
+        let started = Date()
+        let outcome = await PullRetry.withWatchdog(limit: 0.3, poll: 0.05, clock: clock) {
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            return .installed
+        }
+        guard case .failed(let why, _) = outcome else { return XCTFail("a stall was not ended: \(outcome)") }
+        XCTAssertTrue(why.hasPrefix("no progress for"), why)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 2, "the watchdog waited for the body")
+    }
+
+    func test_aDownloadThatKeepsMovingIsLeftAlone() async {
+        let clock = PullRetry.ProgressClock()
+        let outcome = await PullRetry.withWatchdog(limit: 0.3, poll: 0.05, clock: clock) {
+            for i in 0..<12 {
+                clock.note(downloading: true, completed: Double(i + 1) * 1_000)
+                try? await Task.sleep(nanoseconds: 60_000_000)
+            }
+            return .installed
+        }
+        XCTAssertEqual(outcome, .installed, "a moving download was ended as a stall")
+    }
+
+    func test_verifyingIsNotAStall() {
+        let clock = PullRetry.ProgressClock()
+        let long = Date().addingTimeInterval(-600)
+        clock.note(downloading: true, completed: 5, at: long)
+        XCTAssertGreaterThan(clock.idle(), 500, "control: a silent download is idle")
+        clock.note(downloading: false, completed: nil)
+        XCTAssertEqual(clock.idle(), 0, "verifying or writing counted as a stall")
+    }
+
+    /// Try again shows only under the line a stopped download left.
+    func test_tryAgainShowsOnlyUnderAStoppedDownload() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let src = try String(contentsOf: root.appendingPathComponent("Sources/Grux/Onboarding/OnboardingView.swift"),
+                             encoding: .utf8)
+        XCTAssertTrue(src.contains("if err == downloadStoppedLine {\n                        Button(ModelGate.tryAgain)"))
+        XCTAssertEqual(src.components(separatedBy: "downloadStoppedLine = localError").count - 1, 1)
+        let failed = try XCTUnwrap(src.range(of: "localError = ConnectModelCopy.downloadFailed(pick, ended)\n"))
+        XCTAssertTrue(src[failed.upperBound...].hasPrefix("                    downloadStoppedLine = localError"))
+        XCTAssertEqual(ModelGate.tryAgain, "Try again")
+    }
 }

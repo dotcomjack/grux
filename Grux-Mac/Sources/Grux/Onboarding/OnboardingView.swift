@@ -182,8 +182,9 @@ struct ModelKeyStep: View {
     // the model instead, and deliberately: a rejected key has to survive a quit
     // and relaunch on the same stage, where a half-finished probe must not.
     @State private var probingLocal = false
-    /// A Grux Local download ended without the model: show Try again.
-    @State private var downloadStopped = false
+    /// The line a Grux Local download that gave up left: Try again shows
+    /// only while that is the error on screen, never under another one.
+    @State private var downloadStoppedLine: String?
     @State private var localError: String?
 
     /// WHAT THIS MAC ALREADY HAS, looked up before the screen asks for
@@ -358,7 +359,7 @@ struct ModelKeyStep: View {
                         .fixedSize(horizontal: false, vertical: true)
                     // A download that gave up (PullRetry) is one press from
                     // resuming: Ollama kept the parts it has.
-                    if downloadStopped {
+                    if err == downloadStoppedLine {
                         Button(ModelGate.tryAgain) { useLocalModel(fetchRecommended: true) }
                             .disabled(model.validating || probingLocal)
                     }
@@ -541,7 +542,7 @@ struct ModelKeyStep: View {
     /// The pinned "use the model on this Mac" passes false.
     private func useLocalModel(fetchRecommended: Bool = false) {
         localError = nil
-        downloadStopped = false
+        downloadStoppedLine = nil
         probingLocal = true
         Task {
             // ONE RESET, ON EVERY PATH. This method now has six exits, and
@@ -620,7 +621,7 @@ struct ModelKeyStep: View {
                 guard wanted.map({ OllamaManager.shared.isInstalled($0.id) })
                         ?? !GruxConfig.usableLocalModels(OllamaManager.shared.installedTags).isEmpty else {
                     localError = ConnectModelCopy.downloadFailed(pick, ended)
-                    downloadStopped = true
+                    downloadStoppedLine = localError
                     return
                 }
                 // Timed on this Mac before it becomes the default: a pick too

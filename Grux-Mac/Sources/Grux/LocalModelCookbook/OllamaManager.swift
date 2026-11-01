@@ -890,8 +890,19 @@ final class OllamaManager: ObservableObject {
         // click was spent. Ollama keeps the parts it already has, so a new
         // pull of the same tag resumes rather than restarts (PullRetry).
         let ended = await PullRetry.run(
-            attempt: { [weak self] _ in
-                await self?.pullOnce(modelId: modelId, url: url, publish: publish) ?? .cancelled
+            attempt: { [weak self] n in
+                guard let self else { return .cancelled }
+                // A retry first brings the server back if it went away mid-pull.
+                if n > 1, !(await self.isHealthy()) {
+                    await self.serve()
+                    guard self.serverState.isRunning else { return .failed("server unavailable", attempts: 1) }
+                }
+                // A stall Ollama would sit through for minutes ends the try
+                // after PullRetry.stallLimit with no new bytes.
+                let clock = PullRetry.ProgressClock()
+                return await PullRetry.withWatchdog(clock: clock) { [weak self] in
+                    await self?.pullOnce(modelId: modelId, url: url, generation: generation, clock: clock) ?? .cancelled
+                }
             },
             sleep: { try? await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) },
             onRetry: { [weak self] attempt, wait, why in
@@ -924,8 +935,12 @@ final class OllamaManager: ObservableObject {
     }
 
     /// One `/api/pull` stream, to its end.
-    private func pullOnce(modelId: String, url: URL,
-                          publish: (PullProgress) -> Void) async -> PullRetry.Outcome {
+    private func pullOnce(modelId: String, url: URL, generation: UUID,
+                          clock: PullRetry.ProgressClock) async -> PullRetry.Outcome {
+        func publish(_ progress: PullProgress) {
+            guard pullGenerations[modelId] == generation else { return }
+            pulls[modelId] = progress
+        }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -955,6 +970,10 @@ final class OllamaManager: ObservableObject {
                 if let err = obj["error"] as? String {
                     return .failed(err, attempts: 1)
                 }
+                // Only the download phase can stall; verifying and writing
+                // a large blob may say nothing for a while and is not idle.
+                clock.note(downloading: status.hasPrefix("pulling ") && obj["total"] != nil,
+                           completed: obj["completed"] as? Double)
                 publish(PullProgress(status: status, fraction: fraction,
                                      completedBytes: completedBytes, totalBytes: totalBytes))
                 if status == "success" {
@@ -995,14 +1014,59 @@ enum PullRetry {
     }
 
     static let permanent = ["not found", "file does not exist", "manifest unknown", "no space left",
-                            "requires a newer version", "unauthorized", "bad base url", "invalid model name"]
+                            "requires a newer version", "unauthorized", "bad base url", "invalid model name",
+                            "http 400", "http 401", "http 403", "http 404"]
+
+    /// How long the download phase may go without a new byte before the try
+    /// ends and the next one resumes (measured 2026-10-31: a stall Ollama sat
+    /// through for 3m50s before giving up on its own).
+    nonisolated static let stallLimit: TimeInterval = 45
+
+    /// When a pull last moved. Written by the stream, read by the watchdog.
+    final class ProgressClock: @unchecked Sendable {
+        private let lock = NSLock()
+        private var lastMove = Date()
+        private var lastBytes: Double = -1
+        private var downloading = false
+
+        func note(downloading now: Bool, completed: Double?, at date: Date = Date()) {
+            lock.lock(); defer { lock.unlock() }
+            if now != downloading { downloading = now; lastMove = date }
+            if let completed, completed > lastBytes { lastBytes = completed; lastMove = date }
+        }
+
+        /// Seconds the download phase has gone without a new byte; 0 outside it.
+        func idle(now: Date = Date()) -> TimeInterval {
+            lock.lock(); defer { lock.unlock() }
+            return downloading ? now.timeIntervalSince(lastMove) : 0
+        }
+    }
+
+    /// `body`, ended as a stall when `clock` reports no new byte for `limit`.
+    nonisolated static func withWatchdog(limit: TimeInterval = PullRetry.stallLimit, poll: TimeInterval = 1,
+                                         clock: ProgressClock,
+                                         body: @escaping @Sendable () async -> Outcome) async -> Outcome {
+        await withTaskGroup(of: Outcome.self) { group in
+            group.addTask { await body() }
+            group.addTask {
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: UInt64(poll * 1_000_000_000))
+                    if clock.idle() >= limit { return .failed("no progress for \(Int(limit)) s", attempts: 1) }
+                }
+                return .cancelled
+            }
+            let first = await group.next() ?? .cancelled
+            group.cancelAll()
+            return first
+        }
+    }
 
     static func isRetryable(_ why: String) -> Bool {
         let w = why.lowercased()
         return !permanent.contains { w.contains($0) }
     }
 
-    static func run(maxAttempts: Int = maxAttempts,
+    static func run(maxAttempts: Int = PullRetry.maxAttempts,
                     attempt: (Int) async -> Outcome,
                     sleep: (TimeInterval) async -> Void,
                     onRetry: (Int, TimeInterval, String) -> Void) async -> Outcome {
