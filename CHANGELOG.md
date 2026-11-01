@@ -7,7 +7,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-## [3.2.0] - 2026-11-10
+## [3.2.0] - 2026-11-01
 
 Private by default, and fast on the model made for your Mac. A Mac with Ollama gets
 Grux Local, the model trained for Grux, in one click at first run and sized to its
