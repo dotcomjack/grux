@@ -9,9 +9,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [3.2.0] - 2026-11-10
 
-Instant and private by default. A Mac with Ollama gets Grux Local, the model trained
-for Grux, in one click at first run and sized to its memory, and a reply on a local
-model starts in about 2 seconds instead of 15. Grux says when a new version is out,
+Private by default, and fast on the model made for your Mac. A Mac with Ollama gets
+Grux Local, the model trained for Grux, in one click at first run and sized to its
+memory; on a 16 GB Mac, Grux Local 2B answers in about 2 seconds (35 of 35 replies within 3.4 s, median 2.3 s) and its first reply after a ten-minute pause comes in 0.62 s, down from 6 s. Grux says when a new version is out,
 and asks nothing about you to find out. Self-Upgrade runs end to end: it reads its own
 source, proposes its next version, builds it, verifies it, and waits for your approval,
 and the ways we found for that chain to claim more than it did are closed. And a
@@ -58,9 +58,11 @@ Settings, Approvals and the setup cards, is fixed.
   every other local model on those jobs. Under memory pressure it steps down a size,
   then falls back to the measured score order. Pull downloads it from gruxai.com with
   no Ollama account.
-- **The first local reply after a pause starts sooner.** Grux warms the part of the
+- **The first local reply after a pause comes sooner.** Grux warms the part of the
   prompt that never changes when it opens and when you come back to it, so the first
-  reply after a quiet stretch no longer waits for a full read of it. The warm-up skips
+  reply after a quiet stretch no longer waits for a full read of it. Measured on a 16 GB
+  Mac: Grux Local 2B's first reply after a ten-minute pause went from 6 s to 0.62 s, and
+  Grux Local 4B's from 16.7 s to 1.32 s. The warm-up skips
   a model that is not installed and a chat routed to a cloud provider, and only memory
   pressure stops it.
 - **A model download that stalls tries again,** up to five times, and resumes where it
@@ -103,7 +105,8 @@ Settings, Approvals and the setup cards, is fixed.
 
 ### Fixed: chat on a local model
 
-- **A local model answers in about 2 seconds instead of 15.** Every chat turn on a
+- **The first word from a local model comes in 2 to 3 seconds instead of 14 to 20.**
+  Every chat turn on a
   local model used to read the whole 5,000 to 6,000 token prompt again, because Grux
   sent its tools in a different order each time. Grux now sends what stays the same in
   the same order and the same bytes, so the model picks up where it left off; measured
