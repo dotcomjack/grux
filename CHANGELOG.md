@@ -44,6 +44,14 @@ Settings, Approvals and the setup cards, is fixed.
 
 ### Changed
 
+- **One local model on a Mac.** Chat on the shipped default model, file naming on Grux
+  Local and the background model used to keep two or three models resident; measured
+  on a 48 GB Mac, one grew to 13 GB and swap filled. Now a chat model nobody chose
+  moves to an installed Grux Local when Grux looks at the Mac's models, file naming
+  uses chat's Grux Local instead of loading a second size beside it, and the background
+  model follows chat's Grux Local. A model you typed stands, Settings shows what an
+  empty background field resolves to, and the rule applies only when Ollama runs on
+  this Mac.
 - **Grux recommends Grux Local, its own local model.** The Local Models list carries
   Grux Local 2B, 4B and 9B, trained on Grux's own jobs and to ignore instructions hidden
   in pasted text, and leads with the one made for this Mac's memory; it scores above

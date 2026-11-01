@@ -1,8 +1,13 @@
 # Releasing Grux AI 3.2.0
 
-The exact sequence for 3.2.0, in the order `release/RELEASING.md` fixes. That page is the
-rule; this one is the run. Nothing below is published until the person who signs releases
-says "ship it": the build, the staging folder and a DRAFT GitHub release are all private.
+The exact sequence for 3.2.0, in the order the maintainers' release page fixes. Nothing
+below is published until the person who signs releases says "ship it": the build, the
+staging folder and a DRAFT GitHub release are all private.
+
+Three tools named below live in the maintainers' private tree and are not in this
+repository: the surface gate (`release/ship-gate.py` with its `release/surfaces.json`), the
+notes check (`launch/check-notes.py`) and the prepared release body. Each step says what
+they measure, so the sequence can be followed, and checked by hand, without them.
 
 ## Before the build
 
@@ -32,11 +37,13 @@ values are set on the day:
 python3 Grux-Mac/scripts/update-readme-counts.py --count <N>
 # the CHANGELOG date is the ship day; ship-gate pre fails on any other date
 sed -i '' 's/^## \[3.2.0\] - .*/## [3.2.0] - '"$(date +%F)"'/' CHANGELOG.md
-python3 launch/check-notes.py        # mirrors the five release-notes tests, exit 0
+# maintainers: launch/check-notes.py (private), which mirrors ReleaseVersionTests,
+# ReleaseVersionAgreesTests, UpdateOfferTests and SettingsPointerTests; the suite itself
+# runs those for everyone: swift test --filter 'ReleaseVersion|UpdateOffer|SettingsPointer'
 ```
 
-Both files are in `docs_only_drift` (`release/surfaces.json`), so they may change after the
-build commit. Code may not.
+Both files are documentation, so they may change after the build commit. Code may not: the
+published source must be the source of the published binary.
 
 ## 2. Build, sign, notarize, staple
 
@@ -65,20 +72,25 @@ ASC_KEY="$HOME/.private_keys/AuthKey_<KEY_ID>.p8" ASC_KEY_ID=<KEY_ID> ASC_ISSUER
   bash Grux-Mac/scripts/dmg/make-dmg.sh "$S/Grux.app" "$S"
 (cd "$S" && shasum -a 256 Grux.dmg Grux-3.2.0-macOS-arm64.zip > SHA256SUMS.txt && cat SHA256SUMS.txt)
 (cd npm && npm pack --pack-destination "$S")          # dotcomjack-grux-3.2.0.tgz
-cp launch/GITHUB-RELEASE-BODY-3.2.0.md "$S/GITHUB-RELEASE-BODY.md"   # then paste the two sums in
+# GITHUB-RELEASE-BODY.md: Install, the [3.2.0] CHANGELOG entry condensed, the two sums,
+# a link to CHANGELOG.md (the maintainers keep a prepared draft in their private tree)
 ```
 
 `make-dmg.sh` signs the image, notarizes and staples it, and refuses to finish unless
 Gatekeeper accepts both the image and the app inside it.
 
-## 4. The pre gate
+## 4. The pre gate (maintainers' tool; what it measures)
 
 ```bash
 release/ship-gate.py pre --version 3.2.0 --stage "$S" \
     --build-commit <build sha> --source-ref origin/release/3.2 --tests <N> --date <ship day>
 ```
 
-Exit 0 or stop. It reports any step that already landed; skip those, never redo one.
+It reads: every staged asset exists; the staged app's version, signature, notarization
+ticket and Gatekeeper verdict; the CHANGELOG tops at 3.2.0 dated the ship day with
+`[Unreleased]` empty; the README's test count equals N and its download line names 3.2;
+the build commit is an ancestor of the source ref and only documentation changed between
+them; and nothing is half published. Exit 0 or stop. Without the tool, check each by hand.
 
 ## 5. The draft release (private until published)
 
@@ -112,8 +124,10 @@ A draft creates no tag and is invisible to the update check and to `releases/lat
 6. **Site**, last, from a fresh grux-site worktree: RELEASING step 9 verbatim
    (`repin-citations.py --from v3.1.0 --to v3.2.0`, `fetch-facts.py`, the hand-written
    versions, both share cards, `build-geo.py`, `check.sh`, `tools/ship.sh`).
-7. **Post gate.** `release/ship-gate.py post --version 3.2.0 --stage "$S" --build-commit <build sha>
-   --tests <N> --site-dir <grux-site worktree> --json "$S/gate-post.json"`, exit 0, kept as evidence.
+7. **Post gate** (maintainers' tool). `release/ship-gate.py post ...` reads every public surface
+   after publishing: the public repository and its CI, both tags, the release and its assets,
+   the downloaded DMG mounted and Gatekeeper-checked, the cask, npm, and every gruxai.com
+   page naming 3.2.0 and none naming 3.1.0. Exit 0, kept as evidence.
 
 ## Homebrew core: the gating metric for leaving the tap
 
