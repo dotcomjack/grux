@@ -127,13 +127,15 @@ final class LocalModelReset {
 
     /// Whether to warm now: a local turn, on this Mac's server, whose model
     /// the server holds (`installed`) and Ollama answered is not loaded,
-    /// nobody thinking, no warm-up already running, and the Mac not under
-    /// memory pressure: MachineLoad unloads on critical pressure, and a
-    /// reload on the next activation would undo it (an 8 GB Mac could loop).
+    /// nobody thinking, no warm-up already running, and memory not under
+    /// pressure: MachineLoad unloads on critical pressure, and a reload on the
+    /// next activation would undo it (an 8 GB Mac could loop). Battery, Low
+    /// Power Mode and heat do not stop it: the cold first turn they would
+    /// leave costs more than the two short calls.
     /// Not when Ollama did not answer (`listed` nil).
     static func shouldWarm(localTurn: Bool, loopback: Bool, installed: Bool, listed: Bool?,
-                           thinking: Bool, warming: Bool, headroom: MachineLoad.Headroom) -> Bool {
-        localTurn && loopback && installed && listed == false && !thinking && !warming && headroom == .full
+                           thinking: Bool, warming: Bool, memory: MachineLoad.MemoryPressure) -> Bool {
+        localTurn && loopback && installed && listed == false && !thinking && !warming && memory == .normal
     }
 
     /// At launch and on becoming active: warm the stable prefix when the
@@ -145,8 +147,12 @@ final class LocalModelReset {
         // A route that is not local never warms, so it never probes for a
         // server either: with no Ollama, every activation would wait out a
         // failed discovery and rewrite the registry's status line.
+        // Anthropic chosen with no key falls forward to a live local server
+        // (ModelRegistry.anthropicRoute), so that person is routed local too.
         let routedLocal = preset?.providerOverride == "local"
             || (preset?.providerOverride == nil && registry.activeProvider == .local)
+            || (preset?.providerOverride == nil && registry.activeProvider == .anthropic
+                && !KeychainStore.exists(.anthropicApiKey))
         guard routedLocal else { return }
         if registry.local == nil { await registry.discoverLocal() }
         let local = ChatService.isLocalTurn(providerOverride: preset?.providerOverride,
@@ -159,7 +165,7 @@ final class LocalModelReset {
         let listed = local && loopback && installed ? await Self.isListed(baseURL: base, model: model) : nil
         guard Self.shouldWarm(localTurn: local, loopback: loopback, installed: installed, listed: listed,
                               thinking: AppState.shared.isThinking, warming: warmTask != nil,
-                              headroom: MachineLoad.shared.headroom) else { return }
+                              memory: MachineLoad.shared.memoryPressure) else { return }
         let task = Task { await ChatService.shared.warmLocalPrefix() }
         warmTask = task
         let warmed = await task.value

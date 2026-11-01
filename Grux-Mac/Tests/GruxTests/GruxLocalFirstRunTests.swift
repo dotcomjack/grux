@@ -24,15 +24,21 @@ final class GruxLocalFirstRunTests: XCTestCase {
         }
     }
 
-    /// The press is the only fetch: the button passes fetchRecommended, the
-    /// pinned "use the model on this Mac" does not, and the pressed model is
-    /// the one chat is pointed at.
+    /// The press is the only fetch: the button passes fetchRecommended (and
+    /// its Try again, after a download gave up), the pinned "use the model on
+    /// this Mac" does not, and the pressed model is the one chat is pointed at.
     func test_onlyTheButtonFetchesGruxLocalAndChatUsesIt() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
         let src = try String(contentsOf: root.appendingPathComponent("Sources/Grux/Onboarding/OnboardingView.swift"),
                              encoding: .utf8)
-        XCTAssertEqual(src.components(separatedBy: "useLocalModel(fetchRecommended: true)").count - 1, 1)
+        XCTAssertEqual(src.components(separatedBy: "useLocalModel(fetchRecommended: true)").count - 1, 2)
+        XCTAssertTrue(src.contains("installed: recommendedLocal.map { ollama.isInstalled($0.id) } ?? false)) {\n                        useLocalModel(fetchRecommended: true)"),
+                      "the Grux Local button does not fetch")
+        XCTAssertTrue(src.contains("Button(ModelGate.tryAgain) { useLocalModel(fetchRecommended: true) }"),
+                      "a fetch other than the button and its Try again")
+        XCTAssertFalse(src.contains("} else if probe.model != nil {\n            useLocalModel(fetchRecommended: true)"),
+                       "the pinned use-what-is-here button fetches")
         XCTAssertTrue(src.contains("let wanted = fetchRecommended ? recommendedLocal : nil"))
         XCTAssertTrue(src.contains("guard let pick = wanted ?? Cookbook.headline(for: HardwareProfile.detect())"))
         XCTAssertTrue(src.contains("if let chosen = wanted.map({ settledPick ?? $0 }), OllamaManager.shared.isInstalled(chosen.id) {"))

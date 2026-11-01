@@ -9,9 +9,9 @@ import XCTest
 final class LocalWarmAtLaunchTests: XCTestCase {
     func test_warmsOnlyALocalRouteWhoseModelIsNotLoaded() {
         func warm(local: Bool = true, loopback: Bool = true, installed: Bool = true, listed: Bool? = false,
-                  thinking: Bool = false, warming: Bool = false, headroom: MachineLoad.Headroom = .full) -> Bool {
+                  thinking: Bool = false, warming: Bool = false, memory: MachineLoad.MemoryPressure = .normal) -> Bool {
             LocalModelReset.shouldWarm(localTurn: local, loopback: loopback, installed: installed, listed: listed,
-                                       thinking: thinking, warming: warming, headroom: headroom)
+                                       thinking: thinking, warming: warming, memory: memory)
         }
         XCTAssertTrue(warm())
         XCTAssertFalse(warm(local: false), "a cloud route")
@@ -21,8 +21,8 @@ final class LocalWarmAtLaunchTests: XCTestCase {
         XCTAssertFalse(warm(listed: nil), "Ollama did not answer")
         XCTAssertFalse(warm(thinking: true), "a person's turn wins")
         XCTAssertFalse(warm(warming: true), "one warm-up at a time")
-        XCTAssertFalse(warm(headroom: .reduced), "memory pressure: MachineLoad unloads, a warm-up would reload")
-        XCTAssertFalse(warm(headroom: .minimal))
+        XCTAssertFalse(warm(memory: .warning), "memory pressure: MachineLoad unloads, a warm-up would reload")
+        XCTAssertFalse(warm(memory: .critical))
     }
 
     /// A failed warm call warmed nothing and must not read as warmed; a route
@@ -44,6 +44,9 @@ final class LocalWarmAtLaunchTests: XCTestCase {
         let discover = try XCTUnwrap(cold.range(of: "await registry.discoverLocal()"))
         XCTAssertLessThan(guardAt.lowerBound, discover.lowerBound, "a cloud route probes for a server first")
         XCTAssertTrue(cold.contains("checkedThrough = LocalModelUnload.lastUse() ?? checkedThrough"))
+        // Anthropic chosen with no key is routed local (anthropicRoute), so it warms too.
+        XCTAssertTrue(cold.contains("registry.activeProvider == .anthropic\n                && !KeychainStore.exists(.anthropicApiKey))"))
+        XCTAssertTrue(cold.contains("memory: MachineLoad.shared.memoryPressure"), "battery or heat stops the warm-up")
     }
 
     /// Launch and becoming active both ask; the warm-up itself is the one a
