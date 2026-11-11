@@ -116,36 +116,31 @@ final class ScreenPrescreen {
     // MARK: - Apple Vision plumbing
 
     private func featurePrint(for image: CGImage) async -> VNFeaturePrintObservation? {
-        await withCheckedContinuation { (cont: CheckedContinuation<VNFeaturePrintObservation?, Never>) in
+        // Once: a failed request can both call the handler and throw (VisionRequest).
+        let obs = try? await VisionRequest.once { (finish: @escaping (Swift.Result<VNFeaturePrintObservation?, Error>) -> Void) in
             let req = VNGenerateImageFeaturePrintRequest { req, _ in
-                let obs = (req.results as? [VNFeaturePrintObservation])?.first
-                cont.resume(returning: obs)
+                finish(.success((req.results as? [VNFeaturePrintObservation])?.first))
             }
             let handler = VNImageRequestHandler(cgImage: image, options: [:])
-            do {
-                try handler.perform([req])
-            } catch {
-                cont.resume(returning: nil)
-            }
+            try handler.perform([req])
         }
+        return obs ?? nil
     }
 
     private func ocrText(for image: CGImage) async -> String {
-        await withCheckedContinuation { (cont: CheckedContinuation<String, Never>) in
+        // Once: a failed recognition can both call the handler and throw (VisionRequest).
+        let text = try? await VisionRequest.once { (finish: @escaping (Swift.Result<String, Error>) -> Void) in
             let req = VNRecognizeTextRequest { req, _ in
                 let obs = req.results as? [VNRecognizedTextObservation] ?? []
                 let lines = obs.compactMap { $0.topCandidates(1).first?.string }
-                cont.resume(returning: lines.joined(separator: "\n"))
+                finish(.success(lines.joined(separator: "\n")))
             }
             req.recognitionLevel = .fast    // prescreen wants speed, accurate is overkill
             req.usesLanguageCorrection = false
             let handler = VNImageRequestHandler(cgImage: image, options: [:])
-            do {
-                try handler.perform([req])
-            } catch {
-                cont.resume(returning: "")
-            }
+            try handler.perform([req])
         }
+        return text ?? ""
     }
 
     // MARK: - Embeddings

@@ -135,6 +135,9 @@ what is true on your Mac, in plain words.
 - **Jax Command's Memory card lets you index your own writing,** and says what it has
   stored and where it came from.
 - **A strange plan can no longer crash Grux.**
+- **Grux no longer quits on macOS 27 when reading text from the screen fails.** A
+  failed read could answer twice, and a second answer stops the app. The bug was also
+  present in 3.2.
 - **Corrected the 3.2 entry:** Self-Upgrade proposes and specifies upgrades, builds one
   in your own source checkout only when you press Build it, installs only on your yes
   (unless Self-Upgrade's ceiling in Tuning is raised above ask-first; a new install starts at ask-first), and never publishes a release.

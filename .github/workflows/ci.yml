@@ -182,13 +182,31 @@ jobs:
         run: python3 scripts/identity-scan-md.py
 
   build-and-test:
-    name: Build and test
-    # The toolchain the release is built with. Grux 3.3.0 is built and notarized
-    # with Xcode 27.2 (27B52, Apple Swift 6.4.2), and Swift 6.1 on macos-15 cannot
-    # type-check Grux-Mac/Sources/Grux/Chat/WeatherAsk.swift:183 in reasonable time
-    # (run 43027688522, 2026-11-11). CI builds and tests the same compiler as the
-    # shipped binary; the Toolchain step below fails on any other Swift.
-    runs-on: xcode-27
+    name: Build and test (${{ matrix.runner }})
+    # The release toolchain gates: Grux 3.3.0 is built and notarized with Xcode
+    # 27.2 (27B52, Apple Swift 6.4.2), so the xcode-27 leg must pass and fails on
+    # any other Swift. The macos-26 (Xcode 26.6) and macos-15 (Xcode 16.4, Swift
+    # 6.1) legs report whether older Xcode still builds and tests the tree; they
+    # do not gate (2026-11-11: Swift 6.1 could not type-check one WeatherAsk
+    # expression, run 43027688522, since split into typed steps).
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: xcode-27
+            developer_dir: /Applications/Xcode_27.2.app/Contents/Developer
+            swift: "6.4."
+            gate: true
+          - runner: macos-26
+            developer_dir: ""
+            swift: ""
+            gate: false
+          - runner: macos-15
+            developer_dir: ""
+            swift: ""
+            gate: false
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ !matrix.gate }}
     # The documentation filter, moved off the trigger. See the comment at the
     # top of this file for why it had to move and why it lands here.
     #
@@ -223,12 +241,14 @@ jobs:
       # requirement is the trap; the dependencies set the real floor.
       - name: Toolchain
         run: |
-          sudo xcode-select -s /Applications/Xcode_27.2.app/Contents/Developer
+          if [ -n "${{ matrix.developer_dir }}" ]; then sudo xcode-select -s "${{ matrix.developer_dir }}"; fi
           swift --version
           xcodebuild -version
           ls /Applications | grep -i '^Xcode' || true
-          swift --version 2>&1 | grep -q 'Apple Swift version 6\.4\.' \
-            || { echo "CI must build with the release toolchain, Swift 6.4"; exit 1; }
+          if [ -n "${{ matrix.swift }}" ]; then
+            swift --version 2>&1 | grep -q "Apple Swift version ${{ matrix.swift }}" \
+              || { echo "CI must build with the release toolchain, Swift ${{ matrix.swift }}"; exit 1; }
+          fi
 
       # NO BUILD CACHE, deliberately. Removed 2026-08-20 after it broke CI twice.
       #

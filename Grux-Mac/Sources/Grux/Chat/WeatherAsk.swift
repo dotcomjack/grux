@@ -180,17 +180,29 @@ enum WeatherAsk {
         ("morning", 6, 12), ("afternoon", 12, 17), ("evening", 17, 21), ("night", 18, 24),
     ]
     private static func todayWord(_ part: String) -> String { part == "night" ? "tonight" : "this \(part)" }
-    private static let todays: [(phrase: String, window: Window?)] = (
-        partsOfDay.map { (todayWord($0.word), Window.hours(from: $0.from, to: $0.to)) }
-            // "later tonight" narrows "later" to the part named (W45-FIX), and
-            // so do "later on tonight" and "later in the evening" (W45-P3).
-            + partsOfDay.flatMap { part in
-                ["later ", "later on "].map { ($0 + todayWord(part.word), Window.hours(from: part.from, to: part.to)) }
-                    + [("later in the " + part.word, Window.hours(from: part.from, to: part.to))]
+    private typealias DayPhrase = (phrase: String, window: Window?)
+    // Built in typed steps, the same phrases in the same order as before: one
+    // expression of maps and concatenations took Swift 6.1 (Xcode 16) past its
+    // type-check limit (public CI run 43027688522).
+    private static let todays: [DayPhrase] = {
+        var phrases: [DayPhrase] = []
+        for part in partsOfDay {
+            phrases.append((todayWord(part.word), Window.hours(from: part.from, to: part.to)))
+        }
+        // "later tonight" narrows "later" to the part named (W45-FIX), and
+        // so do "later on tonight" and "later in the evening" (W45-P3).
+        for part in partsOfDay {
+            let window: Window? = Window.hours(from: part.from, to: part.to)
+            for prefix in ["later ", "later on "] {
+                phrases.append((prefix + todayWord(part.word), window))
             }
-            + [("later today", .restOfDay), ("later on today", .restOfDay), ("today", nil),
-               ("later on", .restOfDay), ("later", .restOfDay)]
-    ).sorted { $0.0.count > $1.0.count }
+            phrases.append(("later in the " + part.word, window))
+        }
+        let rest: [DayPhrase] = [("later today", .restOfDay), ("later on today", .restOfDay), ("today", nil),
+                                 ("later on", .restOfDay), ("later", .restOfDay)]
+        phrases += rest
+        return phrases.sorted { $0.0.count > $1.0.count }
+    }()
     private static let tomorrows: [(phrase: String, window: Window?)] = (
         partsOfDay.map { ("tomorrow \($0.word)", Window.hours(from: $0.from, to: $0.to)) } + [("tomorrow", nil)]
     ).sorted { $0.0.count > $1.0.count }

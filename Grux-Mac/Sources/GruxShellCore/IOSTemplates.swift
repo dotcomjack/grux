@@ -411,10 +411,15 @@ public enum IOSTemplates {
                 req.requiresOnDeviceRecognition = true
                 req.shouldReportPartialResults = false
                 return await withCheckedContinuation { (cont: CheckedContinuation<String, Never>) in
+                    // A final result and an error can both arrive; resume once.
+                    var resumed = false
                     recog.recognitionTask(with: req) { result, err in
+                        guard !resumed else { return }
                         if let r = result, r.isFinal {
+                            resumed = true
                             cont.resume(returning: r.bestTranscription.formattedString)
                         } else if err != nil {
+                            resumed = true
                             cont.resume(returning: "(transcription error)")
                         }
                     }

@@ -171,17 +171,18 @@ final class ScreenCapturer {
     }
 
     private func performOCR(on image: CGImage) async throws -> String {
-        try await withCheckedThrowingContinuation { cont in
+        // Once: a failed recognition can both call the handler and throw (VisionRequest).
+        try await VisionRequest.once { finish in
             let req = VNRecognizeTextRequest { req, err in
-                if let err = err { cont.resume(throwing: err); return }
+                if let err = err { finish(.failure(err)); return }
                 let obs = req.results as? [VNRecognizedTextObservation] ?? []
                 let lines = obs.compactMap { $0.topCandidates(1).first?.string }
-                cont.resume(returning: lines.joined(separator: "\n"))
+                finish(.success(lines.joined(separator: "\n")))
             }
             req.recognitionLevel = .accurate
             req.usesLanguageCorrection = false
             let handler = VNImageRequestHandler(cgImage: image, options: [:])
-            do { try handler.perform([req]) } catch { cont.resume(throwing: error) }
+            try handler.perform([req])
         }
     }
 
