@@ -357,7 +357,8 @@ final class LocalModelSpeedCheckTests: XCTestCase {
             let text = try String(contentsOf: root.appendingPathComponent(path), encoding: .utf8)
             let settle = try XCTUnwrap(text.range(of: "LocalModelSpeedGuard.settle(pick: pick"), "\(path) times the pick")
             let pull = try XCTUnwrap(text.range(of: "pullToEnd(pick.id)"), path)
-            let adopt = try XCTUnwrap(text.range(of: "installedModelToAdopt("), path)
+            // The adoption itself (first run reaches it through ModelGate.modelToUse, D111).
+            let adopt = try XCTUnwrap(text.range(of: "if let adopt = "), path)
             XCTAssertLessThan(pull.lowerBound, settle.lowerBound, "\(path): timed after the download")
             XCTAssertLessThan(settle.lowerBound, adopt.lowerBound, "\(path): timed before it becomes the default")
             XCTAssertTrue(text.contains("settledPick") || text.contains("headline: settled.id"),

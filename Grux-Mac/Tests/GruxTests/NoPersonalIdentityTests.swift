@@ -97,6 +97,10 @@ final class NoPersonalIdentityTests: XCTestCase {
     /// becomes decorative. Each entry's reasoning lives in the json.
     static var allowedContexts: [String] { vocabulary.allowedContexts }
 
+    /// `allowedContexts` lowercased once: lowercasing every entry again for every
+    /// literal span cost most of this scan's 10 s per tree walk (T1 part 4).
+    private static let lowercasedContexts: [String] = vocabulary.allowedContexts.map { $0.lowercased() }
+
     /// Files whose JOB is to hold the banned vocabulary, so they must contain it.
     ///
     /// Distinct from `knownRemaining` on purpose. That list is a pending owner
@@ -573,15 +577,18 @@ final class NoPersonalIdentityTests: XCTestCase {
                     // and its MIT licence, carrying that exact copyright line, was
                     // generated into THIRD-PARTY-NOTICES.md. The allowlist said the line
                     // was fine, the guard failed the build anyway.
-                    if Self.allowedContexts.contains(where: { hay.contains($0.lowercased()) }) { continue }
+                    //
+                    // The banned words are read first: a span with none can never be a
+                    // hit, so the allowlist is consulted only for a span that has one,
+                    // and the verdict is the one the old order gave.
+                    guard let word = Self.bannedWords.first(where: { Self.containsWord(hay, $0) }) else { continue }
+                    if Self.lowercasedContexts.contains(where: { hay.contains($0) }) { continue }
                     if Self.allowedExactTokens.contains(
                         hay.trimmingCharacters(in: .whitespaces)) { continue }
-                    if let word = Self.bannedWords.first(where: { Self.containsWord(hay, $0) }) {
-                        hits.append(Hit(file: rel, line: i + 1,
-                                        text: line.trimmingCharacters(in: .whitespaces),
-                                        word: word))
-                        reported = true
-                    }
+                    hits.append(Hit(file: rel, line: i + 1,
+                                    text: line.trimmingCharacters(in: .whitespaces),
+                                    word: word))
+                    reported = true
                 }
             }
         }

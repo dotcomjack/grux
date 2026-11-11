@@ -106,11 +106,21 @@ final class InboxSyncEngine: ObservableObject {
     // headers for unseen sequence numbers we have not stored yet, fetch
     // bodies for those, persist, and route the genuinely new support mail
     // through triage. Returns the number of new messages stored.
+    /// Shown on the account's row in Mail's Accounts sheet (wave 75 round 2): it
+    /// said "no password stored" when the Keychain only would not answer. Adding
+    /// the same address updates the account (round 3), so that is the step.
+    static func noPasswordLine(address: String, read: ImapPasswordVault.PasswordRead) -> String {
+        if case .unreadable = read {
+            return "could not read the password for \(address): macOS did not hand it over from the Keychain (it may be locked)"
+        }
+        return "no password stored for \(address); add it again below with its app password, the same address updates it"
+    }
+
     @discardableResult
     func syncAccount(_ account: EmailAccount) async throws -> Int {
-        let password = EmailAccountStore.shared.password(for: account)
-        guard !password.isEmpty else {
-            throw IMAPClient.IMAPError.loginFailed("no password stored for \(account.emailAddress); add it in Mailbox > Accounts")
+        let read = EmailAccountStore.shared.passwordRead(for: account)
+        guard case .found(let password) = read else {
+            throw IMAPClient.IMAPError.loginFailed(Self.noPasswordLine(address: account.emailAddress, read: read))
         }
 
         let client = IMAPClient(host: account.imapHost, port: UInt16(account.imapPort), useTLS: account.useTLS)

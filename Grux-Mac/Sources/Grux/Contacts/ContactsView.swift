@@ -121,13 +121,8 @@ struct ContactsView: View {
                     .font(GruxType.body)
                     .foregroundStyle(GruxTheme.textPrimary)
                     .lineLimit(1)
-                if !contact.organization.isEmpty {
-                    Text(contact.organization)
-                        .font(GruxType.caption)
-                        .foregroundStyle(GruxTheme.textSecondary)
-                        .lineLimit(1)
-                } else if let email = contact.emails.first {
-                    Text(email)
+                if let subtitle = contact.listSubtitle {
+                    Text(subtitle)
                         .font(GruxType.caption)
                         .foregroundStyle(GruxTheme.textSecondary)
                         .lineLimit(1)
@@ -179,7 +174,7 @@ struct ContactsView: View {
         } else {
             GruxEmptyState(
                 icon: "lock.shield",
-                line: "Contacts access is denied. Enable it for Grux in System Settings.",
+                line: "Contacts access is denied. In System Settings, Privacy & Security, Contacts, turn on Grux AI.",
                 ctaTitle: "Open System Settings",
                 ctaAction: {
                     if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Contacts") {
@@ -216,8 +211,8 @@ struct ContactsView: View {
                     Text(contact.fullName)
                         .font(GruxType.title)
                         .foregroundStyle(GruxTheme.textPrimary)
-                    if !contact.organization.isEmpty {
-                        Text(contact.organization)
+                    if let subtitle = contact.headerSubtitle {
+                        Text(subtitle)
                             .font(GruxType.caption)
                             .foregroundStyle(GruxTheme.textSecondary)
                     }

@@ -49,6 +49,31 @@ actor NotionClient {
 
     // MARK: - Auth state
 
+    /// The database id in a pasted link or id; `CapabilityResolver.notionDatabaseId` says how.
+    nonisolated static func databaseId(from raw: String) -> String? {
+        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if let cut = text.firstIndex(where: { $0 == "?" || $0 == "#" }) { text = String(text[..<cut]) }
+        let pattern = #"(?<![0-9a-f])[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}(?![0-9a-f])"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let last = regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).last,
+              let range = Range(last.range, in: text) else { return nil }
+        let id = text[range].replacingOccurrences(of: "-", with: "")
+        return id.count == 32 ? id : nil
+    }
+
+    /// What Integrations stores for what was typed in its Database ID field: the
+    /// id read out of a link or a dashed id (W57-FIX P3 4), the same value
+    /// Credentials stores; anything else as typed, so Test says why it fails.
+    nonisolated static func storedDatabaseId(_ typed: String) -> String {
+        databaseId(from: typed) ?? typed.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Whether two ids name one database, dashed or not.
+    nonisolated static func sameDatabase(_ a: String, _ b: String) -> Bool {
+        guard let x = databaseId(from: a), let y = databaseId(from: b) else { return false }
+        return x == y
+    }
+
     nonisolated static func isConnected() -> Bool {
         let t = KeychainStore.get(.notionToken).trimmingCharacters(in: .whitespacesAndNewlines)
         let d = KeychainStore.get(.notionDatabaseId).trimmingCharacters(in: .whitespacesAndNewlines)

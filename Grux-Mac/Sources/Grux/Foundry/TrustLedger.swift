@@ -45,7 +45,7 @@ final class TrustLedger: ObservableObject {
     private let storageURL: URL
     private var saveTask: Task<Void, Never>?
 
-    private static let promotionStreak = 5
+    nonisolated static let promotionStreak = 5
     private static let demotionRejections = 2
 
     // Tests inject a temp URL; the app uses the shared singleton.
@@ -72,6 +72,10 @@ final class TrustLedger: ObservableObject {
     func tier(lane: UpgradeLane, domain: UpgradeDomain) -> TrustTier {
         entry(lane: lane, domain: domain).tier
     }
+
+    // The furthest any (lane, domain) pair has climbed, for surfaces that say
+    // where self-upgrade stands as a whole (first run's How Grux works card).
+    var highestTier: TrustTier { entries.map(\.tier).max() ?? .propose }
 
     // MARK: - Writes
 

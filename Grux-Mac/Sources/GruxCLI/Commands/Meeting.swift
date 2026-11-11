@@ -282,7 +282,7 @@ struct Meeting: ParsableCommand {
             print("")
             print(r.prose("\(audio.label) is not granted, so Grux will capture your "
                 + "microphone and not the other side of the call. macOS grants it under "
-                + "Screen Recording, and Grux asks for it when the recording starts.",
+                + "Screen & System Audio Recording, and Grux asks for it when the recording starts.",
                 indent: 2))
         }
 

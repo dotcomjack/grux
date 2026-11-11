@@ -139,6 +139,13 @@ extension GruxControlTools {
 
         let tool = item.action.detail["__replay_tool"] ?? ""
 
+        // A yes the tool would turn down now is answered here, before anything starts,
+        // with the line the card shows (D126). Otherwise the door said "started" while
+        // approveAndExecute held the item.
+        if let line = CannotRunNow.cardLine(for: item, foundryEnabled: ApprovalQueue.shared.foundryEnabled()) {
+            return MCPWire.textFailure(line + " Nothing ran; it is still waiting.")
+        }
+
         // THE REPLY CANNOT CARRY THE RESULT, and pretending otherwise would be the lie.
         //
         // `ApprovalQueue.approveAndExecute` is async and this handler is not: the dispatch

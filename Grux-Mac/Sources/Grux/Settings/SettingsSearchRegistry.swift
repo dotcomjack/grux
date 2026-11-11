@@ -92,6 +92,7 @@ enum SettingsTabAliases {
         "keys":          SettingsLocation(pane: .dataSecurity, sub: "capabilities", anchor: "data.credentials"),
         "needs setup":   SettingsLocation(pane: .dataSecurity, sub: "capabilities", anchor: "data.credentials"),
         "memory":        SettingsLocation(pane: .dataSecurity, sub: "capabilities", anchor: "data.memory"),
+        "capture-privacy": SettingsLocation(pane: .dataSecurity, sub: "capabilities", anchor: "data.capturePrivacy"),
         // C12: the door to the brand-scoped rows, reachable by deep link.
         "brands":        SettingsLocation(pane: .dataSecurity, sub: "capabilities", anchor: "data.brands"),
         // Files that name themselves, by the verb a person uses for what it does.
@@ -111,6 +112,10 @@ enum SettingsTabAliases {
         "first-run":     SettingsLocation(pane: .general, anchor: "general.firstRun"),
         "onboarding":    SettingsLocation(pane: .general, anchor: "general.firstRun"),
         "restart":       SettingsLocation(pane: .general, anchor: "general.firstRun"),
+        // D170 item 16: the agent handoff card, low on General.
+        "handoff":       SettingsLocation(pane: .general, anchor: "general.handoff"),
+        "hand-off":      SettingsLocation(pane: .general, anchor: "general.handoff"),
+        "agent-setup":   SettingsLocation(pane: .general, anchor: "general.handoff"),
     ]
 
     // Unknown tags fall back to General, matching the old TabView behavior
@@ -161,7 +166,8 @@ enum SettingsTabAliases {
         // whose remediation says "Turn it on in Settings, and off there
         // whenever you want", so pointing it at first-run would send somebody
         // to re-walk setup for a toggle. It also holds
-        // `stepFirstFrameReviewed`, which you complete by USING the feature.
+        // `stepFirstFrameReviewed`, which Focus log's card answers itself
+        // (`CapabilitySetupCard.StepRoute.reviewFrame`, D157 item 3).
         // Being self-attested says who may answer; it does not say where.
         case .stepRecordingConsentAcknowledged,
              .stepCaptureExclusionsConfirmed,
@@ -351,10 +357,11 @@ enum SettingsSearchRegistry {
                        "permission", "legal", "two party", "tell them", "participants"]),
         SettingsSearchEntry(id: "ambient.crashsafe", title: "Crash-safe meeting capture",
             location: SettingsLocation(pane: .voiceAmbient, sub: "ambient", anchor: "ambient.crashsafe"),
-            keywords: ["crash", "meeting", "capture", "safety net", "audio", "wal", "recover"]),
-        SettingsSearchEntry(id: "ambient.qwen", title: "Local Qwen ambient brain",
+            keywords: ["crash", "meeting", "capture", "safety net", "audio", "wal", "recover",
+                       "export", "wav", "recording", "keep"]),
+        SettingsSearchEntry(id: "ambient.qwen", title: AmbientProxyCopy.title,
             location: SettingsLocation(pane: .voiceAmbient, sub: "ambient", anchor: "ambient.qwen"),
-            keywords: ["qwen", "local llm", "endpoint", "summaries", "ping", "proxy"]),
+            keywords: ["qwen", "local llm", "endpoint", "summaries", "ping", "proxy", "background"]),
         SettingsSearchEntry(id: "ambient.data", title: "Ambient data",
             location: SettingsLocation(pane: .voiceAmbient, sub: "ambient", anchor: "ambient.data"),
             keywords: ["transcript", "chunks", "memories", "detected actions", "extraction", "clear ambient"]),

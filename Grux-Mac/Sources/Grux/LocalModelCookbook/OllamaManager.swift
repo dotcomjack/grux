@@ -1,4 +1,5 @@
 import Foundation
+import GruxAgentCore
 
 // What a pull would cost on disk, whether the volume can take it, and the
 // numbers that decided.
@@ -230,7 +231,24 @@ final class OllamaManager: ObservableObject {
 
     @Published private(set) var binaryPath: String? = nil
     @Published private(set) var serverState: ServerState = .stopped
-    @Published private(set) var installedTags: [String] = []
+    @Published private(set) var installedTags: [String] = [] {
+        didSet { if installedTags != oldValue { Self.installedChanged() } }
+    }
+
+    /// Called when what Ollama holds changes: a pull finished, a model was
+    /// removed, the server stopped. The composer's model menu lists the
+    /// registry's models, which only `discoverLocal` fills, so a model pulled
+    /// from its card was missing there until Settings opened or Grux
+    /// relaunched (wave 65 round 2). Tests replace it.
+    static var installedChanged: @MainActor () -> Void = {
+        guard !Persistence.isUnderTest else { return }
+        Task { await ModelRegistry.shared.discoverLocal() }
+    }
+
+    /// What /api/tags listed, as `refreshInstalled` read it.
+    func applyInstalled(_ tags: [String]) {
+        installedTags = tags
+    }
     @Published private(set) var pulls: [String: PullProgress] = [:]
     @Published private(set) var lastError: String? = nil
     // What the server said at /api/version, the last time it answered (D25).
@@ -340,7 +358,7 @@ final class OllamaManager: ObservableObject {
         proc.standardError = Pipe()
         do {
             try proc.run()
-            proc.waitUntilExit()
+            proc.waitForExitBlocking()
             let data = out.fileHandleForReading.readDataToEndOfFile()
             let path = String(data: data, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -601,14 +619,19 @@ final class OllamaManager: ObservableObject {
               let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let models = obj["models"] as? [[String: Any]] else { return }
-        installedTags = models.compactMap { $0["name"] as? String }
+        applyInstalled(models.compactMap { $0["name"] as? String })
     }
 
-    // A catalog id counts as installed when any installed tag matches it
-    // exactly or as the ":latest" expansion ("llama3.1:8b" vs "llama3.1:8b",
-    // "mistral-small3.1" vs "mistral-small3.1:latest").
+    // A catalog id counts as installed when any installed tag is the same
+    // model in any spelling `Cookbook.sameModel` reads as one ("llama3.1:8b"
+    // vs "llama3.1:8b", "mistral-small3.1" vs "mistral-small3.1:latest",
+    // "Qwen3.5:4B" vs "qwen3.5:4b").
     func isInstalled(_ modelId: String) -> Bool {
-        installedTags.contains { $0 == modelId || $0 == "\(modelId):latest" }
+        Self.isInstalled(modelId, in: installedTags)
+    }
+
+    nonisolated static func isInstalled(_ modelId: String, in tags: [String]) -> Bool {
+        tags.contains { Cookbook.sameModel($0, modelId) }
     }
 
     // MARK: - Pull with streamed progress

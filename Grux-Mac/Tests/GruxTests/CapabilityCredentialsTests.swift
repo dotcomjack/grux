@@ -86,15 +86,31 @@ final class CapabilityCredentialsTests: XCTestCase {
         for req in keys {
             let line = CapabilityCredentialsSection.rowLine(req)
             XCTAssertFalse(line.contains("Settings"), "\(req.rawValue): \(line)")
-            XCTAssertEqual(line, req.remediation.replacingOccurrences(of: " in Settings", with: ""),
+            XCTAssertEqual(line, req.remediation.replacingOccurrences(of: " in Settings", with: "")
+                               .replacingOccurrences(of: " in Integrations", with: ""),
                            "\(req.rawValue): the row keeps every other word of the contract sentence")
         }
         XCTAssertEqual(CapabilityCredentialsSection.rowLine(.keyAnthropic),
                        "Add your Anthropic API key to use Claude. Get one at console.anthropic.com. "
-                       + "Chat also runs on a local model with no key.")
+                       + "Many features run on a local model with no key.")
         XCTAssertEqual(CapabilityCredentialsSection.rowLine(.keyReplicate),
                        "Add a Replicate API token to generate images.")
         XCTAssertTrue(SetupRequirement.keyAnthropic.remediation.contains("in Settings"),
+                      "the setup card outside Settings still says where to go")
+    }
+
+    /// D135 item 6 (sense pass 14, `settings-capabilities-page1.png`): the TypeSafe row read
+    /// "Add a TypeSafe key in Integrations" above its own field and Save. A row in this
+    /// section holds the field, so it sends a person nowhere else.
+    func testACredentialRowSendsYouNowhereElse() {
+        for req in SetupRequirement.allCases where req.kind == .key {
+            let line = CapabilityCredentialsSection.rowLine(req)
+            XCTAssertFalse(line.contains(" in Integrations"), "\(req.rawValue): \(line)")
+        }
+        XCTAssertEqual(CapabilityCredentialsSection.rowLine(.keyTypesafe),
+                       "Optional. Add a TypeSafe key so Grux understands asks it cannot match word for word. "
+                       + "Without one, it decides on this Mac.")
+        XCTAssertTrue(SetupRequirement.keyTypesafe.remediation.contains("in Integrations"),
                       "the setup card outside Settings still says where to go")
     }
 }

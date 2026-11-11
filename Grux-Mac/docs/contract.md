@@ -71,14 +71,14 @@ Secrets. Resolved from Keychain only. See section 2.4.
 
 | id | label | remediation |
 |---|---|---|
-| `key.anthropic` | Anthropic API key | Add your Anthropic API key in Settings to use Claude. Get one at console.anthropic.com. Chat also runs on a local model with no key. |
+| `key.anthropic` | Anthropic API key | Add your Anthropic API key in Settings to use Claude. Get one at console.anthropic.com. Many features run on a local model with no key. |
 | `key.github` | GitHub token | Connect GitHub in Settings so Grux can read your repositories. A classic token with repo scope is enough. |
 | `key.appstoreconnect` | App Store Connect API key | Add your App Store Connect key, issuer ID and .p8 file in Settings to let Grux publish builds. |
 | `key.elevenlabs` | ElevenLabs API key | Optional. Add an ElevenLabs key for a natural voice. Grux uses the built-in macOS voice without one. |
 | `key.reddit` | Reddit API credentials | Connect Reddit in Settings to read mentions of your product. |
 | `key.replicate` | Replicate API token | Add a Replicate API token in Settings to generate images. |
 | `key.brave` | Web search API key | Add a Brave Search API key in Settings so Grux can search the web. The free tier is enough. |
-| `key.resend` | Email sending API key | Add your email provider API key in Settings so Grux can send mail. Grux has no SMTP client. |
+| `key.resend` | Resend API key | Add a Resend API key in Settings so Grux can send mail. Get one at resend.com, the service Grux sends mail through. |
 | `key.slack` | Slack token | Connect Slack in Settings so Grux can read and post in your workspace. |
 | `key.notion` | Notion token | Paste your Notion integration secret in Settings, and the database you want Grux to write to. |
 | `key.telegram` | Telegram bot token | Add a Telegram bot token and chat id in Settings so Grux can send alerts to your phone. Nothing is sent until you add both. |
@@ -121,6 +121,14 @@ placement as a capability is wrong: as `requires` a feature would sit in `needs-
 waiting on a switch that ships off, and as `optional` it would render a standing note
 asking the user to add an analytics key, which inverts section 4 on the one surface where
 the private tree already ships the opposite. Removed 2026-08-09 on that reasoning.
+
+**Amended 2026-10-31, CR-41. The `key.anthropic` remediation no longer names Chat.** It
+ended "Chat also runs on a local model with no key", and this sentence is printed wherever the
+capability is named: Settings, every `grux` answer and handoff prompt, and every setup card,
+so Focus log's card and `grux next` for Research spoke of a feature the person may not have on
+(loop rows D96 and W25). It now ends "Many features run on a local model with no key." A
+feature's own card line, where it needs one, is `FeatureRegistry.cardLines` (CR-40 in
+feature-registry.md).
 
 **Amended 2026-08-12, CR-9.** The GoDaddy registrar key (retired by CR-37) and `step.phone_paired` are added in the same amendment for a duller reason.
 Both are already implemented and credential-gated in the private tree (`goDaddyApiKey` plus
@@ -174,15 +182,15 @@ Granted by the operating system. Never guessed: resolved by asking the relevant 
 
 | id | label | remediation |
 |---|---|---|
-| `perm.screen_recording` | Screen Recording | Grux needs Screen Recording to see what you are working on. Open System Settings, Privacy and Security, Screen Recording, and enable Grux. |
-| `perm.microphone` | Microphone | Grux needs the microphone to hear you. Open System Settings, Privacy and Security, Microphone, and enable Grux. |
-| `perm.accessibility` | Accessibility | Grux needs Accessibility to read the active window title. Open System Settings, Privacy and Security, Accessibility, and enable Grux. |
-| `perm.automation` | Automation | Grux needs Automation to control other apps. Approve the prompt macOS shows, or enable Grux under Privacy and Security, Automation. |
-| `perm.calendar` | Calendar | Grux needs Calendar access to read and create events. Open System Settings, Privacy and Security, Calendars, and enable Grux. |
-| `perm.contacts` | Contacts | Grux needs Contacts access to match people to conversations. Open System Settings, Privacy and Security, Contacts, and enable Grux. |
-| `perm.notifications` | Notifications | Allow notifications so Grux can nudge you. Open System Settings, Notifications, Grux, and turn them on. |
-| `perm.system_audio` | System audio capture | Grux needs system audio to transcribe meetings. Open System Settings, Privacy and Security, Screen Recording, and enable Grux. |
-| `perm.full_disk_access` | Full Disk Access | Grux needs Full Disk Access to read your messages. Open System Settings, Privacy and Security, Full Disk Access, and enable Grux. |
+| `perm.screen_recording` | Screen Recording | Grux needs Screen Recording to see your work. In System Settings, Privacy & Security, Screen & System Audio Recording, turn on Grux AI. |
+| `perm.microphone` | Microphone | Grux needs the microphone to hear you. Open System Settings, Privacy & Security, Microphone, and turn on Grux AI. |
+| `perm.accessibility` | Accessibility | Grux needs Accessibility to read the active window title. Open System Settings, Privacy & Security, Accessibility, and turn on Grux AI. |
+| `perm.automation` | Automation | Grux needs Automation to control other apps. Approve the macOS prompt, or in Privacy & Security, Automation, turn on apps under Grux AI. |
+| `perm.calendar` | Calendar | Grux needs Calendar access to read and create events. Open System Settings, Privacy & Security, Calendars, and turn on Grux AI. |
+| `perm.contacts` | Contacts | Grux needs Contacts access to match people to conversations. Open System Settings, Privacy & Security, Contacts, and turn on Grux AI. |
+| `perm.notifications` | Notifications | Allow notifications so Grux can nudge you. Open System Settings, Notifications, Grux AI, and turn them on. |
+| `perm.system_audio` | System audio capture | Grux needs system audio to transcribe meetings. In System Settings, Privacy & Security, Screen & System Audio Recording, turn on Grux AI. |
+| `perm.full_disk_access` | Full Disk Access | Grux needs Full Disk Access to read your messages. Open System Settings, Privacy & Security, Full Disk Access, and turn on Grux AI. |
 
 `perm.system_audio` resolves to the same Screen Recording grant as `perm.screen_recording`,
 which is why its remediation sends you to the same pane. **A feature declares at most one of
@@ -257,7 +265,7 @@ same reasoning that keeps `URLGuard.trustedLANHosts` empty in `grux-kit`.
 | `endpoint.webhook_inbox` | Webhook inbox | Turn on the local webhook listener in Settings and choose a port to let other machines push updates in. |
 | `endpoint.ollama` | Local model server | Install Ollama and start it, or point Grux at your Ollama host in Settings. |
 | `endpoint.media_service` | Image generation service | Point Grux at your image generation service in Settings, or use a hosted provider key instead. |
-| `endpoint.imap` | Mail server | Add a mail account, its server and an app password in Settings to let Grux read your inbox. |
+| `endpoint.imap` | Mail server | Add a mail account in Mail: its address, its server and an app password from your provider. Set it up opens the form. |
 | `endpoint.social_accounts` | Social accounts | List your posting service, one URL per line, in ~/.grux/social-ops-hosts.txt. Grux reads it at launch and when the Social Ops panel opens. |
 | `endpoint.sandbox_root` | Watched folder | Choose the folder Grux should guard in Settings. |
 | `endpoint.microsoft_graph` | Microsoft 365 mail | Add your Microsoft 365 tenant, app id and a mailbox in Settings to let Grux read that inbox. Nothing connects until you do. |
@@ -602,11 +610,11 @@ one `degraded` note rather than one note per member.
 | id | label | remediation |
 |---|---|---|
 | `step.first_frame_reviewed` | Review the first capture | Grux will show you one frame, and the exact text it would send, before anything leaves your Mac. Nothing is sent until you approve. |
-| `step.agent_cli_installed` | Install the agent command line tool | Install the coding agent command line tool, then restart Grux. It was not found at any location Grux checks. |
+| `step.agent_cli_installed` | Install Claude Code | Install Claude Code: in Terminal, run curl -fsSL https://claude.ai/install.sh \| bash. Grux notices it by itself once it is installed. |
 | `step.capture_exclusions_confirmed` | Confirm what stays private | Check the list of apps Grux will never look at. Password managers and banking apps are excluded by default. |
 | `step.recording_consent_acknowledged` | Confirm you will tell people | Recording a call captures everyone on it, and some places require you to say so first. Confirm you will, then Grux can record. |
 | `step.speech_model_downloaded` | Fetch the speech model | Grux fetches a one time on-device speech model before it can transcribe. Connect to the internet and open Meetings once. |
-| `step.corpus_sources_confirmed` | Choose what gets indexed | Pick which of your messages, notes and sent mail Grux may index. Nothing is indexed until you choose. |
+| `step.corpus_sources_confirmed` | Choose what gets indexed | Pick which of your messages, notes and sent mail Grux may index. Nothing from them is indexed until you choose. |
 | `step.terminal_sessions_explained` | Understand terminal sessions | Read what a headless session runs and which credential it spends, then turn terminal sessions on in Settings. |
 | `step.phone_paired` | Pair your iPhone | Open Pair iPhone in Settings and scan the code with the Grux phone app. The pairing secret never leaves your Mac and your phone. |
 | `step.youtube_transcripts_enabled` | Turn on YouTube transcripts | Grux reads YouTube captions with yt-dlp when you paste a video link. Turn it on in Settings, and off there whenever you want. |

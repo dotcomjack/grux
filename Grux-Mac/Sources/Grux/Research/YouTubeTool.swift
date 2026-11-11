@@ -75,26 +75,36 @@ enum YouTubeTool {
             return "error: \(error.localizedDescription)"
         }
 
-        await ingestIntoMemory(result)
+        let saved = await ingestIntoMemory(result)
 
         let stamped = result.textWithTimestamps
         let body = YouTubeTranscript.truncated(stamped, limit: outputCharLimit)
         let minutes = result.segments.last.map { Int(($0.start + $0.duration) / 60.0) } ?? 0
-        let header = """
-        title: \(result.title)
-        video_id: \(result.videoId)
-        length: ~\(minutes) min, \(result.segments.count) caption segments (source: \(result.source))
-        saved: transcript ingested into semantic memory for future recall
-        """
+        let header = header(title: result.title, videoId: result.videoId, minutes: minutes,
+                            segments: result.segments.count, source: result.source, saved: saved)
         return header + "\n\ntranscript:\n" + body
+    }
+
+    /// Said only when the transcript went into memory (D173: it was said with
+    /// memory off too); `ActionClaimGuard.kept` reads it as what backs
+    /// "I've saved the transcript".
+    static let savedLine = "saved: transcript ingested into semantic memory for future recall"
+
+    static func header(title: String, videoId: String, minutes: Int, segments: Int, source: String, saved: Bool) -> String {
+        var lines = ["title: \(title)", "video_id: \(videoId)",
+                     "length: ~\(minutes) min, \(segments) caption segments (source: \(source))"]
+        if saved { lines.append(savedLine) }
+        return lines.joined(separator: "\n")
     }
 
     // Chunk the plain transcript into embeddable pieces and store each under
     // kind .web with video metadata, plus one header entry that anchors
     // title-based recall.
-    private static func ingestIntoMemory(_ result: YouTubeTranscriptResult) async {
+    /// Whether it stored anything: nothing with memory off.
+    @discardableResult
+    private static func ingestIntoMemory(_ result: YouTubeTranscriptResult) async -> Bool {
         let enabled = await MainActor.run { AppState.shared.config.memoryEnabled }
-        guard enabled else { return }
+        guard enabled else { return false }
 
         let chunks = chunkTranscript(result.plainText, chunkChars: ingestChunkChars, maxChunks: ingestMaxChunks)
         let videoUrl = "https://www.youtube.com/watch?v=\(result.videoId)"
@@ -121,6 +131,7 @@ enum YouTubeTool {
                 )
             }
         }
+        return true
     }
 
     // MARK: - Chunking (pure, testable)

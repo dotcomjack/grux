@@ -23,16 +23,13 @@ actor IMessageIngester: CorpusIngester {
     private var ledger: CorpusLedger
     private let perRunCap = 5_000   // newest N outbound messages per pass
 
-    private var dbPath: String {
-        NSHomeDirectory() + "/Library/Messages/chat.db"
-    }
+    private var dbPath: String { Self.defaultDBPath }
 
-    init(rag: RAGClient) {
-        self.rag = rag
-        self.ledger = CorpusLedger.load(source: .iMessage)
-    }
+    static let defaultDBPath = NSHomeDirectory() + "/Library/Messages/chat.db"
 
-    func probe() async -> CorpusPermission {
+    /// The Full Disk Access check, sync so the chat's privacy answer (D182)
+    /// reads it fresh rather than the coordinator's saved snapshot.
+    static func probe(dbPath: String) -> CorpusPermission {
         guard FileManager.default.fileExists(atPath: dbPath) else { return .noData }
         // FDA check: try to actually read one row. A bare isReadableFile is not
         // reliable under TCC, so we open + run a trivial query.
@@ -48,6 +45,15 @@ actor IMessageIngester: CorpusIngester {
         defer { sqlite3_finalize(stmt) }
         if !ok { return .needsFullDiskAccess }
         return sqlite3_step(stmt) == SQLITE_ROW ? .ready : .needsFullDiskAccess
+    }
+
+    init(rag: RAGClient) {
+        self.rag = rag
+        self.ledger = CorpusLedger.load(source: .iMessage)
+    }
+
+    func probe() async -> CorpusPermission {
+        Self.probe(dbPath: dbPath)
     }
 
     func ingest() async -> CorpusRunResult {

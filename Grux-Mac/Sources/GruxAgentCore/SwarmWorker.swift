@@ -152,14 +152,18 @@ public actor SwarmWorker {
         return [(root as NSString).resolvingSymlinksInPath]
     }
 
-    // Silent mode (`~/.grux/SILENT`) for the agents' own tools. A Claude or ACP
+    // Silent mode (`~/.grux/SILENT` or `~/.grux/HEADLESS`) for the agents' own tools. A Claude or ACP
     // agent runs its Bash commands itself, so no Grux shell door sees its `say`
     // or `afplay`; the sandbox is the only place to stop them. Grux points this
     // at `AudioOutput.isSilent` at launch; the default reads the sentinel, so a
     // worker spawned before that wiring is still silent.
     nonisolated(unsafe) public static var isSilent: () -> Bool = {
-        FileManager.default.fileExists(atPath: NSHomeDirectory() + "/.grux/SILENT")
+        silencingSentinelNames.contains { FileManager.default.fileExists(atPath: NSHomeDirectory() + "/.grux/" + $0) }
     }
+
+    /// The files under `~/.grux` that each silence the agents' tools on their own, the
+    /// same two as `ShellSilence.sentinelNames` (AudioOutputSilentModeTests).
+    public static let silencingSentinelNames = ["SILENT", "HEADLESS"]
 
     // Headless mode (`~/.grux/HEADLESS`) for the agents' own tools, for the same reason:
     // a workflow's agent step runs `open -a "Google Chrome"` or `osascript` itself, so

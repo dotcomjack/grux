@@ -61,6 +61,8 @@ enum CorpusPermission: String, Codable, Sendable {
     case needsFullDiskAccess
     case needsAutomation    // Apple Notes / AppleScript automation consent
     case needsAccount       // no Gmail account configured in EmailAccountStore
+    case needsPassword      // a Gmail account is there with no password saved
+    case needsKeychain      // the Keychain would not hand its password over (locked, headless)
     case noData             // reachable, but nothing to ingest (e.g. empty imports folder)
     case unknown
 
@@ -68,13 +70,25 @@ enum CorpusPermission: String, Codable, Sendable {
         switch self {
         case .ready:              return "Ready"
         case .needsFullDiskAccess:
-            return "Needs Full Disk Access. Open System Settings, Privacy and Security, Full Disk Access, and enable Grux."
+            return "Needs Full Disk Access. Open System Settings, Privacy & Security, Full Disk Access, and turn on Grux AI."
         case .needsAutomation:
-            return "Needs Automation access for Notes. Open System Settings, Privacy and Security, Automation, and enable Grux."
+            return "Needs Automation access for Notes. Open System Settings, Privacy & Security, Automation, and turn on Grux AI."
         case .needsAccount:
             // Named one specific personal address, which is wrong on anyone
             // else's machine and put a private email on a visible surface.
-            return "No Gmail account configured. Add your Gmail account in Mailbox, Accounts (IMAP app password)."
+            // No button named (wave 75 round 1): with no mail account Mail draws
+            // its setup card ("Set it up"), with any other account switched on it
+            // draws the inbox and "Accounts", and onboarding shows no Mail at all.
+            return "No Gmail account yet. Add one in Mail, with an app password from Google, not your Google password."
+        case .needsPassword:
+            // The account is listed in Mail, so "No Gmail account yet" was false
+            // for it. Adding the same address in Mail updates that account
+            // (`EmailAccountStore.formTarget`), so Add is the whole step.
+            return "The Gmail account in Mail has no password saved. Add it again in Mail with an app password from Google, not your Google password; the same address updates that account."
+        case .needsKeychain:
+            // Wave 75 round 3: probed, not unknown, and never "no password": the
+            // password may be there, and the step is the Keychain, not Mail.
+            return "Grux could not read the Gmail password: macOS did not hand it over from the Keychain, which may be locked. Once it is unlocked, Grux can read it."
         case .noData:
             return "No data found yet for this source."
         case .unknown:

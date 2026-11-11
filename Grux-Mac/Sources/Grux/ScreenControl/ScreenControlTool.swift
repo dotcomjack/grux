@@ -99,13 +99,13 @@ enum ScreenControlTool {
             await audit(action: action, verdict: ok ? "ok" : "error", detail: ok ? "granted" : "not granted")
             return ok
                 ? "ok: Accessibility is granted. Screen control is ready."
-                : "error: Accessibility is NOT granted. Grux needs it to control the screen. Grant it in System Settings → Privacy & Security → Accessibility → Grux, then try again."
+                : "error: Accessibility is NOT granted. Grux needs it to control the screen. Grant it in System Settings → Privacy & Security → Accessibility → Grux AI, then try again."
         }
 
         // Gate 2: the Accessibility grant, for anything that actually acts.
         guard ScreenControlEngine.hasAccessibility() else {
             await audit(action: action, verdict: "error", detail: "no accessibility grant")
-            return "error: Grux needs macOS Accessibility permission to control the screen. Grant it in System Settings → Privacy & Security → Accessibility → Grux, then try again."
+            return "error: Grux needs macOS Accessibility permission to control the screen. Grant it in System Settings → Privacy & Security → Accessibility → Grux AI, then try again."
         }
 
         // The closed loop is opt-in per call: only engaged when the caller asks
@@ -320,7 +320,7 @@ enum ScreenControlTool {
             return "error: \(failMessage)"
         case .unverifiable:
             await audit(action: action, verdict: "ok", detail: "\(auditDetail); unverified(no-capture)")
-            return "ok: \(openLoopMessage) (could not auto-confirm: turn on Screen Recording for Grux in System Settings → Privacy & Security so Grux can verify its own actions)"
+            return "ok: \(openLoopMessage) (could not auto-confirm: turn on Grux AI in System Settings → Privacy & Security → Screen & System Audio Recording so Grux can verify its own actions)"
         case .verified(let r) where r.confirmed:
             await audit(action: action, verdict: "ok", detail: "\(auditDetail); confirmed")
             return "ok: \(openLoopMessage). CONFIRMED: \(r.message)."

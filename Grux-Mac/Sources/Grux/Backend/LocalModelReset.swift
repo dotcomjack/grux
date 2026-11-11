@@ -163,7 +163,7 @@ final class LocalModelReset {
         let model = registry.resolvedRouting(provider: preset?.providerOverride,
                                              modelOverride: preset?.modelIdOverride).modelId
         let loopback = LocalTurn.isLoopback(baseURL: base)
-        let installed = registry.localTags.contains { Self.sameModel($0, model) }
+        let installed = registry.holdsLocal { Self.sameModel($0, model) }
         let listed = local && loopback && installed ? await Self.isListed(baseURL: base, model: model) : nil
         guard Self.shouldWarm(localTurn: local, loopback: loopback, installed: installed, listed: listed,
                               thinking: AppState.shared.isThinking, warming: warmTask != nil,

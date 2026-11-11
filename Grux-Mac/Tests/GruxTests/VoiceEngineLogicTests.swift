@@ -9,25 +9,25 @@ final class VoiceEngineLogicTests: XCTestCase {
 
     func testElevenLabsActiveWhenToggledKeyedAndOnline() {
         XCTAssertEqual(
-            VoiceEngineLogic.effectiveTTS(useElevenLabs: true, hasKey: true, offline: false),
+            VoiceEngineLogic.effectiveTTS(useElevenLabs: true, hasKey: true, offline: false, wouldAskForMic: false, silencedBy: []),
             .elevenLabs
         )
     }
 
     func testSystemByChoiceHasNoFallbackReason() {
         XCTAssertEqual(
-            VoiceEngineLogic.effectiveTTS(useElevenLabs: false, hasKey: true, offline: false),
+            VoiceEngineLogic.effectiveTTS(useElevenLabs: false, hasKey: true, offline: false, wouldAskForMic: false, silencedBy: []),
             .system(fallbackReason: nil)
         )
         // Toggle off wins regardless of key or offline state.
         XCTAssertEqual(
-            VoiceEngineLogic.effectiveTTS(useElevenLabs: false, hasKey: false, offline: true),
+            VoiceEngineLogic.effectiveTTS(useElevenLabs: false, hasKey: false, offline: true, wouldAskForMic: false, silencedBy: []),
             .system(fallbackReason: nil)
         )
     }
 
     func testOfflineForcesSystemWithReason() {
-        let result = VoiceEngineLogic.effectiveTTS(useElevenLabs: true, hasKey: true, offline: true)
+        let result = VoiceEngineLogic.effectiveTTS(useElevenLabs: true, hasKey: true, offline: true, wouldAskForMic: false, silencedBy: [])
         guard case .system(let reason) = result else {
             return XCTFail("expected system fallback, got \(result)")
         }
@@ -36,7 +36,7 @@ final class VoiceEngineLogicTests: XCTestCase {
     }
 
     func testMissingKeyForcesSystemWithReason() {
-        let result = VoiceEngineLogic.effectiveTTS(useElevenLabs: true, hasKey: false, offline: false)
+        let result = VoiceEngineLogic.effectiveTTS(useElevenLabs: true, hasKey: false, offline: false, wouldAskForMic: false, silencedBy: [])
         guard case .system(let reason) = result else {
             return XCTFail("expected system fallback, got \(result)")
         }
@@ -47,7 +47,7 @@ final class VoiceEngineLogicTests: XCTestCase {
     func testOfflineReasonTakesPriorityOverMissingKey() {
         // Both conditions true: the offline explanation is the more useful one
         // because fixing the key would not change the outcome.
-        let result = VoiceEngineLogic.effectiveTTS(useElevenLabs: true, hasKey: false, offline: true)
+        let result = VoiceEngineLogic.effectiveTTS(useElevenLabs: true, hasKey: false, offline: true, wouldAskForMic: false, silencedBy: [])
         guard case .system(let reason) = result, let r = reason else {
             return XCTFail("expected system fallback with reason, got \(result)")
         }

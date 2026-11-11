@@ -26,7 +26,7 @@ enum AudioExportStore {
     }
 
     // Place where ongoing meeting captures stream their WAV. Persisted even
-    // after meeting ends (until the user deletes the meeting record).
+    // after meeting ends, until the meeting is deleted in Meetings (D198).
     static var meetingAudioDir: URL {
         let dir = Persistence.supportDir.appendingPathComponent("meeting-audio", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -121,4 +121,16 @@ enum AudioExportStore {
         // 16 kHz × 16-bit × mono = 32_000 bytes/sec → ~31.25 KB/sec.
         Int((seconds * 32_000.0) / 1024.0)
     }
+}
+
+/// What Grux says when a meeting has no kept audio (W68-P3). The panel read
+/// "Capture was run with local recording off." and `export_audio` named
+/// `meetingAudioKeepWAV`, a setting that does not exist, while the audio may
+/// have been removed since. This names the real switch and both causes.
+enum MeetingAudioMissing {
+    /// The switch in Settings, Voice & Ambient that keeps a meeting's WAV.
+    static let switchName = "Keep meeting audio on this Mac"
+    static let panel = "No audio is kept for this meeting: it was recorded with \"\(switchName)\" off (Settings, Voice & Ambient), or its audio was removed."
+    static let tool = "error: no audio is kept for that meeting: it was recorded with \"\(switchName)\" off (Settings, Voice & Ambient), or its audio was removed from this Mac."
+    static let noMeeting = "error: no meeting has that id; it may have been deleted. Call list_meetings first."
 }

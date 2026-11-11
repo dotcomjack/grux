@@ -59,7 +59,7 @@ final class FoundryFailureReasonTests: XCTestCase {
                                             interruption: WorkerInterruption(kind: .signInExpired))],
                            rootDir: "/tmp", errorMessage: "workers failed: architect (\(expired))")
         let reason = FoundryEngine.escalationFailureReason(job: job, jobId: job.id, statusRaw: "failed")
-        XCTAssertEqual(reason, "The build could not start: Claude's sign-in on this Mac has expired. Sign in again (Claude sign-in, at the top of Now), then build it again.")
+        XCTAssertEqual(reason, "The build could not start: Claude's sign-in on this Mac has expired. Sign in (Claude sign-in, at the top of Now), then build it again.")
     }
 
     func testAnyOtherFailureKeepsTheJobsWords() {

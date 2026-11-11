@@ -118,6 +118,9 @@ struct PIMSlots: Equatable {
     var dateIsAllDay: Bool = false
     /// Spoken recipient name (email only). NOT an address.
     var recipient: String? = nil
+    /// True when the words set the task off as a task: a colon, "called" or
+    /// "named" after "add a task", or "add X to my tasks" (task only).
+    var namedAsATask: Bool = false
 }
 
 // MARK: - Plan
@@ -144,6 +147,17 @@ struct PIMPlan {
     /// Spoken acknowledgment, e.g. "Locked in: lunch with Sarah, Friday 1 PM".
     let spokenAck: String
 
+    /// Grux's own reminder for a timed "remind me to" (D147), scheduled once
+    /// the task lands; nil for everything else.
+    var reminder: GruxReminder? = nil
+
+    /// Whether the decision provider may veto this plan. Every gate asks the
+    /// plan, never the kind: a task the person named as a task ("add a task:
+    /// Email", "add a task called Email", "add Email to my tasks") has one
+    /// reading and the card carries the undo, while the judge held "add a
+    /// task: Email" back at 0.63 and the ask became an offer (D151).
+    var isJudged: Bool { kind.isJudged && !slots.namedAsATask }
+
     /// Mutating actions get the 5s undo window; read-only doc search runs
     /// immediately.
     var requiresUndoWindow: Bool { kind != .findDocument }
@@ -169,6 +183,10 @@ enum PIMIntents {
 
     /// Seconds the confirmation card holds before executing a mutating plan.
     static let undoWindowSeconds: TimeInterval = 5
+    /// How far ahead a "remind me to" time must be to become a reminder: the
+    /// undo window and 30 s more, so the card never lands after the time it
+    /// names (W47-P3 item 1). A nearer time stays in a plain task's title.
+    static let reminderMinimumLead: TimeInterval = undoWindowSeconds + 30
 
     // MARK: Public entry points
 
@@ -181,7 +199,7 @@ enum PIMIntents {
         case .takeNote:      return notePlan(slots: m.slots)
         case .draftEmail:    return emailPlan(slots: m.slots)
         case .findDocument:  return documentPlan(slots: m.slots)
-        case .addTask:       return taskPlan(slots: m.slots)
+        case .addTask:       return taskPlan(slots: m.slots, now: now)
         case .completeTask, .removeTask, .focusTask:
             return taskActionPlan(kind: m.kind, slots: m.slots)
         case .rememberFact:  return factPlan(slots: m.slots)
@@ -214,7 +232,7 @@ enum PIMIntents {
         // specific; "note that I need to email Sarah" must stay a note.
         if let m = matchNote(stripped) { return m }
         if let m = matchEmail(stripped) { return m }
-        if let m = matchTask(stripped) { return m }
+        if let m = matchTask(stripped, now: now) { return m }
         if let m = matchTaskAction(stripped) { return m }
         if let m = matchFact(stripped) { return m }
         if let m = matchCalendar(stripped, now: now) { return m }
@@ -349,24 +367,250 @@ enum PIMIntents {
     // A task ask has one reading, so it does not wait on the model: on the
     // local route the model answered "add a task: X" with a made-up "added"
     // whenever the thread had any earlier turn (A28), and nothing was added.
-    private static let taskRegexes: [NSRegularExpression] = [
-        regex(#"^(?:add|create|make)\s+(?:a\s+)?(?:new\s+|another\s+)?(?:task|to-?do)\b[,:.]?\s*(?:to\s+|for\s+|called\s+|named\s+)?(.+)$"#),
-        regex(#"^remind me to\s+(.+)$"#),
-        regex(#"^(?:add|put)\s+(.+?)\s+(?:to|on|onto)\s+(?:my\s+|the\s+)?(?:tasks|task\s+list|task\s+stack|to-?do\s+list|to-?dos|to-?do)$"#)
+    private static let remindRegex = regex(#"^remind me to\s+(.+)$"#)
+    /// Words that name a day, a span or a repeat, a few short or misspelled
+    /// ones too. A task holding one is not given a reminder: macOS read only
+    /// the time out of "next week at 3pm" or "on Mondays at 8pm" and dated it
+    /// today (W47-FIX). "This" and "next" alone name nothing ("finish this at
+    /// 5pm"); "may" and "march" are verbs too, so only "in May" counts.
+    private static let undatedDayWords: Set<String> = [
+        "sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday",
+        "january", "february", "april", "june", "july", "august", "september", "october", "november", "december",
+        "weekend", "week", "weekday", "weeknight", "day", "month", "year", "fortnight", "daily", "weekly",
+        "monthly", "yearly", "nightly", "every", "each", "tomorrow", "christmas", "thanksgiving", "easter",
+        "halloween", "birthday", "anniversary", "holiday", "quarter", "eod", "eow", "eom", "eoy",
+        "tommorow", "tomorow", "tommorrow", "tmr", "tmrw", "tmw", "2moro", "2morrow", "xmas", "nye", "bday",
+        // Not "sun", "sat", "wed" or "mon": everyday words ("put on sun cream at 3pm").
+        "wk", "yr", "tue", "tues", "thu", "thur", "thurs", "fri",
+        // Shorthands that are no day word written a letter or two off (rounds 6 and 7).
+        "tmrrw", "tmrow", "tmorrow", "tomoro", "tomorow", "2morow", "wknd", "wkend", "wkd", "tmoro", "tomo", "tomoz",
+        "morrow", "tommoro", "tommorw", "tommorow", "tommorrow", "2mrw", "2mro", "tmro", "tomrw",
+        "tomor", "2mor", "2morro", "tomm", "tmorw", "2morw", "tmmrw", "2mrrw", "2moz", "tmrww", "satur", "overmorrow",
+        "payday", "2mrow", "2mrrow", "2morroww", "biweekly", "bimonthly", "wkly", "wkday", "nextweek", "nextwk", "nxtwk",
+        "thisweek", "thisweekend", "nextweekend", "nextmonth", "nextyear",
+        // Months written short, the ones that are no everyday word or name (round 7).
+        "feb", "apr", "jul", "aug", "sep", "sept", "oct", "nov", "dec",
+        "mnth", "mth", "semester", "decade", "valentine", "hanukkah", "chanukah", "diwali", "eid", "passover",
+        "ramadan", "kwanzaa", "nyd",
+    ]
+    /// Words that are a month or a season only after a word that ties them to
+    /// a time ("in may", "by mar", "this summer", "in the fall"); alone they
+    /// are a name or a verb ("email May", "call Jan", "fall asleep").
+    private static let tiedDayWords: Set<String> = ["may", "march", "mar", "jan", "jun", "summer", "winter", "spring", "fall", "autumn"]
+    private static let timeTies: Set<String> = ["in", "by", "this", "next", "last", "of", "until", "till", "before", "after",
+                                                "during", "over", "early", "late", "mid", "end", "since", "from", "for"]
+
+    /// The day words people misspell or shorten in typed chat (W47-FIX round 5).
+    private static let looseDayWords = ["tomorrow", "weekend", "monday", "tuesday", "wednesday", "thursday",
+                                        "friday", "saturday", "sunday", "fortnight"]
+
+    /// Whether `word` is one of `looseDayWords` a letter off ("thursdy",
+    /// "yomorrow"), or two off one of 8 letters or more with the same first
+    /// letter ("tomrow", "satday", "wensday"). "Study", "Wendy" and "monkey"
+    /// are words (round 6: a letters-in-order rule took "study" for "saturday").
+    private static func nearADayWord(_ word: String) -> Bool {
+        let w = Array(word)
+        guard w.count >= 5, w.allSatisfy(\.isLetter) else { return false }
+        // Edits with two swapped letters as one ("tuseday", "wekeend"; round 8).
+        func distance(_ v: [Character]) -> Int {
+            var d = Array(repeating: Array(repeating: 0, count: v.count + 1), count: w.count + 1)
+            for i in 0...w.count { d[i][0] = i }
+            for j in 0...v.count { d[0][j] = j }
+            for i in stride(from: 1, through: w.count, by: 1) {
+                for j in stride(from: 1, through: v.count, by: 1) {
+                    d[i][j] = min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (w[i - 1] == v[j - 1] ? 0 : 1))
+                    if i > 1, j > 1, w[i - 1] == v[j - 2], w[i - 2] == v[j - 1] { d[i][j] = min(d[i][j], d[i - 2][j - 2] + 1) }
+                }
+            }
+            return d[w.count][v.count]
+        }
+        return looseDayWords.contains { day in
+            let v = Array(day)
+            let d = distance(v)
+            // Two edits for the long day words, so "tomrow" and "satday" count while
+            // "monkey" (two off "monday", a short day word) is a monkey (round 7).
+            return d <= 1 || (v.count >= 8 && d <= 2 && v.first == w.first)
+        }
+    }
+
+    /// Days macOS does not read: an ordinal ("the 15th", "on the first") and
+    /// "on" a short weekday ("on sat", "on Wed.").
+    private static let undatedDayShapes: String = {
+        let ones = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth"]
+        let words = ones + ["tenth", "eleventh", "twelfth", "thirteenth", "fourteenth", "fifteenth", "sixteenth",
+                            "seventeenth", "eighteenth", "nineteenth", "twentieth", "thirtieth"]
+            + ones.map { "twenty[- ]" + $0 } + ["thirty[- ]first"]
+        return #"\b\d{1,2}(?:st|nd|rd|th)\b|\b(?:on|by|before|after|until)\s+the\s+(?:"#
+            + words.joined(separator: "|") + #")\b|\bon\s+(?:sat|sun|mon|tue|tues|wed|thu|thur|thurs|fri)\b"#
+            + #"|\b(?:on|by|until|before|after)\s+(?:the\s+)?\d{1,2}\b(?!\s*(?:%|[a-z]))"#
+            // Month-day digits macOS does not read ("11-15", "11.15"; round 8), not a
+            // dose or a range ("take 1-2 tablets"; round 9).
+            + #"|\b\d{1,2}[-./]\d{1,2}\b(?!\s*[a-z%])"#
+    }()
+
+    /// Whether `task` names a day or a span of its own: a word above (or its
+    /// plural), "in May", "in March", or a year.
+    private static func namesAnUndatedDay(_ task: String) -> Bool {
+        // "3days", "2wks": a number typed onto its unit is the unit too (round 9).
+        let words = task.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).flatMap { token -> [String] in
+            var parts = [String(token)]
+            if token.contains(where: \.isLetter), token.contains(where: \.isNumber) {
+                var part = ""
+                for c in token {
+                    if let last = part.last, last.isNumber != c.isNumber { parts.append(part); part = "" }
+                    part.append(c)
+                }
+                parts.append(part)
+            }
+            return parts
+        }
+        return words.indices.contains { i in
+            let w = words[i]
+            return undatedDayWords.contains(w) || (w.hasSuffix("s") && undatedDayWords.contains(String(w.dropLast())))
+                || nearADayWord(w)
+                // A unit of a day or more right after a number: "in 6mo", "in 3 mos", "in 2d"
+                // (round 10); alone "Mo" is a name.
+                // A one-letter unit only at the end ("in 2d"; "buy 2 d batteries" is a size).
+                || (i > 0 && words[i - 1].allSatisfy(\.isNumber)
+                    && (["mo", "mos", "dy", "dys"].contains(w) || (["d", "w", "y"].contains(w) && i == words.count - 1)))
+                || (tiedDayWords.contains(w) && (i > 0 && timeTies.contains(words[i - 1])
+                    || i > 1 && words[i - 1] == "the" && timeTies.contains(words[i - 2])))
+                || (w.count == 4 && (w.hasPrefix("19") || w.hasPrefix("20")) && w.allSatisfy(\.isNumber))
+        }
+    }
+
+    /// A "remind me to" that ends in a time Grux reads itself (W47-FIX round
+    /// 3): "at 9 AM", "at 9:30 pm", "at noon", with today, tonight, tomorrow
+    /// or "on Friday" before or after it, or "in 20 minutes". Anything else
+    /// ("at 4pm about the trip", "before 5pm", "at about 5pm", "at 7") is a
+    /// plain task with every word kept: a miss costs a reminder, never a
+    /// wrong day or a broken title.
+    private static let reminderTail: NSRegularExpression = {
+        // Not "midnight": macOS reads it as the next day, so it never matches the day said (W47-FIX round 4).
+        let clock = #"(?:\d{1,2}(?::\d{2})?\s?(?:am|pm|a\.m\.?|p\.m\.?)|noon)"#
+        let day = #"(?:(?:later\s+)?(?:today|tonight|tomorrow)|on\s+(?:sunday|monday|tuesday|wednesday|thursday|friday|saturday))"#
+        // Digits only: macOS and `detectDate` read no spelled-out span ("in twenty minutes").
+        let span = #"in\s+(?:\d{1,3}\s+(?:minutes?|mins?|hours?|hrs?)|an\s+hour(?:\s+and\s+a\s+half)?|half\s+an\s+hour|a\s+half\s+hour)"#
+        return regex("^(.+?)\\s+((?:" + day + "\\s+)?at\\s+" + clock + "(?:\\s+" + day + ")?|" + span + ")[.!]?$")
+    }()
+
+    /// The spans people say out loud with one meaning, in the digits the date
+    /// reader takes (W47-P3 item 4: "in an hour" got no reminder). "In a
+    /// while" and "in an hour or two" are not here: they name no time.
+    private static let spokenSpans: [String: String] = [
+        "in an hour": "in 1 hour", "in an hour and a half": "in 90 minutes",
+        "in half an hour": "in 30 minutes", "in a half hour": "in 30 minutes"
     ]
 
-    private static func matchTask(_ s: String) -> Match? {
+    /// The task and the time of a timed "remind me to", or nil. The day macOS
+    /// reads for the time must be the one the words name, and the task must
+    /// hold no date of its own.
+    static func timedReminder(_ body: String, now: Date) -> (task: String, date: Date)? {
+        guard let m = reminderTail.firstMatch(in: body, range: fullRange(body)),
+              let taskRange = Range(m.range(at: 1), in: body), let whenRange = Range(m.range(at: 2), in: body)
+        else { return nil }
+        let task = String(body[taskRange]).trimmingCharacters(in: CharacterSet(charactersIn: ",;: "))
+        let when = body[whenRange].lowercased()
+        guard !task.isEmpty, let read = detectDate(in: spokenSpans[when] ?? String(body[whenRange]), now: now), read.hasTime,
+              read.date.timeIntervalSince(now) >= reminderMinimumLead
+        else { return nil }
+        let cal = Foundation.Calendar.current
+        let days = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]
+        var date = read.date
+        if when.contains("tomorrow") {
+            guard let next = cal.date(byAdding: .day, value: 1, to: now), cal.isDate(read.date, inSameDayAs: next) else { return nil }
+        } else if let w = days.firstIndex(where: { when.contains($0) }) {
+            guard let day = weekdayReminderDate(read: read.date, weekday: w + 1, now: now, calendar: cal) else { return nil }
+            date = day
+        } else if when.hasPrefix("in ") {
+            guard read.date.timeIntervalSince(now) <= 24 * 3600 else { return nil }
+        } else {
+            guard cal.isDate(read.date, inSameDayAs: now) else { return nil }
+        }
+        // "tonight at 9am" is read as 9 PM; "12am", like midnight, is the next day's start.
+        if when.contains("tonight"), when.range(of: #"\d\s?a\.?m"#, options: .regularExpression) != nil { return nil }
+        if when.range(of: #"\b12(?::\d{2})?\s?a\.?m"#, options: .regularExpression) != nil { return nil }
+        guard detectDate(in: task, now: now) == nil, !namesAnUndatedDay(task),
+              task.range(of: undatedDayShapes, options: [.regularExpression, .caseInsensitive]) == nil else { return nil }
+        // With no day in the time phrase, a day macOS cannot read in the task would
+        // be taken as today; the day words above refuse it, and so does a short
+        // weekday (W47-FIX rounds 4 to 7).
+        let saysDay = when.contains("today") || when.contains("tonight") || when.contains("tomorrow")
+            || days.contains(where: { when.contains($0) })
+        if !saysDay {
+            let words = task.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            // ... and no short weekday ("call mom Sat at 9pm"; "sun" is a word too, so this costs "sun cream").
+            let short: Set<Substring> = ["sat", "sun", "mon", "wed", "weds", "tue", "tues", "thu", "thur", "thurs", "fri"]
+            // Prepositions and numbers stay ("pick up the kids from school at 3pm",
+            // "take 2 pills at 9pm"): round 6 refused every "in", "on", "for" and
+            // number and cost the commonest reminders (round 7).
+            guard !words.contains(where: short.contains) else { return nil }
+        }
+        return (task, date)
+    }
+
+    /// The day a "remind me ... on Friday at 3pm" falls on: the weekday the
+    /// words name, inside the coming week. D181: macOS reads a weekday said on
+    /// that same day as next week's, even while the time is still ahead
+    /// today (measured 12:08 AM Friday Nov 6: "Friday at 3pm" read Friday Nov
+    /// 13), so that read moves back to today when today's time is at least
+    /// `reminderMinimumLead` away. nil when the read is another weekday or a
+    /// week or more away.
+    static func weekdayReminderDate(read: Date, weekday: Int, now: Date, calendar cal: Foundation.Calendar) -> Date? {
+        guard cal.component(.weekday, from: read) == weekday else { return nil }
+        if cal.component(.weekday, from: now) == weekday,
+           let today = cal.date(byAdding: .day, value: -7, to: read), cal.isDate(today, inSameDayAs: now),
+           today.timeIntervalSince(now) >= reminderMinimumLead {
+            return today
+        }
+        return read.timeIntervalSince(now) < 7 * 86_400 ? read : nil
+    }
+
+    private static let taskRegexes: [NSRegularExpression] = [
+        namedTaskRegex,
+        // D180 item 1: "make a to-do list for the weekend" is a list to make,
+        // not a task titled "list for the weekend"; it goes to the model.
+        regex(#"^(?:add|create|make)\s+(?:a\s+)?(?:new\s+|another\s+)?(?:task|to-?do)\b(?!\s*lists?\b)[,:.]?\s*(?:to\s+|for\s+|called\s+|named\s+)?(.+)$"#),
+        remindRegex,
+        onTheListRegex
+    ]
+    /// The two shapes that name the task as a task, so the judge is not asked
+    /// (`PIMPlan.isJudged`, D151). "add a task to ..." and "make a to-do list
+    /// for my trip" are not among them: they read other ways too.
+    private static let namedTaskRegex =
+        regex(#"^(?:add|create|make)\s+(?:a\s+)?(?:new\s+|another\s+)?(?:task|to-?do)(?:\s*:\s*|\s+(?:called|named)\s+)(.+)$"#)
+    private static let onTheListRegex =
+        regex(#"^(?:add|put)\s+(.+?)\s+(?:to|on|onto)\s+(?:my\s+|the\s+)?(?:tasks|task\s+list|task\s+stack|to-?do\s+list|to-?dos|to-?do)$"#)
+
+    private static func matchTask(_ s: String, now: Date) -> Match? {
         guard !isQuestionShaped(s) else { return nil }
         for re in taskRegexes {
             if let m = re.firstMatch(in: s, range: fullRange(s)),
                let r = Range(m.range(at: 1), in: s) {
-                let title = String(s[r])
+                var title = String(s[r])
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                     .trimmingCharacters(in: CharacterSet(charactersIn: ",.:;!\""))
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !title.isEmpty else { continue }
                 var slots = PIMSlots()
+                // "Remind me to call the dentist tomorrow at 9 AM" names when:
+                // the task is "call the dentist" and Grux reminds at 9 AM
+                // (D147). Any other shape stays in the title: Grux does not
+                // pick an hour or a day nobody said.
+                // A "remind me to" inside a task the person names ("add a task:
+                // remind me to call mom at 9pm") is the same ask (W48-P3 item 4).
+                let named = re === namedTaskRegex || re === onTheListRegex
+                var timedBody: String? = re === remindRegex ? title : nil
+                if named, let inner = remindRegex.firstMatch(in: title, range: fullRange(title)),
+                   let r = Range(inner.range(at: 1), in: title) {
+                    timedBody = String(title[r])
+                }
+                if let body = timedBody, let timed = timedReminder(body, now: now) {
+                    title = timed.task
+                    slots.date = timed.date
+                }
                 slots.title = title
+                slots.namedAsATask = named
                 return Match(kind: .addTask, slots: slots)
             }
         }
@@ -543,17 +787,31 @@ enum PIMIntents {
         )
     }
 
-    private static func taskPlan(slots: PIMSlots) -> PIMPlan? {
+    private static func taskPlan(slots: PIMSlots, now: Date) -> PIMPlan? {
         guard !slots.title.isEmpty else { return nil }
         let title = capitalizedFirst(firstLine(of: slots.title, cap: 120))
         let input: [String: Any] = ["title": title, "priority": TaskPriority.next.rawValue]
+        let spoken = spokenLowercased(firstLine(of: slots.title, cap: 70))
+        guard let at = slots.date else {
+            return PIMPlan(
+                kind: .addTask,
+                slots: slots,
+                execution: .tool(name: "add_task", input: input),
+                cardTitle: title,
+                cardDetail: "task list, up next",
+                spokenAck: "Added to your tasks: \(spoken)."
+            )
+        }
+        let when = spokenWhen(at, allDay: false, now: now)
         return PIMPlan(
             kind: .addTask,
             slots: slots,
             execution: .tool(name: "add_task", input: input),
             cardTitle: title,
-            cardDetail: "task list, up next",
-            spokenAck: "Added to your tasks: \(spokenLowercased(firstLine(of: slots.title, cap: 70)))."
+            cardDetail: "task list, reminder \(when)",
+            spokenAck: "Added to your tasks: \(spoken). I'll remind you \(when).",
+            reminder: GruxReminder(kind: .commitment, title: title,
+                                   body: "You asked me to remind you: \(spoken).", scheduledFor: at)
         )
     }
 

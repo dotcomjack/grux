@@ -137,7 +137,7 @@ final class ActionClaimGuardTests: XCTestCase {
             for reply in ["I've saved your note.", "Saved your note \"Groceries\".", "Your note has been saved."] {
                 let out = ActionClaimGuard.vet(reply: reply, route: "local", results: queued)
                 XCTAssertTrue(out.replaced, "a queued note licensed: \(reply)")
-                XCTAssertEqual(out.text, "Your note is waiting for your OK in Approvals. Nothing is saved until you tap it.")
+                XCTAssertEqual(out.text, "Your note is waiting for your OK in Approvals. Nothing is saved until you approve it.")
             }
         }
     }
@@ -149,9 +149,9 @@ final class ActionClaimGuardTests: XCTestCase {
     /// opening "Not done yet", and the model's text is otherwise left alone.
     private let upgrade: ActionClaimGuard.ToolResult =
         ("foundry_upgrade_cycle", ["action": "start"], JaxToolGate.pendingResult(goesOutAs: nil))
-    private let upgradeLine = "The self-upgrade cycle is waiting for your OK in Approvals. Nothing happens until you tap it."
-    private let noteLine = "Your note is waiting for your OK in Approvals. Nothing is saved until you tap it."
-    private let emailLine = "Your email to sam@example.com is waiting for your OK in Approvals. Nothing is sent until you tap it."
+    private let upgradeLine = "The self-upgrade cycle is waiting for your OK in Approvals. Nothing happens until you approve it."
+    private let noteLine = "Your note is waiting for your OK in Approvals. Nothing is saved until you approve it."
+    private let emailLine = "Your email to sam@example.com is waiting for your OK in Approvals. Nothing is sent until you approve it."
     private let note: ActionClaimGuard.ToolResult =
         ("create_note", ["title": "Groceries"], JaxToolGate.pendingResult(goesOutAs: nil))
     private let email: ActionClaimGuard.ToolResult =
@@ -196,7 +196,7 @@ final class ActionClaimGuardTests: XCTestCase {
     /// the way the renderer reads them (a line that starts with three backticks).
     func testTheLineIsNeverInsideACodeBlock() {
         let shell: ActionClaimGuard.ToolResult = ("shell_run", ["command": "make"], JaxToolGate.pendingResult(goesOutAs: nil))
-        let line = "The command `make` is waiting for your OK in Approvals. Nothing happens until you tap it."
+        let line = "The command `make` is waiting for your OK in Approvals. Nothing happens until you approve it."
         let cases: [(String, String)] = [
             ("I'll run this:\n```\nmake\n```", "I'll run this:\n```\nmake\n```"),
             ("I'll run this:\n```\nmake", "I'll run this:\n```\nmake\n```"),
@@ -218,10 +218,10 @@ final class ActionClaimGuardTests: XCTestCase {
         // Three writes that all read "that request" (the self-upgrade cycle has its own name since D86).
         let swarm: ActionClaimGuard.ToolResult = ("agent_swarm_start", ["goal": "z"], JaxToolGate.pendingResult(goesOutAs: nil))
         XCTAssertEqual(ActionClaimGuard.vet(reply: "Got it.", route: "local", results: [swarm, research, render]).text,
-                       after("Got it.", "That request is waiting for your OK in Approvals. Nothing happens until you tap it.",
+                       after("Got it.", "That request is waiting for your OK in Approvals. Nothing happens until you approve it.",
                              "That request and 1 more like it are also waiting for your OK in Approvals."))
         XCTAssertEqual(ActionClaimGuard.vet(reply: "Got it.", route: "local", results: [upgrade, research]).text,
-                       after("Got it.", upgradeLine, "That request is waiting for your OK in Approvals. Nothing happens until you tap it."))
+                       after("Got it.", upgradeLine, "That request is waiting for your OK in Approvals. Nothing happens until you approve it."))
     }
 
     /// A reply that already carries Grux's own line word for word gets nothing added.
@@ -292,7 +292,7 @@ final class ActionClaimGuardTests: XCTestCase {
         let shell: [ActionClaimGuard.ToolResult] = [
             ("add_task", ["title": "milk"], "ok: added 'milk' (NEXT)"),
             ("shell_run", ["command": "make"], JaxToolGate.pendingResult(goesOutAs: nil))]
-        let make = "The command `make` is waiting for your OK in Approvals. Nothing happens until you tap it."
+        let make = "The command `make` is waiting for your OK in Approvals. Nothing happens until you approve it."
         XCTAssertEqual(ActionClaimGuard.vet(reply: "Added milk.", route: "local", results: shell).text, after("Added milk.", make))
     }
 
@@ -439,7 +439,7 @@ final class ActionClaimGuardTests: XCTestCase {
         let guardSite = try XCTUnwrap(src.range(of: "ActionClaimGuard.vet("), "send() never calls the guard")
         let stored = try XCTUnwrap(src.range(of: "state.appendChat(ChatMessage(role: .assistant, content: finalText))"))
         XCTAssertTrue(guardSite.lowerBound < stored.lowerBound, "the guard runs after the reply is stored")
-        XCTAssertTrue(src.contains("guard speakAloud, !holdSpeechForClaimCheck else { return }"),
+        XCTAssertTrue(src.contains("guard speakAloud(), !holdSpeechForClaimCheck else { return }"),
                       "local replies still stream speech before the claim check")
     }
 
@@ -798,5 +798,60 @@ final class ActionClaimGuardTests: XCTestCase {
                                        results: [("lookup_contact", ["name": "Maria"], "not_found: no contact named Maria")],
                                        ask: "Email Maria the notes")
         XCTAssertEqual(out.text, ActionClaimGuard.offer)
+    }
+
+    /// D162, live on grux-local:2b (8:22 PM Nov 4): "Write a note to Day One about today"
+    /// ran no tool and came back "Okay. Not done yet: your note is waiting for your OK in
+    /// Approvals. Nothing is saved until you approve it.", copied from the turn before, and
+    /// Grux added what Approvals held under it. Grux's own waiting line is said only for a
+    /// write this turn put there: a copy of it is taken out, and a reply that was nothing
+    /// else is answered the way a made-up claim is.
+    func testACopiedWaitingLineIsNeverSaidForAWriteThisTurnDidNotQueue() {
+        let note = ToolReplyCopy.forPerson(tool: "create_note", input: ["title": "x"], result: "pending: queued")
+        XCTAssertEqual(note, "Your note is waiting for your OK in Approvals. Nothing is saved until you approve it.")
+        let live = "Okay. Not done yet: your note is waiting for your OK in Approvals. Nothing is saved until you approve it."
+        let ask = "Write a note to Day One about today"
+        let old = ["Save your note \"The gate code is on the fridge\".", "Send the email to Maria."]
+        for approvals in [old, [], nil] as [[String]?] {
+            let out = ActionClaimGuard.vet(reply: live, route: "local", results: [], ask: ask, approvals: approvals)
+            XCTAssertEqual(out.text, ActionClaimGuard.offer, "\(String(describing: approvals))")
+            XCTAssertTrue(out.replaced)
+        }
+        // Every shape of Grux's line, alone or after an assent, each the same.
+        let event = ToolReplyCopy.forPerson(tool: "create_event", input: [:], result: "pending: queued")
+        let email = ToolReplyCopy.forPerson(tool: "compose_email", input: ["to": "maria@example.com"], result: "pending: queued")
+        for copy in [note, event, email, "Not done yet: " + note.prefix(1).lowercased() + note.dropFirst(),
+                     "Sure! " + email, "Got it.\n\n" + event, "Your note is also waiting for your OK in Approvals.",
+                     "Your note and 2 more like it are also waiting for your OK in Approvals."] {
+            XCTAssertEqual(ActionClaimGuard.vet(reply: copy, route: "local", results: [], ask: ask, approvals: old).text,
+                           ActionClaimGuard.offer, copy)
+        }
+        // What the model wrote beside the copy stays, and what Approvals really
+        // holds follows it (W53-FIX: a bare "Sure thing!" was left).
+        let draft = "Here is a start: \"Today was calm.\"\n\nNot done yet: your note is waiting for your OK in Approvals. Nothing is saved until you approve it."
+        let kept = ActionClaimGuard.vet(reply: draft, route: "local", results: [], ask: ask, approvals: old)
+        XCTAssertEqual(kept.text, "Here is a start: \"Today was calm.\"\n\n" + ActionClaimGuard.approvalsLine(old))
+        XCTAssertTrue(kept.replaced)
+        // A question answered only by a copy gets what Approvals really holds.
+        let q = "Is my note waiting?"
+        XCTAssertEqual(ActionClaimGuard.vet(reply: note, route: "local", results: [], ask: q, approvals: old).text,
+                       ActionClaimGuard.approvalsLine(old))
+        XCTAssertEqual(ActionClaimGuard.vet(reply: note, route: "local", results: [], ask: q, approvals: []).text,
+                       ActionClaimGuard.nothingWaitsLine)
+        XCTAssertEqual(ActionClaimGuard.vet(reply: note, route: "local", results: [], ask: q).text,
+                       ActionClaimGuard.nothingDoneNote)
+        // The write this turn queued keeps its line, said once, wherever the model put it.
+        let queued: [ActionClaimGuard.ToolResult] = [("create_note", ["title": "x"], "pending: queued for your approval")]
+        let same = "Okay. " + note
+        XCTAssertEqual(ActionClaimGuard.vet(reply: same, route: "local", results: queued, ask: ask, approvals: old).text, same)
+        // A copied line for another kind of write goes; this turn's own is named.
+        let other = ActionClaimGuard.vet(reply: "Okay. " + event, route: "local", results: queued, ask: ask, approvals: old)
+        XCTAssertEqual(other.text, "Okay.\n\nNot done yet: " + note.prefix(1).lowercased() + note.dropFirst())
+        // The model's own words for a wait are D90's to check, not taken out here.
+        let own = "It's still waiting for your OK in the Approvals tray."
+        XCTAssertTrue(ActionClaimGuard.vet(reply: own, route: "local", results: [], ask: q, approvals: [])
+                        .text.hasPrefix(own))
+        // The cloud route is not vetted.
+        XCTAssertEqual(ActionClaimGuard.vet(reply: live, route: "anthropic", results: [], ask: ask, approvals: old).text, live)
     }
 }

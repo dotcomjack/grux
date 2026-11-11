@@ -302,7 +302,7 @@ final class GatePersonaMigrationTests: XCTestCase {
 
     func testTheNewSpellingDecodes() throws {
         XCTAssertEqual(try decode("owner"), .owner)
-        XCTAssertEqual(try decode("sarah"), .sarah)
+        XCTAssertEqual(try decode("sarah"), .assistant)
     }
 
     /// Writes only the new spelling, so the queue migrates as it drains.

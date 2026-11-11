@@ -77,7 +77,7 @@ struct MailboxView: View {
     // MARK: - Header
 
     private var header: some View {
-        GruxToolbar("Mailbox") {
+        GruxToolbar("Mail") {
             if mailStore.unreadCount() > 0 {
                 Text("\(mailStore.unreadCount())")
                     .font(GruxTheme.Font.microCaps)
@@ -666,7 +666,8 @@ struct MailAccountsSheet: View {
             username: username.trimmingCharacters(in: .whitespaces),
             useTLS: true
         )
-        accountStore.upsert(account, password: password)
+        accountStore.upsert(EmailAccountStore.formTarget(accounts: accountStore.accounts, new: account),
+                            password: password)
         errorText = ""
         displayName = ""; emailAddress = ""; imapHost = ""; imapPort = "993"; username = ""; password = ""
 

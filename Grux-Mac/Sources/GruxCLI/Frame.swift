@@ -8,14 +8,25 @@ struct Frame {
     let renderer: Renderer
     let style: TerminalStyle
 
+    /// The furthest beat drawn so far, shared by every copy of this frame. A beat before it
+    /// prints under the rail already on screen; see `RailCursor`.
+    private final class Rails { var cursor = RailCursor() }
+    private let rails = Rails()
+
     init() {
         let style = TerminalStyle.detect()
         self.style = style
         self.renderer = Renderer(style: style)
     }
 
+    /// The rail for `beat`, or nothing when a later beat is already on screen. Every rail a
+    /// command prints comes from here.
+    func rail(_ beat: Beat) -> String {
+        rails.cursor.draws(beat) ? renderer.rail(current: beat) : ""
+    }
+
     func open(_ beat: Beat, _ subtitle: String? = nil) {
-        let rail = renderer.rail(current: beat)
+        let rail = self.rail(beat)
         if !rail.isEmpty { print("\n  " + rail) }
         if let subtitle {
             print("\n" + renderer.prose(subtitle))
@@ -106,7 +117,7 @@ struct Frame {
     /// Nothing here re-derives what a handoff says. `AgentHandoff` in the app is the single
     /// renderer and this only ever names the way to reach it.
     func handOff(_ features: [String], because reason: String? = nil) {
-        let rail = renderer.rail(current: .handOff)
+        let rail = self.rail(.handOff)
         if !rail.isEmpty { print("\n  " + rail) }
         print("")
         // SORTED AND DEDUPED, so the same answer produces the same line twice running. The

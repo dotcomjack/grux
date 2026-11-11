@@ -71,6 +71,9 @@ struct GruxReminder: Identifiable, Codable, Hashable {
     var snoozedUntil: Date?
     // Optional: link back to a task or action
     var taskId: UUID?
+    /// The title of that task when the reminder was set, so another open task
+    /// with the same title keeps the reminder (W48-P3 item 3).
+    var taskTitle: String?
     var sourceCommitmentText: String?
     /// The heard sentence (`AmbientMemory.id`) this reminder was made from, so a
     /// relaunch never makes a second one from it (wave 15 review).
@@ -138,10 +141,13 @@ final class GruxReminderState: ObservableObject {
         Persistence.save(reminders, to: Persistence.remindersURL)
     }
 
-    // Scheduled reminders whose fire time hasn't arrived yet.
+    // Scheduled reminders whose fire time hasn't arrived yet, and whose task
+    // (if any) is still open: one checked off at 3 PM is not a commitment
+    // until 9 PM (wave 48 review).
     var pendingScheduled: [GruxReminder] {
         reminders.filter { r in
             r.firedAt == nil && !r.dismissed && (r.scheduledFor ?? .distantFuture) > Date()
+                && !Self.taskEnded(r, taskIsOpen: Self.taskIsOpenInList, titleIsOpen: Self.titleIsOpenInList)
         }
     }
 
@@ -155,9 +161,47 @@ final class GruxReminderState: ObservableObject {
         }
     }
 
+    /// True when the reminder belongs to a task that was checked off or
+    /// removed. Checked when it comes due, so every door that ends a task
+    /// (chat, the card, Tasks, the phone) ends its reminder too (W47-P3 item 3).
+    /// Another open task with the same title keeps it: with "Call mom"
+    /// already listed, the ask adds a second one, and checking either off
+    /// leaves a "Call mom" the reminder still belongs to (W48-P3 item 3).
+    static func taskEnded(_ reminder: GruxReminder, taskIsOpen: (UUID) -> Bool,
+                          titleIsOpen: (String) -> Bool) -> Bool {
+        guard let id = reminder.taskId else { return false }
+        if taskIsOpen(id) { return false }
+        guard let title = reminder.taskTitle,
+              !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return true }
+        return !titleIsOpen(title)
+    }
+
+    static func titleIsOpenInList(_ title: String) -> Bool {
+        AppState.shared.tasks.contains { !$0.completed && sameTaskTitle($0.title, title) }
+    }
+
+    static func sameTaskTitle(_ a: String, _ b: String) -> Bool {
+        let fold: (String) -> String = {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        }
+        let x = fold(a)
+        return !x.isEmpty && x == fold(b)
+    }
+
+    static func taskIsOpenInList(_ id: UUID) -> Bool {
+        AppState.shared.tasks.contains { $0.id == id && !$0.completed }
+    }
+
     // Mark a reminder as fired and push it onto the toast stack.
     func fire(_ id: UUID) {
         guard let idx = reminders.firstIndex(where: { $0.id == id }) else { return }
+        if Self.taskEnded(reminders[idx], taskIsOpen: Self.taskIsOpenInList,
+                          titleIsOpen: Self.titleIsOpenInList) {
+            reminders[idx].dismissed = true
+            save()
+            WakeLog.shared.log("reminder set aside, its task is done or removed: \(reminders[idx].title)")
+            return
+        }
         reminders[idx].firedAt = Date()
         save()
         activeToast = reminders[idx]

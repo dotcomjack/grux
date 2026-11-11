@@ -16,6 +16,7 @@ import AppKit
 /// back at alpha 0, ignoring the mouse, at the normal level. The windows stay
 /// ordered in, so layout and drawing stay live and `HeadlessWorkspace` can render
 /// them to PNG. Removing the file restores what each window and the policy were.
+/// Headless is also silent (`AudioOutput.isSilent`): nothing reaches a speaker.
 /// A test run is always headless unless a test asks otherwise.
 @MainActor
 enum WindowFacade {

@@ -238,10 +238,23 @@ struct FoundrySchedule: Codable, Equatable, Sendable {
         enabled ? schedule : FoundrySchedule()
     }
 
-    // The one line the Self-Upgrade pane shows above the toggles.
-    static func line(enabled: Bool, schedule: FoundrySchedule) -> String {
+    // The one line the Self-Upgrade pane shows above the toggles; `waiting` is how many
+    // listed proposals still have a build to run. While off it says
+    // what the chat tool and the build door do (`FoundryEngine.manualCycleRefusal`,
+    // `resolveBuildRequest`): an ask is turned down, so the line never invites one.
+    static func line(enabled: Bool, schedule: FoundrySchedule, waiting: Int = 0) -> String {
         guard enabled else {
-            return "Self-upgrade is off. Turn it on in Settings, or ask Grux to upgrade itself."
+            guard waiting > 0 else {
+                return "Self-upgrade is off, so Grux proposes nothing, spends nothing, and turns down \"upgrade yourself\" until you switch it on here or in Settings."
+            }
+            // Cards from earlier passes stay listed under the line (D126), and each
+            // card's build switches self-upgrade on first (`enableAndBuild`). Settled
+            // cards (Not pursued) are listed too, so this counts only the buildable
+            // ones and never reads as the number of cards shown (D135 item 9).
+            let below = waiting == 1
+                ? "1 proposal below, from an earlier pass, can still be built; building it switches self-upgrade on."
+                : "\(waiting) proposals below, from earlier passes, can still be built; building one switches self-upgrade on."
+            return "Self-upgrade is off, so Grux files no new proposals, spends nothing on its own, and turns down \"upgrade yourself\" until you switch it on here or in Settings. " + below
         }
         var when: [String] = []
         if schedule.nightly { when.append("nightly between 2 and 6 AM") }
@@ -332,8 +345,9 @@ extension FoundrySchedule {
     }
 
     // "today at 3:48 AM", "yesterday at", "tomorrow at", a weekday within the coming
-    // week, else "Jun 13 at 9:00 AM".
-    private static func when(_ date: Date, now: Date, calendar: Calendar) -> String {
+    // week, else "Jun 13 at 9:00 AM". The update check's About line says when it last
+    // asked in the same words.
+    static func when(_ date: Date, now: Date, calendar: Calendar) -> String {
         let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: now),
                                            to: calendar.startOfDay(for: date)).day ?? 0
         let day: String

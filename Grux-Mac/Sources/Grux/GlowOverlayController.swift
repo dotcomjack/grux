@@ -13,9 +13,24 @@ final class GlowOverlayController {
 
     private init() {}
 
+    /// The red and green edges follow "Animate window edges red/green", the cyan
+    /// pulse follows "Pulse window edges in cyan" alone, so greying the drift
+    /// switch while screen analysis is off cannot hide the pulse (wave 68).
+    static func allows(_ mode: GlowColorMode, driftEdges: Bool, speakingPulse: Bool) -> Bool {
+        switch mode {
+        case .focused, .distracted: return driftEdges
+        case .speaking: return speakingPulse
+        }
+    }
+
+    private static func allows(_ mode: GlowColorMode) -> Bool {
+        let config = AppState.shared.config
+        return allows(mode, driftEdges: config.glowOverlayEnabled, speakingPulse: config.audioReactiveGlow)
+    }
+
     // Showtime. Returns immediately; glow auto-dismisses after ~3.5s.
     func showGlowAroundActiveWindow(colorMode: GlowColorMode) {
-        guard AppState.shared.config.glowOverlayEnabled else { return }
+        guard Self.allows(colorMode) else { return }
         guard let windowFrame = getActiveWindowFrame() else {
             NSLog("[Grux] glow: could not resolve active window frame")
             return
@@ -24,7 +39,7 @@ final class GlowOverlayController {
     }
 
     func showGlow(around frame: NSRect, colorMode: GlowColorMode) {
-        guard AppState.shared.config.glowOverlayEnabled else { return }
+        guard Self.allows(colorMode) else { return }
         dismissOverlay()
 
         for edge in [GlowEdge.top, .bottom, .left, .right] {

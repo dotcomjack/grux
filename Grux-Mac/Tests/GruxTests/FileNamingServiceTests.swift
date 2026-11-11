@@ -644,7 +644,11 @@ final class FileNamingServiceTests: XCTestCase {
         XCTAssertEqual(service.status.missing, [shots.path, downloads.path])
         XCTAssertTrue(service.status.settingsLine.contains("Waiting for the screenshot folder Shots to exist."),
                       service.status.settingsLine)
-        XCTAssertFalse(service.status.settingsLine.contains("Files and Folders"),
+        // The pane as the status names it ("Privacy & Security, Files & Folders",
+        // FileNamingStatus.settingsLine) and its row, so the guard reads the words
+        // the line really carries.
+        XCTAssertFalse(service.status.settingsLine.contains("Files & Folders")
+                       || service.status.settingsLine.contains("allow Grux AI"),
                        "a folder that does not exist was sent to the permission pane: \(service.status.settingsLine)")
 
         try fm.createDirectory(at: shots, withIntermediateDirectories: true)

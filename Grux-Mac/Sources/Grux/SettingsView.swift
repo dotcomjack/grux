@@ -75,6 +75,11 @@ private struct SettingsTabBar: View {
 // keeps working through SettingsTabAliases (old tags resolve to the new
 // pane + sub-pane + scroll anchor).
 struct SettingsView: View {
+    /// The Classic sidebar switch's line. It promised the sidebar "goes away in
+    /// the release after this one" from 3.0 on, a date no release kept and none
+    /// was named (D192 item 7).
+    static let classicSidebarCaption = "Every tab listed down the left of the window, the way Grux looked before 3.0, in place of the Command Panel. Switches right away."
+
     /// The button that puts the system input back on this Mac's own mic,
     /// drawn only on a Mac that has one (D7: a Mac with no built-in mic was offered "Revert
     /// to MacBook built-in mic" under "No input devices detected").
@@ -90,7 +95,7 @@ struct SettingsView: View {
         case .authorized:
             return "No microphone is connected. Connect one, then press Refresh."
         case .denied:
-            return "Grux is not allowed to use the microphone, so it cannot list them. Turn Grux on in System Settings, Privacy and Security, Microphone, then press Refresh."
+            return "Grux is not allowed to use the microphone, so it cannot list them. Turn on Grux AI in System Settings, Privacy & Security, Microphone, then press Refresh."
         case .restricted:
             return "This Mac's settings do not let Grux use a microphone, so it cannot list them. Whoever manages this Mac can change that."
         case .notDetermined:
@@ -119,10 +124,11 @@ struct SettingsView: View {
     @State private var drift: Double = 2
     @State private var auto: Bool = true
     @State private var notify: Bool = true
+    /// macOS's notification answer, read fresh when General shows; nil until read.
+    @State private var notificationsAllowed: Bool?
     @State private var screen: Bool = true
     @State private var wakeWord: Bool = true
     @State private var autoSendWake: Bool = true
-    @State private var useEleven: Bool = true
     @State private var elevenKey: String = ""
     @State private var elevenVoiceId: String = ""
     @State private var elevenModelId: String = ""
@@ -131,6 +137,9 @@ struct SettingsView: View {
     @State private var loadingVoices = false
     @State private var showKey: Bool = false
     @State private var savedAt: Date?
+    /// Whether a web search key is stored, kept current from `KeychainStore.didChange`
+    /// so the web-first warning clears the moment the Credentials row saves it.
+    @State private var webSearchKeySet = false
 
     // Web + Brave key (formerly the Upgrades tab, now in Data & Security).
     // The tier and the memory switch moved to Tuning in P-E-2, and so did
@@ -139,15 +148,16 @@ struct SettingsView: View {
     // holds, and a mirror loaded before Tuning changed the value would put
     // the old one back.
     @State private var webResearchEnabled: Bool = true
+    /// Whether the Brave key is known to be absent, read without waiting so a
+    /// Keychain prompt can never hold the pane; a read still out says nothing (D157 item 6).
+    private static var braveKeyKnownMissing: Bool { KeychainStore.getWithoutWaiting(.braveApiKey)?.isEmpty ?? false }
     @State private var premiumNoiseCancellation: Bool = true
-    @State private var braveKey: String = ""
-    @State private var showBraveKey: Bool = false
-    @State private var replicateKey: String = ""
-    @State private var showReplicateKey: Bool = false
     @State private var musicStrategy: MusicStrategy = .libraryFirst
     @State private var developerTeamId: String = ""
     @State private var developerBundlePrefix: String = "com.example"
-    @State private var memoryCounts: [SemanticMemoryKind: Int] = [:]
+    @State private var memoryCounts: [SemanticMemoryKind: Int]? = nil
+    /// The read outlasted `countsWhenLoaded`'s wait (D200 item 17).
+    @State private var memoryCountsTimedOut = false
     @ObservedObject private var wake = WakeWordListener.shared
     @ObservedObject private var speech = SpeechEngine.shared
     @ObservedObject private var ambient = AmbientState.shared
@@ -198,6 +208,8 @@ struct SettingsView: View {
     /// Handoff sentence, filled after the first frame. The live capability
     /// walk reads the keychain, so it must not run inside the view body.
     @State private var handoffLine: String = ""
+    /// What an agent could do now, from the same check as `handoffLine`; nil until it ran.
+    @State private var handoffAgentCount: Int? = nil
 
     static let generalSectionCount = 11
 
@@ -335,6 +347,9 @@ struct SettingsView: View {
         .frame(minWidth: GruxLayout.detailContentMin, idealWidth: GruxLayout.paneWidth, maxWidth: .infinity,
                minHeight: 400, idealHeight: 620, maxHeight: .infinity,
                alignment: .top)
+        .onReceive(NotificationCenter.default.publisher(for: KeychainStore.didChange).receive(on: RunLoop.main)) { _ in
+            webSearchKeySet = CapabilityResolver.isSatisfied(.keyBrave)
+        }
         .onAppear {
             loadFromState()
             state.settingsViewAppeared()
@@ -481,6 +496,7 @@ struct SettingsView: View {
     /// reveal task, after the first frame, never from the getter.
     private func refreshHandoffLine() {
         let split = AgentHandoff.outstanding()
+        handoffAgentCount = split.agent.count
         if split.agent.isEmpty && split.human.isEmpty {
             handoffLine = "Everything Grux asks for is already set up on this Mac, so the prompt just says so."
         } else if split.agent.isEmpty {
@@ -611,6 +627,10 @@ struct SettingsView: View {
     }
 
     private func erasedGeneralPane() -> AnyView { AnyView(generalPane) }
+
+    private func refreshNotificationsAllowed() async {
+        notificationsAllowed = await CapabilityRequest.refreshedNotificationAllowance()
+    }
     private func erasedVoicePane() -> AnyView { AnyView(voiceAmbientPane) }
     private func erasedModelsPane() -> AnyView { AnyView(modelsPane) }
     private func erasedAppearancePane() -> AnyView { AnyView(appearancePane) }
@@ -637,20 +657,46 @@ struct SettingsView: View {
                                 set: { screen = $0 }))
                                 .disabled(!state.screenPermissionGranted)
                             if !state.screenPermissionGranted {
-                                Text("Needs screen access first. Grant it below; analysis starts once macOS allows it.")
+                                Text("Needs Screen Recording first. Grant it below; analysis starts once macOS allows it.")
                                     .font(.caption).foregroundStyle(.secondary)
                             }
-                            Toggle("Send reminder notifications", isOn: $notify)
-                            Toggle("Auto-promote detected task to NOW", isOn: $auto)
+                            // Shows what is true: with notifications not allowed
+                            // no reminder shows, and the choice is kept (D116).
+                            Toggle("Send reminder notifications", isOn: Binding(
+                                get: { ReminderToggleTruth.shown(choice: notify, allowed: notificationsAllowed) },
+                                set: { notify = $0 }))
+                                .disabled(notificationsAllowed == false)
+                            if let line = ReminderToggleTruth.line(allowed: notificationsAllowed) {
+                                Text(line).font(.caption).foregroundStyle(.secondary)
+                                Button("Open Notifications settings") {
+                                    CapabilityRequest.openSystemSettings(for: .permNotifications)
+                                }
+                            }
+                            // Shows what is true: it acts only on what screen
+                            // analysis sees, so it is off while analysis is (D187).
+                            Toggle("Auto-promote detected task to NOW", isOn: Binding(
+                                get: { AutoPromoteToggleTruth.shown(choice: auto, analysisOn: screen,
+                                                                    granted: state.screenPermissionGranted) },
+                                set: { auto = $0 }))
+                                .disabled(!AutoPromoteToggleTruth.usable(analysisOn: screen,
+                                                                         granted: state.screenPermissionGranted))
+                            if let line = AutoPromoteToggleTruth.line(analysisOn: screen,
+                                                                      granted: state.screenPermissionGranted) {
+                                Text(line).font(.caption).foregroundStyle(.secondary)
+                            }
                             HStack { Text("Permission:")
                                 if state.screenPermissionGranted {
                                     Label("Granted", systemImage: "checkmark.seal.fill").foregroundStyle(.green)
                                 } else {
-                                    Button("Request screen recording…") { _ = ScreenCapturer.shared.requestPermission() }
+                                    Button("Request Screen Recording…") { _ = ScreenCapturer.shared.requestPermission() }
                                 }
                             }
                         }
                         .id("general.screen")
+                        .task { await refreshNotificationsAllowed() }
+                        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                            Task { await refreshNotificationsAllowed() }
+                        }
                     }
                     // Later sections live in their own functions. Calling them
                     // from here would put their types back on this first frame.
@@ -669,14 +715,14 @@ struct SettingsView: View {
             // Attached to the pane, not to the row, so it survives the section
             // being filtered out from under it while the search field is live.
             .confirmationDialog(
-                "Restart onboarding?",
+                OnboardingModel.restartQuestion,
                 isPresented: $confirmingOnboardingReset,
                 titleVisibility: .visible
             ) {
-                Button("Restart onboarding", role: .destructive) { OnboardingModel.shared.reset() }
+                Button(OnboardingModel.restartTitle, role: .destructive) { OnboardingModel.shared.reset() }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("The main window switches to the first-run screens immediately. The first gate asks for a model key, and offers \"Keep the key I have\" so the one you already saved gets you past it. Your saved key, name and settings are left alone unless you change them on the way through.")
+                Text(OnboardingModel.restartDetail)
             }
         }
     }
@@ -764,7 +810,7 @@ if showGeneral(6) && sectionVisible("general.doors") {
                         state.saveConfig()
                     }
                 ))
-                Text("The 240pt sidebar from before 3.0, in place of the Command Panel. Switches right away. Goes away in the release after this one.")
+                Text(Self.classicSidebarCaption)
                     .font(GruxType.caption).foregroundStyle(GruxTheme.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
                 // Only the Command Panel floats (`LaunchWindowSizer.level`), so
@@ -791,13 +837,14 @@ if showGeneral(6) && sectionVisible("general.doors") {
                 Button("Hand setup to your agent") {
                     handoffNote = SettingsHandoff.run(legacyShell: state.config.legacyShell)
                 }
+                .disabled(!SettingsHandoff.offers(agentCount: handoffAgentCount))
                 if let handoffNote {
                     Text(handoffNote)
                         .font(GruxType.caption).foregroundStyle(GruxTheme.textSecondary)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                 } else if !state.config.legacyShell {
-                    Text("Now under Optimize Grux, as the Hand it over door.")
+                    Text(SettingsHandoff.panelLine)
                         .font(GruxType.caption).foregroundStyle(GruxTheme.textTertiary)
                 }
 
@@ -876,11 +923,11 @@ if showGeneral(9) && sectionVisible("general.permissions") {
         if showGeneral(11) && sectionVisible("general.firstRun") {
             Section("Restart onboarding") {
                 HStack {
-                    Text("Connect a model, set what Grux calls you, and on the two longer paths see one real captured frame.")
+                    Text(OnboardingModel.restartSummary)
                     Spacer()
                     Button("Restart onboarding") { confirmingOnboardingReset = true }
                 }
-                Text("The frame comes with the exact redacted text Grux would send, and it is the step that lets Grux start watching your screen at all. The one minute path skips it, so choose one of the longer two if that is what you came back for. Grux goes back to the tier picker right away and stays there until the flow is finished. The model key gate offers \"Keep the key I have\", so your saved key gets you straight past it. Nothing already saved is deleted.")
+                Text(OnboardingModel.restartDetail)
                     .font(.caption).foregroundStyle(.secondary)
             }
             .id("general.firstRun")
@@ -919,6 +966,24 @@ if showGeneral(9) && sectionVisible("general.permissions") {
         }
     }
 
+    /// Whether a voice picked in the ElevenLabs section is the one speaking: the switch as
+    /// saved, the key as saved (what `SpeechEngine` reads), not the unsaved key field.
+    private var elevenSpeaks: Bool {
+        SpeechEngine.speaksWithElevenLabs(choice: state.config.useElevenLabs, hasKey: !state.elevenLabsKey.isEmpty,
+                                          offline: state.offlineMode, wouldAskForMic: AudioOutput.outputWouldAskForMic)
+    }
+
+    /// The ElevenLabs switch IS the saved choice the Engine picker above writes too. It
+    /// had a pane copy loaded once, so the picker left the switch, the caption and the
+    /// preview stale, and Save wrote the copy back over the picker (wave 70).
+    private var elevenSwitch: Binding<Bool> {
+        Binding(get: { state.config.useElevenLabs },
+                set: { new in
+                    state.config.useElevenLabs = new
+                    state.saveConfig()
+                })
+    }
+
     private var voiceSub: some View {
         ScrollViewReader { proxy in
                 Form {
@@ -940,19 +1005,15 @@ if showGeneral(9) && sectionVisible("general.permissions") {
                     if sectionVisible("voice.replies") {
                         Section("Spoken replies") {
                             TuningPointer(text: TuningCopy.spokenPointer)
-                            Toggle("Use ElevenLabs voice (Jarvis-grade)", isOn: $useEleven)
-                                .onChange(of: useEleven) { _, new in
-                                    state.config.useElevenLabs = new
-                                    state.saveConfig()
-                                }
-                            Toggle("Read me a briefing at 7 AM and 9 PM", isOn: Binding(
+                            Toggle(VoiceEngineLogic.elevenToggleLabel, isOn: elevenSwitch)
+                            Toggle(SpokenBriefingCopy.toggleLabel, isOn: Binding(
                                 get: { state.config.spokenBriefingsEnabled },
                                 set: { v in
                                     state.config.spokenBriefingsEnabled = v
                                     state.saveConfig()
                                 }
                             ))
-                            Text("Off by default. When on, Grux speaks a short summary of what is waiting and how the day went, twice a day. It needs a mail account to have anything to say. With it off the briefing is still written and still there to read, it just does not talk.")
+                            Text(SpokenBriefingCopy.caption(scheduleNeedsMail: SpokenBriefingCopy.scheduleNeedsMail))
                                 .font(.caption).foregroundStyle(.secondary)
 
                             Toggle("Turn Apple Music down while Grux talks", isOn: Binding(
@@ -969,7 +1030,7 @@ if showGeneral(9) && sectionVisible("general.permissions") {
                             } label: {
                                 Label(speech.isSpeaking ? "Speaking…" : "Test voice",
                                       systemImage: speech.isSpeaking ? "waveform" : "play.circle.fill")
-                            }.disabled(useEleven && elevenKey.isEmpty)
+                            }
                         }
                         .id("voice.replies")
                     }
@@ -1015,7 +1076,9 @@ if showGeneral(9) && sectionVisible("general.permissions") {
                                     SpeechEngine.shared.speak("Preview voice check. If you can hear me, I sound right.")
                                 } label: {
                                     Image(systemName: "play.circle")
-                                }.help("Preview selected voice")
+                                }
+                                .disabled(!elevenSpeaks)
+                                .help(elevenSpeaks ? "Preview selected voice" : "Previews play once Grux speaks with ElevenLabs.")
                             }
                             if let selected = FeaturedVoices.all.first(where: { $0.voiceId == elevenVoiceId }),
                                let desc = selected.description {
@@ -1026,7 +1089,10 @@ if showGeneral(9) && sectionVisible("general.permissions") {
                                 Text("Multilingual v2").tag("eleven_multilingual_v2")
                                 Text("Flash v2.5").tag("eleven_flash_v2_5")
                             }
-                            Text("Grux ships with one built-in voice. Paste your ElevenLabs key to browse the full catalogue and switch.")
+                            Text(VoiceEngineLogic.elevenSectionCaption(useElevenLabs: state.config.useElevenLabs,
+                                                                        hasKey: !state.elevenLabsKey.isEmpty,
+                                                                        offline: state.offlineMode,
+                                                                        wouldAskForMic: AudioOutput.outputWouldAskForMic))
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         .id("voice.eleven")
@@ -1098,8 +1164,6 @@ if showGeneral(9) && sectionVisible("general.permissions") {
                             Text("Grux records all sides of a call and transcribes it on your Mac. The other people on the call are recorded too and Grux cannot tell them, so it asks you to confirm once that you will. Some places require it.")
                                 .font(.caption).foregroundStyle(.secondary)
 
-                            Divider()
-
                             Toggle("Offer to record when I open a call app", isOn: Binding(
                                 get: { state.config.meetingAutoDetectEnabled },
                                 set: { v in
@@ -1117,7 +1181,13 @@ if showGeneral(9) && sectionVisible("general.permissions") {
 
                     if sectionVisible("ambient.nightly") {
                         Section("Nightly passes over the transcript") {
-                            Text("Two jobs can read the day's ambient transcript overnight. Both are off, both need ambient listening on to have anything to read, and both send that transcript to a model: the local one when it is running, otherwise the cloud model you configured.")
+                            // The route with no chat preset pin, as AmbientLLM resolves it.
+                            let routes = PrivacyAsk.routes(state: state)
+                            Text(NightlyPassCaption.text(
+                                brainOn: state.config.useLocalQwenForAmbient && !state.config.localLLMEndpoint.isEmpty,
+                                route: routes.background ?? routes.route,
+                                claudeKey: KeychainStore.getWithoutWaiting(.anthropicApiKey)
+                                    .map { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? false))
                                 .font(.caption).foregroundStyle(.secondary)
 
                             Toggle("Keep notes on people I talk about", isOn: Binding(
@@ -1145,22 +1215,26 @@ if showGeneral(9) && sectionVisible("general.permissions") {
 
                     if sectionVisible("ambient.crashsafe") {
                         Section("Crash-safe meeting capture") {
-                            Toggle("Keep a rolling audio safety-net on disk", isOn: Binding(
+                            Toggle("Keep meeting audio on this Mac", isOn: Binding(
                                 get: { state.config.crashSafeAudioEnabled },
                                 set: { v in
                                     state.config.crashSafeAudioEnabled = v
                                     state.saveConfig()
                                 }
                             ))
-                            Text("Writes the last ~90 seconds of mixed meeting audio to ~/Library/Application Support/Grux/audio-wal while a meeting is live. If Grux crashes or is force-quit mid-call, the next launch replays the PCM through Whisper and recovers the utterances you would have lost. Files are auto-deleted on clean finalize, no disk bloat.")
+                            Text(CrashSafeAudioCaption.line(on: state.config.crashSafeAudioEnabled,
+                                                            micStatus: MicController.authorizationStatus()))
                                 .font(.caption).foregroundStyle(.secondary)
+                            Button(CrashSafeAudioCaption.showButton) {
+                                NSWorkspace.shared.open(AudioExportStore.meetingAudioDir)
+                            }
                         }
                         .id("ambient.crashsafe")
                     }
 
                     if sectionVisible("ambient.qwen") {
-                        Section("Local Qwen ambient brain") {
-                            Toggle("Use local Qwen for ambient summaries", isOn: Binding(
+                        Section(AmbientProxyCopy.title) {
+                            Toggle(AmbientProxyCopy.toggle, isOn: Binding(
                                 get: { state.config.useLocalQwenForAmbient },
                                 set: { v in
                                     state.config.useLocalQwenForAmbient = v
@@ -1171,7 +1245,7 @@ if showGeneral(9) && sectionVisible("general.permissions") {
                                 TextField("", text: Binding(
                                     get: { state.config.localLLMEndpoint },
                                     set: { v in state.config.localLLMEndpoint = v; state.saveConfig() }
-                                ), prompt: Text("http://localhost:3849/api/llm/local"))
+                                ), prompt: Text(AmbientProxyCopy.endpointPrompt))
                                 .textFieldStyle(.roundedBorder)
                             }
                             LabeledContent("Model") {
@@ -1200,7 +1274,10 @@ if showGeneral(9) && sectionVisible("general.permissions") {
                             if let status = localLLMStatus {
                                 Text(status).font(.caption).foregroundStyle(.secondary)
                             }
-                            Text("Routes hourly ambient summaries, workday log outcomes, and folder classification through a local LLM proxy on your own network (Ollama-backed Qwen3). Claude is the fallback when the LAN endpoint is unreachable. Cuts API spend on bulk background jobs while keeping cloud responsiveness for live chat.")
+                            // The route with no chat preset pin, as AmbientLLM resolves it.
+                            let routes = PrivacyAsk.routes(state: state)
+                            Text(AmbientProxyCopy.caption(route: routes.background ?? routes.route,
+                                                          proxyOn: state.config.useLocalQwenForAmbient && !state.config.localLLMEndpoint.isEmpty))
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         .id("ambient.qwen")
@@ -1398,16 +1475,21 @@ if showGeneral(9) && sectionVisible("general.permissions") {
                                 TextField("claude-haiku-4-5-20251001", text: $model)
                                     .textFieldStyle(.roundedBorder).labelsHidden()
                             }
-                            Text("Default: claude-haiku-4-5-20251001. Use sonnet/opus for higher quality (more cost).")
+                            Text(ModelFieldCaption.claude(modelID: model, hasKey: ModelFieldCaption.keyInUse(field: apiKey, saved: KeychainStore.exists(.anthropicApiKey))))
                                 .font(.caption).foregroundStyle(.secondary)
                             Button("Test API key") { Task { await testKey() } }
+                                .disabled(!APIKeyTest.canTest(apiKey))
+                            if !APIKeyTest.canTest(apiKey) {
+                                Text(APIKeyTest.emptyLine)
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
                         }
                         .id("models.api")
                     }
 
                     if sectionVisible("models.tier") {
                         Section("Intelligence tier") {
-                            TuningPointer(text: TuningCopy.tierPointer(state.config.tier, spends: TuningCopy.tierSpends))
+                            TuningPointer(text: TuningCopy.tierPointerNow(state.config))
                         }
                         .id("models.tier")
                     }
@@ -1473,14 +1555,21 @@ if showGeneral(9) && sectionVisible("general.permissions") {
                                     }
                                 }
                             }
-                            if let status = modelRegistry.localStatus {
-                                Text(status).font(.caption)
-                                    // Usable, not reachable: "local server reachable,
-                                    // no models installed" is a warning, not a pass.
-                                    .foregroundStyle(modelRegistry.localUsable ? Color.secondary : Color.orange)
+                            Group {
+                                if let named = ModelFieldCaption.local(modelID: state.config.offlineLLMModel) {
+                                    Text(named).foregroundStyle(.secondary)
+                                }
+                                if let status = modelRegistry.localStatus {
+                                    Text(status)
+                                        // Usable, not reachable: "local server reachable,
+                                        // no models installed" is a warning, not a pass.
+                                        .foregroundStyle(modelRegistry.localUsable ? Color.secondary : Color.orange)
+                                }
                             }
+                            .font(.caption)
                             if !modelRegistry.localTags.isEmpty {
-                                Text("Installed: " + modelRegistry.localTags.joined(separator: ", "))
+                                Text("Installed: " + modelRegistry.shownLocalModels(configured: state.config.offlineLLMModel)
+                                    .map(Cookbook.personName(for:)).joined(separator: ", "))
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                             if OfflineModeCaption.showsNotReady(offlineMode: state.offlineMode,
@@ -1646,14 +1735,16 @@ if showGeneral(9) && sectionVisible("general.permissions") {
                     if sectionVisible("data.memory") {
                         Section("Persistent memory") {
                             TuningPointer(text: TuningCopy.memoryPointer)
-                            Text("Local-only: embeddings generated on-device via Apple NLEmbedding, stored in ~/Library/Application Support/Grux/. No data leaves your Mac.")
+                            Text(MemoryPrivacyCaption.line(route: PrivacyAsk.routes(state: state).route, memoryMirrorHost: PrivacyAsk.mirrorHost(), memoryOn: state.config.memoryEnabled))
                                 .font(.caption).foregroundStyle(.secondary)
                             if state.config.memoryEnabled {
                                 HStack(spacing: GruxSpacing.l) {
-                                    memoryStat("chats", (memoryCounts[.chatUser] ?? 0) + (memoryCounts[.chatAssistant] ?? 0))
-                                    memoryStat("ambient", memoryCounts[.ambient] ?? 0)
-                                    memoryStat("focus", memoryCounts[.focus] ?? 0)
-                                    memoryStat("web", memoryCounts[.web] ?? 0)
+                                    if let stats = MemoryCountsLine.stats(memoryCounts) {
+                                        ForEach(stats, id: \.label) { memoryStat($0.label, $0.count) }
+                                    } else {
+                                        Text(memoryCountsTimedOut ? MemoryCountsLine.notRead : MemoryCountsLine.counting)
+                                            .foregroundStyle(.secondary)
+                                    }
                                     Spacer()
                                     DestructiveButton(
                                         "Clear memory",
@@ -1666,15 +1757,18 @@ if showGeneral(9) && sectionVisible("general.permissions") {
                                     ) {
                                         SemanticMemory.shared.clearAll()
                                         memoryCounts = SemanticMemory.shared.countByKind()
-                                    }.buttonStyle(.borderless).font(.caption)
+                                    }.buttonStyle(.borderless)
                                 }
+                                // One caption size for the counting line and the button.
+                                .font(.caption)
                             }
                         }
                         .id("data.memory")
                         .task {
-                            guard let counts = await SemanticMemory.shared.countsWhenLoaded(seconds: 30),
-                                  !Task.isCancelled else { return }
-                            memoryCounts = counts
+                            memoryCountsTimedOut = false
+                            let counts = await SemanticMemory.shared.countsWhenLoaded(seconds: 30)
+                            guard !Task.isCancelled else { return }
+                            if let counts { memoryCounts = counts } else { memoryCountsTimedOut = true }
                         }
                     }
 
@@ -1743,7 +1837,7 @@ if showGeneral(9) && sectionVisible("general.permissions") {
                                     state.saveConfig()
                                 }
                             ))
-                            Text("Off by default, and takes effect on next launch. When on, Grux looks over how you have been using it when you ask (\"Grux, upgrade yourself\"), writes up changes it thinks would help, and asks you before building any of them. It runs by itself only on a schedule you choose in Self-Upgrade (nightly, Sundays, or when your Mac is idle), and every one of those starts off. Each pass sends what it found to a model, so it spends against your key or subscription. With it off Grux never proposes anything and never spends on this.")
+                            Text("Off by default. Asking works as soon as it is on. When on, Grux looks over how you have been using it when you ask (\"Grux, upgrade yourself\"), writes up changes it thinks would help, and asks you before building any of them. It runs by itself only on a schedule you choose in Self-Upgrade (nightly, Sundays, or when your Mac is idle), and every one of those starts off. Each pass sends what it found to a model, so it spends against your key or subscription. With it off Grux never proposes anything and never spends on this.")
                                 .font(.caption).foregroundStyle(.secondary)
                             TuningPointer(text: TuningCopy.selfUpgradePointer)
                         }
@@ -1772,7 +1866,7 @@ if showGeneral(9) && sectionVisible("general.permissions") {
                                     }
                                 }
                             ))
-                            Text("Off by default. When on, Grux can move the pointer, click, type, and scroll on your behalf through the macOS Accessibility API, so it can finish a task hands-free once it can see the screen. It also needs Accessibility granted (System Settings → Privacy & Security → Accessibility → Grux). With it off, Grux never touches your pointer or keyboard. Every action is written to the security audit log; typed text is never logged. Leave it off unless you want Grux operating the screen for you.")
+                            Text("Off by default. When on, Grux can move the pointer, click, type, and scroll on your behalf through the macOS Accessibility API, so it can finish a task hands-free once it can see the screen. It also needs Accessibility granted (System Settings → Privacy & Security → Accessibility → Grux AI). With it off, Grux never touches your pointer or keyboard. Every action is written to the security audit log; typed text is never logged. Leave it off unless you want Grux operating the screen for you.")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         .id("data.screenControl")
@@ -1807,36 +1901,23 @@ if showGeneral(9) && sectionVisible("general.permissions") {
                                     state.config.webResearchEnabled = new
                                     state.saveConfig()
                                 }
+                            if let why = WebResearch.settingsLine(offline: state.offlineMode, enabled: webResearchEnabled,
+                                                                 hasSearchKey: !Self.braveKeyKnownMissing,
+                                                                 chatMovesToClaude: WebResearch.offlineOffMovesChat(
+                                                                    hasClaudeKey: KeychainStore.exists(.anthropicApiKey),
+                                                                    presetProvider: PresetStore.shared.activeChatApplication()?.providerOverride)) {
+                                Text(why)
+                                    .font(.caption).foregroundStyle(GruxTheme.warnAmber)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                             Text("Replaces the old 'open a Google tab' flow with an inline conversational answer. Uses Brave Search (free tier ~1,000 queries/month), then a small model writes the summary. Browser tab-search still works separately.")
                                 .font(.caption).foregroundStyle(.secondary)
 
-                            // Caption above rather than LabeledContent, because a Form puts a
-                            // LabeledContent label in a leading column OUTSIDE the
-                            // content area. "Brave API key" plus a field plus Hide and
-                            // Save on one row is the widest shape in this Form, and
-                            // the Form is only as narrow as its widest row, which is
-                            // what pushed the credentials list past the pane at 840pt.
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Brave API key")
-                                    .font(.caption).foregroundStyle(.secondary)
-                                HStack {
-                                    if showBraveKey {
-                                        TextField("", text: $braveKey, prompt: Text("brv_..."))
-                                            .textFieldStyle(.roundedBorder)
-                                    } else {
-                                        SecureField("", text: $braveKey, prompt: Text("brv_..."))
-                                            .textFieldStyle(.roundedBorder)
-                                    }
-                                    Button(showBraveKey ? "Hide" : "Show") { showBraveKey.toggle() }
-                                        .buttonStyle(.borderless).font(.caption)
-                                    Button("Save") {
-                                        let trimmed = braveKey.trimmingCharacters(in: .whitespacesAndNewlines)
-                                        _ = KeychainStore.set(.braveApiKey, trimmed)
-                                        savedAt = Date()
-                                    }
-                                    .buttonStyle(.borderless).font(.caption)
-                                }
-                            }
+                            // One field per key on this page: the Credentials row. A second
+                            // field here asked for the same key twice and its Show button put
+                            // the stored key on screen (D135 item 8).
+                            Text(CapabilityCredentialsSection.keyLivesInCredentials(.keyBrave))
+                                .font(.caption).foregroundStyle(.secondary)
                             Link("Get a Brave Search API key →", destination: URL(string: "https://api.search.brave.com/app/subscriptions/subscribe")!)
                                 .font(.caption)
                                 .gruxLink()
@@ -1846,34 +1927,9 @@ if showGeneral(9) && sectionVisible("general.permissions") {
 
                     if sectionVisible("data.replicate") {
                         Section("Media generation") {
-                            // Caption above rather than LabeledContent, because a Form puts a
-                            // LabeledContent label in a leading column OUTSIDE the
-                            // content area. "Replicate API token" plus a field plus Hide and
-                            // Save on one row is the widest shape in this Form, and
-                            // the Form is only as narrow as its widest row, which is
-                            // what pushed the credentials list past the pane at 840pt.
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Replicate API token")
-                                    .font(.caption).foregroundStyle(.secondary)
-                                HStack {
-                                    if showReplicateKey {
-                                        TextField("", text: $replicateKey, prompt: Text("token"))
-                                            .textFieldStyle(.roundedBorder)
-                                    } else {
-                                        SecureField("", text: $replicateKey, prompt: Text("token"))
-                                            .textFieldStyle(.roundedBorder)
-                                    }
-                                    Button(showReplicateKey ? "Hide" : "Show") { showReplicateKey.toggle() }
-                                        .buttonStyle(.borderless).font(.caption)
-                                    Button("Save") {
-                                        let trimmed = replicateKey.trimmingCharacters(in: .whitespacesAndNewlines)
-                                        _ = KeychainStore.set(.replicateApiKey, trimmed)
-                                        savedAt = Date()
-                                    }
-                                    .buttonStyle(.borderless).font(.caption)
-                                }
-                            }
                             Text("Media Studio generates images through Replicate, using a token you supply. Product-in-scene renders still route through the render service instead, so a real product is composited byte-exact rather than imagined.")
+                                .font(.caption).foregroundStyle(.secondary)
+                            Text(CapabilityCredentialsSection.keyLivesInCredentials(.keyReplicate))
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         .id("data.replicate")
@@ -1897,8 +1953,9 @@ if showGeneral(9) && sectionVisible("general.permissions") {
                             }
                             Text(musicStrategy.shortHelp)
                                 .font(.caption).foregroundStyle(.secondary)
-                            if musicStrategy == .webFirst && braveKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                Label("Web-first needs a Brave Search API key (above).", systemImage: "exclamationmark.triangle.fill")
+                            if musicStrategy == .webFirst && !webSearchKeySet {
+                                Label("Web-first needs a web search key. " + CapabilityCredentialsSection.keyLivesInCredentials(.keyBrave),
+                                      systemImage: "exclamationmark.triangle.fill")
                                     .font(.caption2).foregroundStyle(.orange)
                             }
                         }
@@ -1938,7 +1995,7 @@ if showGeneral(9) && sectionVisible("general.permissions") {
 
                     if sectionVisible("data.capturePrivacy") {
                         Section("Privacy and capture") {
-                            Text("Grux photographs your screen on a timer and sends the frame to a vision model. These are the things it refuses to look at. Excluded windows are removed before the frame is composited, so their pixels are never captured, even when the app is not in front.")
+                            Text(CapturePrivacyCopy.lead(analysisOn: state.config.screenAnalysisEnabled, watching: state.watching, skip: state.focusSkip, permitted: state.screenPermissionGranted))
                                 .font(.caption).foregroundStyle(.secondary)
 
                             LabeledContent("Frames sent to a model") {
@@ -2325,7 +2382,6 @@ if showGeneral(9) && sectionVisible("general.permissions") {
         screen = c.screenAnalysisEnabled
         wakeWord = c.wakeWordEnabled
         autoSendWake = c.autoSendOnWake
-        useEleven = c.useElevenLabs
         elevenKey = KeychainStore.get(.elevenLabsApiKey)
         elevenVoiceId = c.elevenLabsVoiceId
         elevenModelId = c.elevenLabsModelId
@@ -2334,8 +2390,7 @@ if showGeneral(9) && sectionVisible("general.permissions") {
         musicStrategy = c.musicStrategy
         developerTeamId = c.developerTeamId
         developerBundlePrefix = c.developerBundlePrefix
-        braveKey = KeychainStore.get(.braveApiKey)
-        replicateKey = KeychainStore.get(.replicateApiKey)
+        webSearchKeySet = CapabilityResolver.isSatisfied(.keyBrave)
         offlineMode = state.offlineMode
         offlineLLMModel = c.offlineLLMModel
         ollamaBaseURL = c.ollamaBaseURL
@@ -2366,7 +2421,6 @@ if showGeneral(9) && sectionVisible("general.permissions") {
         c.screenAnalysisEnabled = screen
         c.wakeWordEnabled = wakeWord
         c.autoSendOnWake = autoSendWake
-        c.useElevenLabs = useEleven
         c.elevenLabsVoiceId = elevenVoiceId.trimmingCharacters(in: .whitespacesAndNewlines)
         c.elevenLabsModelId = elevenModelId.trimmingCharacters(in: .whitespacesAndNewlines)
         state.config = c
@@ -2604,6 +2658,14 @@ enum KeepOnTopRow {
 /// button: where it went, or why it could not.
 @MainActor
 enum SettingsHandoff {
+    /// D157 item 5: what the button does in the panel, not "it moved".
+    static let panelLine = "Opens Optimize Grux, where \u{201C}\(OptimizeDoor.handOver.title)\u{201D} writes this prompt "
+        + "into a folder for your agent, with your settings."
+    /// D170 item 16: the button was live above "Nothing left that an agent can
+    /// do". It offers a handoff only while an agent has something to do; nil is
+    /// still checking.
+    static func offers(agentCount: Int?) -> Bool { agentCount != 0 }
+
     static func run(legacyShell: Bool,
                     write: @MainActor () -> Result<URL, Swift.Error> = { HandoffBundle.writeLive() }) -> String? {
         guard legacyShell else {
@@ -2621,6 +2683,16 @@ enum SettingsHandoff {
         case .failure(let error):
             return OptimizeCopy.handoffFailed(error.localizedDescription)
         }
+    }
+}
+
+/// D170 item 14: "Test API key" sent a request with an empty key when the field
+/// was empty, and said how it went only in a notification this Mac may not
+/// show. It is live only with a key in the field; otherwise the line says why.
+enum APIKeyTest {
+    static let emptyLine = "Paste a key above to test it."
+    static func canTest(_ key: String) -> Bool {
+        !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
 
@@ -2643,4 +2715,68 @@ enum OfflineModeCaption {
     }
     static let notReady = "Offline mode is on but no local model is ready to use. Chat will not send until one is: start your local model server, or turn offline mode off to use the cloud."
     static let footer = "Offline mode routes chat to a local model; web research and cloud voice are disabled. The switch, the model and the base URL are saved, so offline mode is still on after a relaunch, and if the local server is not running then, chat waits for it instead of using the cloud. Picking another provider under Models sends chat there instead, until you turn this switch on again. Works with Ollama (default), vLLM, or llama.cpp on the OpenAI-compatible endpoint."
+}
+
+// The lines under the two model fields in Settings, Models (D197 item 1). The
+// fields hold IDs, which the app needs; the line under each says which model
+// that is, in a person's words, and the Claude one says when Grux uses it.
+enum ModelFieldCaption {
+    static let defaultClaude = "claude-haiku-4-5-20251001"
+    static let noKey = "Grux uses it only once an API key is in the field above."
+
+    /// "Claude Haiku 4.5" for `claude-haiku-4-5-20251001`: a family word, one or
+    /// two version numbers, an optional 8-digit date. Anything else gets no name,
+    /// rather than one made up.
+    static func claudeName(_ id: String) -> String? {
+        let parts = id.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            .split(separator: "-", omittingEmptySubsequences: false).map(String.init)
+        guard parts.count >= 3, parts[0] == "claude",
+              !parts[1].isEmpty, parts[1].allSatisfy({ $0.isLetter }) else { return nil }
+        var version = Array(parts.dropFirst(2))
+        if version.count > 1, let last = version.last, last.count == 8, last.allSatisfy(\.isNumber) {
+            version.removeLast()
+        }
+        guard (1...2).contains(version.count),
+              version.allSatisfy({ !$0.isEmpty && $0.count <= 2 && $0.allSatisfy(\.isNumber) }) else { return nil }
+        return "Claude " + parts[1].prefix(1).uppercased() + parts[1].dropFirst() + " " + version.joined(separator: ".")
+    }
+
+    /// A key in the field, or one saved earlier: `save()` writes only a
+    /// non-empty key, so clearing the field keeps the saved one in use.
+    static func keyInUse(field: String, saved: Bool) -> Bool {
+        hasKey(field) || saved
+    }
+
+    static func hasKey(_ key: String) -> Bool {
+        !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    static func claude(modelID: String, hasKey: Bool) -> String {
+        let id = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let defaultName = claudeName(defaultClaude) ?? defaultClaude
+        let line: String
+        if id.isEmpty {
+            line = "Type a model ID, such as \(defaultClaude) (\(defaultName), the default)."
+        } else if id != modelID || id != id.lowercased() {
+            // Sent as typed (`c.model = model`), so Anthropic will not know it.
+            line = "Grux sends this model ID to Anthropic as typed, spaces and capitals included. The default is \(defaultName) (\(defaultClaude))."
+        } else if claudeName(id) == defaultName {
+            // The alias or another date of the default is the same model.
+            line = "This is \(defaultName), the default: quick and low cost. A Sonnet or Opus model answers better and costs more."
+        } else if let name = claudeName(id) {
+            line = "This is \(name). The default, \(defaultName) (\(defaultClaude)), is quicker and costs less."
+        } else {
+            line = "Grux sends this model ID to Anthropic as typed. The default is \(defaultName) (\(defaultClaude))."
+        }
+        return hasKey ? line : line + " " + noKey
+    }
+
+    /// The catalog's name for the local model, or nothing when the tag is all
+    /// the name there is.
+    static func local(modelID: String) -> String? {
+        let id = modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !id.isEmpty else { return nil }
+        let name = Cookbook.personName(for: id)
+        return name == id ? nil : "This is \(name)."
+    }
 }

@@ -29,7 +29,7 @@ final class SetupCardDeadEndTests: XCTestCase {
     /// does not say WHERE. `stepYoutubeTranscriptsEnabled` is self-attested and
     /// its remediation says "Turn it on in Settings", so routing it to
     /// first-run would send somebody to re-walk setup for a toggle;
-    /// `stepFirstFrameReviewed` is completed by using the feature. An earlier
+    /// `stepFirstFrameReviewed` is reviewed on Focus log's own card. An earlier
     /// version of this fix routed all six and `TerminalSessionsOnboardingTests`
     /// caught it, which is the whole point of that file's known-unrouted list.
     private let firstRunOnly: [SetupRequirement] = [

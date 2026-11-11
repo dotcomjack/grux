@@ -68,9 +68,11 @@ enum AudioExportTool {
             guard let idStr = input["meeting_id"] as? String, let id = UUID(uuidString: idStr) else {
                 return "error: meeting_id must be a valid UUID. Call list_meetings first."
             }
-            let title: String? = await MainActor.run { MeetingStore.shared.loadRecord(id: id)?.title }
-            guard let url = AudioExportStore.exportMeetingAudio(meetingId: id, title: title) else {
-                return "error: no audio found for that meeting. Meeting may have been captured before audio export was enabled, or was recorded with meetingAudioKeepWAV off."
+            guard let record = await MainActor.run(body: { MeetingStore.shared.loadRecord(id: id) }) else {
+                return MeetingAudioMissing.noMeeting
+            }
+            guard let url = AudioExportStore.exportMeetingAudio(meetingId: id, title: record.title) else {
+                return MeetingAudioMissing.tool
             }
             if reveal { await MainActor.run { AudioExportStore.reveal(url) } }
             return "ok: wrote \(url.lastPathComponent) at \(url.path)"

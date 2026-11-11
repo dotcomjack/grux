@@ -216,7 +216,7 @@ struct FocusOverlayView: View {
                 .background(FocusOverlayDragHandle())
         }
         .buttonStyle(.plain)
-        .help(appState.currentTask.map { "Focus: \($0.title), tap to expand" } ?? "Tap to expand focus overlay")
+        .help(appState.currentTask.map { "Focus: \($0.title), click to expand" } ?? "Click to expand focus overlay")
     }
 
     // MARK: - Derived state
@@ -242,7 +242,7 @@ struct FocusOverlayView: View {
             // The one rule: on with no screen access watches nothing.
             switch PanelCopy.watchingState(watching: appState.watching, screenAccess: appState.screenPermissionGranted) {
             case .watching: return "watching"
-            case .needsScreenAccess: return "needs screen access"
+            case .needsScreenAccess: return "needs Screen Recording"
             case .paused: return "idle"
             }
         }

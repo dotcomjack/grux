@@ -1,5 +1,6 @@
 import XCTest
 import SwiftUI
+import Combine
 @testable import Grux
 
 /// The Command Panel: which pane opens for which request, what an open
@@ -468,8 +469,51 @@ final class CommandPanelRootTests: XCTestCase {
         XCTAssertEqual(slowReads, 2, "the timer did not re-read them")
 
         let root = try sources("Sources/Grux/Shell/CommandPanelRoot.swift")
-        XCTAssertEqual(root.components(separatedBy: "refreshNow(force: true, includingSlow: true)").count - 1, 3,
-                       "appear, the 60 s timer and the end of onboarding each re-read the slow inputs")
+        XCTAssertEqual(root.components(separatedBy: "refreshNow(force: true, includingSlow: true)").count - 1, 4,
+                       "appear, the 60 s timer, the end of onboarding and the local model check answering each re-read the slow inputs")
+    }
+
+    /// D172: until the local model check answers, no local model means "not
+    /// looked yet", so Now does not say "Connect a model". Once it answers,
+    /// chat that cannot send does need one, whatever the reason.
+    func test_noConnectRowUntilTheLocalModelCheckAnswers() {
+        let rule = RelevanceState.SlowInputs.chatNeedsModel
+        XCTAssertFalse(rule(false, false), "Connect a model was asked for before the local model check answered")
+        XCTAssertTrue(rule(false, true), "chat with no model after the check did not ask for one")
+        XCTAssertFalse(rule(true, false), "chat that can send asked for a model")
+        XCTAssertFalse(rule(true, true), "chat that can send asked for a model")
+    }
+
+    /// D172: the check answering re-reads Now's slow inputs at once, so a Mac
+    /// with no model is told within the check's own few seconds, and one with a
+    /// model never is, rather than a minute later on the timer.
+    func test_theLocalModelCheckAnsweringReReadsNowAtOnce() throws {
+        let checks = PassthroughSubject<Void, Never>()
+        var needsModel = false
+        var slowReads = 0
+        var t = Date(timeIntervalSinceReferenceDate: 1000)
+        let m = PanelModel(slowInputs: { _ in
+            slowReads += 1
+            var slow = RelevanceState.SlowInputs()
+            slow.chatNeedsModel = needsModel
+            return slow
+        }, modelChecks: checks.eraseToAnyPublisher(),
+           refreshInterval: 1, clock: { t }, schedule: { _, _ in })
+        m.observeModelChecks()
+        m.refreshNow(force: true, includingSlow: true)          // on appear, before the check
+        XCTAssertFalse(m.now.contains { $0.action == .connectModel })
+        needsModel = true                                       // the check found nothing
+        t = t.addingTimeInterval(0.2)                           // inside the refresh window
+        checks.send(())
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+        XCTAssertEqual(slowReads, 2, "the check answering did not re-read the slow inputs")
+        XCTAssertTrue(m.now.contains { $0.action == .connectModel },
+                      "Now waited for the timer to say chat needs a model")
+
+        let root = try sources("Sources/Grux/Shell/CommandPanelRoot.swift")
+        let observing = root.components(separatedBy: "func startObserving()").last ?? ""
+        XCTAssertTrue(observing.prefix(400).contains("observeModelChecks()"),
+                      "the app's Now does not listen for the local model check")
     }
 
     // MARK: Window sizing

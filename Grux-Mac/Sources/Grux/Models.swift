@@ -110,18 +110,23 @@ struct ChatMessage: Identifiable, Codable {
     // the model to answer "what time is it" with the error line, measured
     // 2026-09-20 after six failed turns in one thread.
     var isNotice: Bool
+    /// On a person's message: Grux answered it itself, with no model (the time,
+    /// a sum, a calendar card, what Grux can do). A chat holding only such asks
+    /// is still fresh for "What can you do for me?" (wave 67 rounds 4 and 5).
+    var answeredWithoutModel: Bool
 
     init(id: UUID = UUID(), role: ChatRole, content: String,
          timestamp: Date = Date(),
          imageData: Data? = nil, imageMediaType: String? = nil,
-         isNotice: Bool = false) {
+         isNotice: Bool = false, answeredWithoutModel: Bool = false) {
         self.id = id; self.role = role; self.content = content; self.timestamp = timestamp
         self.imageData = imageData; self.imageMediaType = imageMediaType
         self.isNotice = isNotice
+        self.answeredWithoutModel = answeredWithoutModel
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, role, content, timestamp, imageData, imageMediaType, isNotice
+        case id, role, content, timestamp, imageData, imageMediaType, isNotice, answeredWithoutModel
     }
 
     init(from decoder: Decoder) throws {
@@ -136,6 +141,9 @@ struct ChatMessage: Identifiable, Codable {
         // the warning sign, and no model reply ever did.
         isNotice = try c.decodeIfPresent(Bool.self, forKey: .isNotice)
             ?? (role == .assistant && content.unicodeScalars.first == "\u{26A0}")
+        // Saved before the flag existed: read as a model's answer, which keeps
+        // the first-run rule as strict as it was.
+        answeredWithoutModel = try c.decodeIfPresent(Bool.self, forKey: .answeredWithoutModel) ?? false
     }
 }
 
@@ -200,11 +208,19 @@ public enum ListeningMode: String, Codable, CaseIterable, Identifiable {
     public var explanation: String {
         switch self {
         case .alwaysOn:
-            return "Grux hears you all the time and decides, in under a second, whether you were talking to it. Nothing you say is kept unless you ask it to remember."
+            // Wave 53 review rounds 3 and 4: it said "Nothing you say is kept
+            // unless you ask it to remember", while `AmbientState` keeps every
+            // heard chunk on disk, `AmbientHourlySummarizer` writes a line an hour
+            // (raw text with no model), and `AmbientMemoryExtractor`,
+            // `PersonMemory` and `DecisionLog` have whatever model Grux uses (a
+            // local one too) keep facts, people and decisions; with a cloud
+            // key the coach, Mentor and the recap send it to the provider (round
+            // 5). Named by kind, never as a closed list or behind a condition.
+            return "Grux hears you all the time and decides, in under a second, whether you were talking to it. What it hears is kept as text on this Mac. Any model Grux uses, on this Mac or at your model provider, can read that text, for example to remember plans, facts, people and decisions you mention, passwords said aloud included. Always on's audio stays on this Mac."
         case .wakeWord:
             return "Grux ignores everything until you say Hey Grux, then listens for one request."
         case .off:
-            return "The microphone stays closed. Type instead, or tap the orb to talk."
+            return "The microphone stays closed. Type instead, or click the orb to talk."
         }
     }
 }
@@ -867,6 +883,10 @@ struct GruxConfig: Codable {
     /// (Settings, General, "Check for new versions"). The default is `UpdateCheck.onByDefault`,
     /// one constant, so the owner's ruling flips it in one line.
     var updateCheckEnabled: Bool = UpdateCheck.onByDefault
+    /// The place a weather question with no city is answered for (D141): the
+    /// last city the person named, shown in every weather reply so a wrong one
+    /// is seen and changed by naming another. Nil until they name one.
+    var weatherPlace: WeatherPlace?
     /// Whether the 07:00 and 21:00 briefings SPEAK. OFF by default and separate from
     /// `speakRepliesAloud` on purpose.
     ///
@@ -900,10 +920,11 @@ struct GruxConfig: Codable {
     // What Grux calls itself. The source is MIT, so a rename is the user's
     // right; almost nobody will, hence the default.
     var assistantName: String
-    // Local Qwen ambient brain. When on, AmbientHourlySummarizer,
-    // WorkdayLogAssembler, and FolderClassifier route through the local-LLM
-    // proxy at `localLLMEndpoint` (Ollama-backed Qwen3) instead of the Anthropic
-    // API. Claude is still used as fallback if that endpoint is unreachable.
+    // Your own proxy for background jobs (Settings, Ambient). When on, the
+    // AmbientLLM jobs (hourly summaries, workday log, folder sorting and the
+    // rest) go first to the proxy at `localLLMEndpoint`, which must answer
+    // Grux's `/api/llm/local` shape; when it does not, or when this is off,
+    // they take chat's route (`AmbientLLM.completeTagged`).
     var useLocalQwenForAmbient: Bool
     // Empty by default, which every consumer already reads as "not configured"
     // and degrades to the cloud path. It used to default to one developer's own
@@ -969,6 +990,7 @@ struct GruxConfig: Codable {
         case personMemoryEnabled, decisionLogEnabled, controlSocketEnabled
         case foundryEnabled, foundrySuiteCommand, foundrySchedule, spokenBriefingsEnabled
         case updateCheckEnabled
+        case weatherPlace
         case screenControlEnabled
         case fileNamingEnabled
         case recordingConsentAcknowledged
@@ -1218,6 +1240,7 @@ struct GruxConfig: Codable {
             ?? FoundrySchedule()
         updateCheckEnabled = try c.decodeIfPresent(Bool.self, forKey: .updateCheckEnabled)
             ?? UpdateCheck.onByDefault
+        weatherPlace = try? c.decodeIfPresent(WeatherPlace.self, forKey: .weatherPlace)
         spokenBriefingsEnabled = try c.decodeIfPresent(Bool.self, forKey: .spokenBriefingsEnabled) ?? false
         // Defaults false for an existing install too, deliberately. Nobody who already has
         // Grux has been asked this question, so the first recording after this ships should

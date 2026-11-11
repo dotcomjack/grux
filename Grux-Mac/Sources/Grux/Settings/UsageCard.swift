@@ -63,9 +63,11 @@ struct UsageCardContent: Equatable {
         }
 
         // Not today, it says which day, or it sits under "Decisions today:
-        // None yet" as if the two disagreed (D8).
+        // None yet" as if the two disagreed (D8). The value is what was asked,
+        // not what Grux chose: "Last decision: Start a self-upgrade cycle" read
+        // as Grux having decided to start one (D116 item 8).
         if let last = DecisionUsageSummary.datedLastLine(rows.last, now: now, calendar: calendar) {
-            lines.append(Line(label: "Last decision", value: last))
+            lines.append(Line(label: DecisionUsageSummary.lastDecisionLabel, value: last))
         }
         return UsageCardContent(lines: lines)
     }

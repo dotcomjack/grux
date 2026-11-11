@@ -351,6 +351,36 @@ final class SettingsSmallTruthsTests: XCTestCase {
         XCTAssertTrue(TuningCopy.tierPointer(.tier4_hybrid_8s).contains("$60"), "the estimate is gone where it is true")
     }
 
+    /// D203 (sense pass 29): with a TypeSafe decision key saved and no cloud
+    /// key, Models said "$0 a month as set up: there is no cloud key, so
+    /// nothing is billed." while the key bills TypeSafe for every decision.
+    func test_aDecisionsKeyIsNamedWhereItBills() {
+        let keyOnly = TuningCopy.tierPointer(.tier4_hybrid_8s, spends: false, decisionsKey: true, decisionCap: 500)
+        XCTAssertFalse(keyOnly.contains("nothing is billed"), keyOnly)
+        XCTAssertFalse(keyOnly.contains("$0 a month"), keyOnly)
+        XCTAssertFalse(keyOnly.contains("$60"), keyOnly)
+        XCTAssertTrue(keyOnly.contains("Decisions key"), keyOnly)
+        XCTAssertTrue(keyOnly.contains("TypeSafe"), keyOnly)
+        XCTAssertTrue(keyOnly.contains("at most 500 a day"), keyOnly)
+        let uncapped = TuningCopy.tierPointer(.tier4_hybrid_8s, spends: false, decisionsKey: true, decisionCap: 0)
+        XCTAssertTrue(uncapped.contains("no daily cap"), uncapped)
+        let both = TuningCopy.tierPointer(.tier4_hybrid_8s, spends: true, decisionsKey: true, decisionCap: 1)
+        XCTAssertTrue(both.contains("$60") && both.contains("Decisions key") && both.contains("at most 1 a day"), both)
+        // No key: the lines stay as they were.
+        XCTAssertEqual(TuningCopy.tierPointer(.tier4_hybrid_8s, spends: false, decisionsKey: false),
+                       TuningCopy.tierPointer(.tier4_hybrid_8s, spends: false))
+        XCTAssertFalse(TuningCopy.tierPointer(.tier4_hybrid_8s).contains("Decisions"))
+    }
+
+    /// The Models section reads the saved decision key, not only the cloud key.
+    func test_modelsTierLineReadsTheDecisionsKey() throws {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Sources/Grux/SettingsView.swift")
+        let src = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertTrue(src.contains("TuningCopy.tierPointerNow(state.config"), "Models must use the line that reads every paid key")
+        XCTAssertFalse(src.contains("spends: TuningCopy.tierSpends)"))
+    }
+
     /// Every anchor a search result or a deep link can name, from the
     /// registry itself, must sit in a section a ScrollViewReader can reach:
     /// the reader wraps the Form (or the view holding it), never a ScrollView

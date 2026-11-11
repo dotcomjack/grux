@@ -28,6 +28,22 @@ struct SecuritySettingsView: View {
         "\(dayFormatter.string(from: d)), \(TodayModel.clock(d))"
     }
 
+    /// Every door that calls `URLGuard.check`, by its `purpose:`, in the caption's words
+    /// (D115 item 2). `URLGuardCaptionTests` fails when a door is added or removed and
+    /// this list does not follow, so the caption never claims a reach the guard lacks.
+    static let urlGuardDoors: [(purpose: String, words: String)] = [
+        (purpose: "open_url", words: "opens a link"),
+        (purpose: "research_fetch", words: "fetches a page for research"),
+    ]
+
+    /// The local model's connection (Ollama or another server on this Mac) never goes
+    /// through the guard, and a person who just connected one reads this line.
+    static let urlGuardCaption = "When Grux "
+        + urlGuardDoors.map(\.words).joined(separator: " or ")
+        + ", it refuses private-IP ranges, localhost, .local hosts, and URLs with a name or password in them. "
+        + "Your local model's connection is not checked here, so a model on this Mac keeps working. "
+        + "No host is exempt out of the box: add your own LAN services below to keep them reachable."
+
     var body: some View {
         Form {
             promptSection
@@ -56,7 +72,7 @@ struct SecuritySettingsView: View {
     private var urlGuardSection: some View {
         Section("URL guard") {
             Toggle("Check URLs before opening or fetching", isOn: binding(\.urlGuardEnabled))
-            Text("Denies private-IP ranges, localhost, .local hosts, and credential-bearing URLs. No host is exempt out of the box: add your own LAN services below to keep them reachable.")
+            Text(Self.urlGuardCaption)
                 .font(.caption)
                 .foregroundStyle(.secondary)
 

@@ -57,7 +57,7 @@ final class UpgradeYourselfRouteTests: XCTestCase {
             ("foundry: could not start a cycle right now",
              "I could not start a self-upgrade cycle right now."),
             (JaxToolGate.pendingResult(goesOutAs: nil),
-             "The self-upgrade cycle is waiting for your OK in Approvals. Nothing happens until you tap it."),
+             "The self-upgrade cycle is waiting for your OK in Approvals. Nothing happens until you approve it."),
         ]
         for (result, expected) in cases {
             let line = ToolReplyCopy.forPerson(tool: "foundry_upgrade_cycle", input: input, result: result)

@@ -376,7 +376,7 @@ final class UserCronScheduler {
                             result: CommandV2AgentBridge.AgentResult) -> (title: String, body: String) {
         let outcome = result.success ? "done" : "had trouble"
         let body = result.signInExpired
-            ? "Claude sign-in expired. Open Grux to sign in again."
+            ? "Claude sign-in expired. Open Grux to sign in."
             : String(result.text.prefix(180))
         return ("Schedule \(outcome): \(title)", body)
     }

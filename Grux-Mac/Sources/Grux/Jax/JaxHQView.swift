@@ -18,6 +18,10 @@ import SwiftUI
 // GruxTheme so it reads as a first-class CURRENT surface, money is $N, zero em/en
 // dashes, tight controls.
 struct JaxHQView: View {
+    /// D192 (3): the header line over "Jax HQ". It was "Your clone, between check-ins",
+    /// a word the pane never explains; it now opens the Labs shelf's own line for it.
+    static let eyebrowText = "The inbox agent's desk"
+
     @ObservedObject private var queue = ApprovalQueue.shared
     @ObservedObject private var briefings = BriefingEngine.shared
     @ObservedObject private var roadmap = RoadmapStore.shared
@@ -26,18 +30,27 @@ struct JaxHQView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 hero
+                // D200 item 1: the mail setup card, when mail is missing. The gate
+                // keeps this pane live (`keepsUnneededPartsLive`), so only the parts
+                // marked `.needsGatedCapability()` dim; approvals, goals and the
+                // activity log need no mail account and stay usable.
+                CapabilitySetupSlot()
                 // The support-reply review queue lives here now (UI/UX decision
                 // 1A): one hub for what needs you, brand-filtered.
                 JaxDraftsSection()
+                    .needsGatedCapability()
                 // What Jax filtered out (no-reply / marketing / muted), visible
                 // and recoverable instead of silently logged.
                 JaxFilteredSection()
+                    .needsGatedCapability()
                 // What Jax learned from your edits (Phase 2): lessons that now
                 // shape future drafts, with the correction that taught them.
                 JaxLessonsSection()
+                    .needsGatedCapability()
                 // Per-brand send autonomy + graduation (Phase 4): OBSERVE by
                 // default; LIVE auto-sends only what the output gate clears.
                 JaxSendAutonomySection()
+                    .needsGatedCapability()
                 JaxApprovalsSection(
                     approvals: queue.pending,
                     onApprove: { id in Task { await queue.approveAndExecute(id) } },
@@ -47,6 +60,8 @@ struct JaxHQView: View {
                     briefing: briefings.latest,
                     isSpeaking: briefings.isBriefing
                 )
+                // The briefing's scheduled slots wait for a mail account (`jaxHQIsReady`).
+                .needsGatedCapability()
                 JaxGoalsSection(items: chasing)
                 JaxActivitySection(history: queue.items, latestBriefing: briefings.latest)
             }
@@ -82,7 +97,7 @@ struct JaxHQView: View {
                     .foregroundStyle(.white)
             }
             VStack(alignment: .leading, spacing: 1) {
-                MetaAdsEyebrow(text: "Your clone, between check-ins", tint: GruxTheme.accentPrimaryLight)
+                MetaAdsEyebrow(text: Self.eyebrowText, tint: GruxTheme.accentPrimaryLight)
                 Text("Jax HQ")
                     .font(GruxTheme.Font.title)
                     .foregroundStyle(GruxTheme.textPrimary)

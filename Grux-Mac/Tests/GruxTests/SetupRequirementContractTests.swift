@@ -44,14 +44,20 @@ final class SetupRequirementContractTests: XCTestCase {
         }
 
         // | `key.anthropic` | Anthropic API key | Add your Anthropic API key ... |
-        let pattern = #"^\|\s*`((?:key|perm|endpoint|step)\.[a-z0-9_]+)`\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*$"#
+        // A cell may hold a pipe written `\|`, as markdown escapes it: the agent tool's
+        // sentence holds its install line, `curl ... | bash` (D160).
+        let cell = #"((?:\\\||[^|])+?)"#
+        let pattern = #"^\|\s*`((?:key|perm|endpoint|step)\.[a-z0-9_]+)`\s*\|\s*"# + cell + #"\s*\|\s*"# + cell + #"\s*\|\s*$"#
         let re = try NSRegularExpression(pattern: pattern, options: [.anchorsMatchLines])
         var rows: [String: (String, String)] = [:]
         let ns = text as NSString
         for m in re.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
             let id = ns.substring(with: m.range(at: 1))
             guard rows[id] == nil else { continue }          // first occurrence wins
-            rows[id] = (ns.substring(with: m.range(at: 2)), ns.substring(with: m.range(at: 3)))
+            func unescaped(_ i: Int) -> String {
+                ns.substring(with: m.range(at: i)).replacingOccurrences(of: #"\|"#, with: "|")
+            }
+            rows[id] = (unescaped(2), unescaped(3))
         }
         return rows
     }
@@ -110,7 +116,7 @@ final class SetupRequirementContractTests: XCTestCase {
         }
         let anthropic = SetupRequirement.keyAnthropic.remediation.lowercased()
         XCTAssertTrue(anthropic.contains("local model") && anthropic.contains("no key"),
-                      "the Anthropic key's line must say chat also runs on a local model with no key: \(SetupRequirement.keyAnthropic.remediation)")
+                      "the Anthropic key's line must say a local model runs with no key: \(SetupRequirement.keyAnthropic.remediation)")
     }
 
     /// The contract caps remediation length. Measured, not trusted.

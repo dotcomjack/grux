@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import GruxAgentCore
 
 // Landing machinery for the Foundry (blueprint section 04, Phase C).
 //
@@ -431,7 +432,7 @@ final class GruxUpdater: ObservableObject {
             }
             Thread.sleep(forTimeInterval: 0.25)
         }
-        p.waitUntilExit()
+        p.waitForExitBlocking()
         if p.terminationStatus == 0 { return (true, "swift build -c release succeeded.") }
         let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
         let tail = String(data: errData, encoding: .utf8).map { String($0.suffix(300)) } ?? ""
@@ -520,7 +521,7 @@ final class GruxUpdater: ObservableObject {
         p.standardOutput = Pipe()
         do { try p.run() } catch { return nil }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        p.waitUntilExit()
+        p.waitForExitBlocking()
         guard let out = String(data: data, encoding: .utf8) else { return nil }
         return Self.parseTeamIdentifier(fromCodesignOutput: out)
     }

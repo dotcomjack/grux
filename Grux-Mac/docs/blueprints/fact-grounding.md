@@ -113,7 +113,7 @@ memory.
 
 The feature renders `needs-setup` with a setup card showing this exact string.
 
-- Anthropic API key: "Add your Anthropic API key in Settings to use Claude. Get one at console.anthropic.com. Chat also runs on a local model with no key."
+- Anthropic API key: "Add your Anthropic API key in Settings to use Claude. Get one at console.anthropic.com. Many features run on a local model with no key."
 
 `grux.grounding.catalog_path` has no capability of its own in the contract, because it is a
 path to a file you write rather than something Grux connects to. With the key present and

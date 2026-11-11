@@ -181,7 +181,7 @@ struct MeetingPanelView: View {
                     .buttonStyle(.bordered)
                 }
             } else {
-                Text("Audio not available. Capture was run with local recording off.")
+                Text(MeetingAudioMissing.panel)
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }

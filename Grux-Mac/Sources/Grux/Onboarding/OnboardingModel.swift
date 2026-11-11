@@ -233,6 +233,14 @@ final class OnboardingModel: ObservableObject {
         /// The answer to the question, kept so a quit on a later screen resumes
         /// with the same features and the flow can hand it to Chat at the end.
         var answer: String
+        /// Set by every `recordFirstLookReviewed`: the walk's Continue or
+        /// Looks right, and Focus log's card, which waits for a frame on
+        /// screen. The walk's buttons do not check for a frame, but they are
+        /// shown only on a path or level that already counts the first look,
+        /// so on the list path at Essentials only the card can set it. Counted
+        /// on any path and level (W52-FIX, was D161). Absent in a file from
+        /// before it, which decodes to false.
+        var reviewedAFrame: Bool
 
         /// NO DEFAULT ARGUMENTS, deliberately, and this is a fix rather than a
         /// style. The previous version defaulted every field but `stage`, which
@@ -243,13 +251,14 @@ final class OnboardingModel: ObservableObject {
         /// person who adds a field and forgets a writer, which no test can do as
         /// early.
         init(stage: Stage, skippedFirstLook: Bool, level: Level, skipped: Set<String>,
-             path: Path, answer: String) {
+             path: Path, answer: String, reviewedAFrame: Bool) {
             self.stage = stage
             self.skippedFirstLook = skippedFirstLook
             self.level = level
             self.skipped = skipped
             self.path = path
             self.answer = answer
+            self.reviewedAFrame = reviewedAFrame
         }
 
         /// A brand new install, before anything has been chosen: the question.
@@ -265,9 +274,10 @@ final class OnboardingModel: ObservableObject {
                                    level: .plusPermissions,
                                    skipped: [],
                                    path: .question,
-                                   answer: "")
+                                   answer: "",
+                                   reviewedAFrame: false)
 
-        enum CodingKeys: String, CodingKey { case stage, skippedFirstLook, level, skipped, path, answer }
+        enum CodingKeys: String, CodingKey { case stage, skippedFirstLook, level, skipped, path, answer, reviewedAFrame }
 
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -281,6 +291,7 @@ final class OnboardingModel: ObservableObject {
             skipped = try c.decodeIfPresent(Set<String>.self, forKey: .skipped) ?? []
             path = try c.decodeIfPresent(Path.self, forKey: .path) ?? .list
             answer = try c.decodeIfPresent(String.self, forKey: .answer) ?? ""
+            reviewedAFrame = try c.decodeIfPresent(Bool.self, forKey: .reviewedAFrame) ?? false
         }
     }
 
@@ -312,6 +323,8 @@ final class OnboardingModel: ObservableObject {
     /// not the same as completing it, and treating the two alike would report a
     /// setup step satisfied that the user deliberately declined.
     @Published private(set) var skippedFirstLook: Bool = false
+    /// Mirrors `State.reviewedAFrame`.
+    @Published private(set) var reviewedAFrame: Bool = false
 
     /// Non-nil while the key the user pasted has been rejected. Held here
     /// rather than in the view so quitting and reopening does not resurrect a
@@ -339,6 +352,7 @@ final class OnboardingModel: ObservableObject {
             skipped = loaded.skipped
             path = loaded.path
             answer = loaded.answer
+            reviewedAFrame = loaded.reviewedAFrame
         } else if KeychainStore.exists(.anthropicApiKey) {
             // ASK, DO NOT ASSUME. Resolving this to `.done` did not merely drop
             // somebody in the shell: `.done` with `skippedFirstLook == false` at
@@ -395,7 +409,7 @@ final class OnboardingModel: ObservableObject {
     /// Back to the question from the levels, for somebody who changed their mind.
     func backToTheQuestion() {
         apply(State(stage: .prompt, skippedFirstLook: true, level: level, skipped: skipped,
-                    path: .question, answer: answer))
+                    path: .question, answer: answer, reviewedAFrame: reviewedAFrame))
         persist()
     }
 
@@ -411,6 +425,7 @@ final class OnboardingModel: ObservableObject {
         skipped = s.skipped
         path = s.path
         answer = s.answer
+        reviewedAFrame = s.reviewedAFrame
     }
 
     /// Choose a level and start. Recorded before anything else so that quitting
@@ -467,6 +482,14 @@ final class OnboardingModel: ObservableObject {
     /// Reversible the moment a GitHub feature ships: put it back here and give
     /// it a registry row. The contract entries are left alone, since deleting
     /// from a frozen shared contract is a separate deliberate act.
+    /// Whether first run's Connect your accounts row reads "connected" (W57-FIX 3).
+    /// A key saved on the screen counts at once only when it is the whole
+    /// credential; one with a second half (Notion's database, Telegram's chat
+    /// id) counts when the resolver says both are there, as every other screen does.
+    static func connectionDone(savedHere: Bool, satisfied: Bool, hasCompanion: Bool) -> Bool {
+        satisfied || (savedHere && !hasCompanion)
+    }
+
     static let connectionOrder: [SetupRequirement] = [
         .keySlack, .keyNotion, .stepYoutubeTranscriptsEnabled, .endpointOllama, .endpointImap
     ]
@@ -578,12 +601,14 @@ final class OnboardingModel: ObservableObject {
     /// the flow continues to connections afterwards.
     func recordFirstLookSkipped() {
         skippedFirstLook = true
+        reviewedAFrame = false
         skipped.insert(SetupRequirement.stepFirstFrameReviewed.rawValue)
         persist()
     }
 
     func recordFirstLookReviewed() {
         skippedFirstLook = false
+        reviewedAFrame = true
         skipped.remove(SetupRequirement.stepFirstFrameReviewed.rawValue)
         persist()
     }
@@ -637,6 +662,19 @@ final class OnboardingModel: ObservableObject {
         finish(skippedFirstLook: true)
     }
 
+    /// The words of the one question in front of `reset()`, asked by Settings,
+    /// General and by a setup card whose step only the walk answers.
+    static let restartTitle = "Restart onboarding"
+    /// D157 item 5: the Settings line and the question's detail say what the
+    /// first run is now (`questionStages`), not the levels it used to start with.
+    static let restartSummary = "Say what you want Grux for, set what it calls you, connect a model, "
+        + "and set up only what your answer needs."
+    static let restartQuestion = "Restart onboarding?"
+    static let restartDetail = "The main window switches to the first-run screens immediately. They start with "
+        + "\u{201C}\(FirstPrompt.question)\u{201D} and stay up until you finish. With a model key already saved, "
+        + "Connect a model offers \u{201C}Keep the key I have\u{201D}. Your saved key, name and settings are left alone "
+        + "unless you change them on the way through."
+
     /// Settings can put a user back at the start. Without this the one-time
     /// flow is a trap: someone who clicked through it can never see it again,
     /// which is the same defect `RecordingConsent.reset()` exists to avoid.
@@ -666,7 +704,8 @@ final class OnboardingModel: ObservableObject {
                   level: level,
                   skipped: skipped,
                   path: path,
-                  answer: answer),
+                  answer: answer,
+                  reviewedAFrame: reviewedAFrame),
             to: Self.stateURL)
     }
 

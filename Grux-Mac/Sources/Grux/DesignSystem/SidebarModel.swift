@@ -39,7 +39,7 @@ enum SidebarIA {
             SidebarItem(key: "social", label: "Social", icon: "at.circle.fill")
         ]),
         SidebarGroupDef(id: "workspace", title: "Workspace", items: [
-            SidebarItem(key: "mailbox", label: "Mailbox", icon: "envelope.fill"),
+            SidebarItem(key: "mailbox", label: "Mail", icon: "envelope.fill"),
             SidebarItem(key: "calendar", label: "Calendar", icon: "calendar"),
             SidebarItem(key: "notes", label: "Notes", icon: "note.text"),
             SidebarItem(key: "documents", label: "Documents", icon: "doc.text.fill"),

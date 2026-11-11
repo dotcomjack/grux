@@ -30,13 +30,28 @@ struct FirstFrameReview: View {
         case failed(String)
     }
 
+    /// Whether "Looks right" may be pressed for this phase on a setup card:
+    /// only with the frame and the text it would send on screen (D157 item 3).
+    static func canConfirm(_ phase: Phase) -> Bool {
+        if case .ready = phase { return true }
+        return false
+    }
+
+    /// Told each phase the view reaches, so a card can enable its button.
+    /// Every change goes through `show`, which tells it (W52-FIX).
+    private var onPhase: ((Phase) -> Void)?
+    /// Reads the screen. Injected by a test, which must not capture anything.
+    private let loader: () async -> Phase
+
     @State private var phase: Phase
     /// A fixed state, never loading. Set only by the harness initialiser.
     private let isFixed: Bool
 
-    init() {
+    init(onPhase: ((Phase) -> Void)? = nil, loader: @escaping () async -> Phase = FirstFrameReview.capture) {
         _phase = State(initialValue: .capturing)
         isFixed = false
+        self.onPhase = onPhase
+        self.loader = loader
     }
 
     /// Renders one fixed state and never captures anything.
@@ -48,6 +63,7 @@ struct FirstFrameReview: View {
     init(fixed phase: Phase) {
         _phase = State(initialValue: phase)
         isFixed = true
+        loader = { phase }
     }
 
     var body: some View {
@@ -61,7 +77,7 @@ struct FirstFrameReview: View {
             }
         }
         .frame(height: 240)
-        .task { if !isFixed { await load() } }
+        .task { if !isFixed { show(await loader()) } }
     }
 
     // MARK: - States
@@ -71,7 +87,7 @@ struct FirstFrameReview: View {
             // Onboarding copy, not the capability remediation. The contract's
             // sentence is written for a setup card met later; here the user is
             // being walked through the grant for the first time.
-            Text("Grant Screen Recording in System Settings, Privacy and Security. Grux reads the screen only when you ask.")
+            Text("Open System Settings, Privacy & Security, Screen & System Audio Recording, and turn on Grux AI. Grux reads the screen only when you ask.")
                 .font(GruxTheme.Font.caption)
                 .foregroundStyle(GruxTheme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -80,7 +96,7 @@ struct FirstFrameReview: View {
                 // in the current process, so there is nothing to await here.
                 // The honest thing is to say that rather than spin forever.
                 _ = ScreenCapturer.shared.requestPermission()
-                phase = .failed("Granted? Quit and reopen Grux, macOS needs the restart to hand over the permission.")
+                show(.failed("Granted? Quit and reopen Grux, macOS needs the restart to hand over the permission."))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -118,8 +134,8 @@ struct FirstFrameReview: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Button("Try again") {
-                phase = .capturing
-                Task { await load() }
+                show(.capturing)
+                Task { show(await loader()) }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -169,23 +185,28 @@ struct FirstFrameReview: View {
 
     // MARK: - Load
 
-    private func load() async {
+    /// The one place the phase changes, so a card is told every one.
+    private func show(_ next: Phase) {
+        phase = next
+        onPhase?(next)
+    }
+
+    static func capture() async -> Phase {
         guard ScreenCapturer.shared.hasPermission() else {
-            phase = .needsPermission
-            return
+            return .needsPermission
         }
         do {
             let snap = try await ScreenCapturer.shared.captureAndOCR()
             let redacted = SecretRedactor.redact(snap.ocrText)
             let app = NSWorkspace.shared.frontmostApplication?.localizedName ?? "Your screen"
-            phase = .ready(image: NSImage(cgImage: snap.image,
+            return .ready(image: NSImage(cgImage: snap.image,
                                           size: NSSize(width: snap.image.width,
                                                        height: snap.image.height)),
                            redacted: redacted,
                            redactionCount: Self.countRedactions(redacted),
                            app: app)
         } catch {
-            phase = .failed("Grux could not read the screen just now. You can turn this on later in Settings.")
+            return .failed("Grux could not read the screen just now. You can turn this on later in Settings.")
         }
     }
 

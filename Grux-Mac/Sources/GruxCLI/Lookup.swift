@@ -8,46 +8,19 @@ import GruxSetupCore
 /// product rule is that the same word means the same thing on every surface.
 enum Lookup {
 
-    /// Only the features the owner chose. Everything user facing is scoped to these: a
-    /// capability wanted solely by a feature that is OFF is not something Grux will ask for,
-    /// and saying otherwise is the over-asking the whole flow exists to stop.
+    /// Only the features the owner chose. Defined in GruxSetupCore beside `NextStep`, so the
+    /// commands and the one decision read the same rule.
     static func chosen(_ status: SetupStatus) -> [SetupStatus.Feature] {
-        status.features.filter(\.chosen)
+        status.chosenFeatures
     }
 
-    /// How a capability relates to one feature.
-    enum Want: String {
-        /// The feature cannot run without it.
-        case blocking
-        /// The feature runs on a lesser path without it.
-        case optional
-        /// One of several, any of which will do.
-        case grouped
-    }
+    typealias Want = SetupStatus.Want
+    typealias Wanter = SetupStatus.Wanter
 
-    struct Wanter {
-        let feature: SetupStatus.Feature
-        let want: Want
-    }
-
-    /// Every CHOSEN feature that mentions this capability, and how.
-    ///
-    /// Grouped beats blocking on purpose: a capability inside an any-of group is not
-    /// individually required even when it also appears in `requires`, which is exactly how
-    /// `chat` would otherwise read as needing both a hosted key and a local model.
+    /// Every CHOSEN feature that mentions this capability, and how. See
+    /// `SetupStatus.wanters(of:)`.
     static func wanters(of id: String, in status: SetupStatus) -> [Wanter] {
-        chosen(status).compactMap { f in
-            if f.anyOf.contains(where: { $0.capabilities.contains(id) }) {
-                return Wanter(feature: f, want: .grouped)
-            }
-            if f.requires.contains(id) || f.steps.contains(id) {
-                return Wanter(feature: f, want: .blocking)
-            }
-            if f.optional.contains(id) || f.optionalSteps.contains(id) {
-                return Wanter(feature: f, want: .optional)
-            }
-            return nil
-        }
+        status.wanters(of: id)
     }
 
     /// The state to draw for a capability, given who wants it.

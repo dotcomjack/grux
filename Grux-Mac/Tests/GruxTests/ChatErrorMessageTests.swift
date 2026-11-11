@@ -60,6 +60,29 @@ final class ChatErrorMessageTests: XCTestCase {
                        "with no information from the provider, inventing a cause is worse than admitting none")
     }
 
+    /// D152: Ollama answers a model it does not have with 404 and
+    /// `{"error":"model 'qwen3.5:4b' not found"}`. "Not available on this
+    /// account" sent a person looking for an account a local model has none of.
+    func testALocalModelThatIsGoneIsNamed() {
+        XCTAssertEqual(
+            ChatService.humanMessage(for: ClaudeError.http(404, #"{"error":"model 'qwen3.5:4b' not found"}"#)),
+            "Ollama does not have the model qwen3.5:4b. Pick one you have in Local Models, then retry.")
+        // Wave 49 P3s: a name Ollama never had reads true too ("no longer"
+        // was false for a default nobody pulled), and a long name is still
+        // read as Ollama's, shown shortened.
+        let long = String(repeating: "a", count: 200) + ":latest"
+        XCTAssertEqual(ChatService.missingLocalModel(in: #"{"error":"model '\#(long)' not found"}"#), long)
+        let line = ChatService.humanMessage(for: ClaudeError.http(404, #"{"error":"model '\#(long)' not found"}"#))
+        XCTAssertTrue(line.hasPrefix("Ollama does not have the model aaaa"), line)
+        XCTAssertLessThan(line.count, 160, line)
+        // A cloud 404 reads as before.
+        XCTAssertEqual(
+            ChatService.humanMessage(for: ClaudeError.http(404, #"{"type":"error","error":{"type":"not_found_error","message":"model: claude-x"}}"#)),
+            "That model is not available on this account. Pick another model in Settings.")
+        XCTAssertEqual(ChatService.humanMessage(for: ClaudeError.http(404, #"{"error":"not found"}"#)),
+                       "That model is not available on this account. Pick another model in Settings.")
+    }
+
     /// The other codes still answer for themselves, so this change did not
     /// quietly hand every failure over to the provider's wording.
     func testTheOtherStatusCodesAreUnchanged() {

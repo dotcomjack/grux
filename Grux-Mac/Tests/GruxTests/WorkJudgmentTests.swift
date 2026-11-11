@@ -214,9 +214,11 @@ final class WorkJudgmentTests: XCTestCase {
     func test_worth_theHeldItemIsTheOneObserveQueues() {
         let a = PlannedSwarmAction(title: "Advance: map cache", goal: "g", template: "singleWorker", budgetUSD: 5)
         let item = GoalPursuitEngine.approvalItem(a, domain: "product/code", rationale: "r")
-        XCTAssertEqual(item.action.summary, "Run a Claude Code session: Advance: map cache")
+        XCTAssertEqual(item.action.summary, "Run a Claude Code session: Advance: map cache. It runs on your Claude sign-in with no spending cap; Grux planned about $5.00 of usage.")
         XCTAssertEqual(item.action.target, "claude-code-swarm")
-        XCTAssertEqual(item.action.detail, ["goal": "g", "template": "singleWorker", "domain": "product/code", "rationale": "r"])
+        XCTAssertEqual(item.action.detail.filter { !$0.key.hasPrefix("__") },
+                       ["goal": "g", "template": "singleWorker", "domain": "product/code", "rationale": "r"])
+        XCTAssertEqual(item.action.detail["__replay_tool"], "agent_swarm_start", "a yes in Approvals starts nothing")
         XCTAssertFalse(item.urgent)
         XCTAssertEqual(item.reason, "\(UserIdentity.assistantName) goal-pursuit (product/code): r")
         XCTAssertEqual(AgentWorthJudgment.dollars(5), "$5")

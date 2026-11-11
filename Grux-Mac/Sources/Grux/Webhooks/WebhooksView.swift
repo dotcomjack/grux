@@ -61,7 +61,7 @@ struct WebhooksView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Webhooks").font(.system(size: 16, weight: .bold))
-            Text("Outbound only. Grux POSTs a JSON envelope signed with HMAC-SHA256 (X-Grux-Signature header) to each URL. Secrets are stored in your macOS Keychain. Inbound triggers are deferred until the tunnel-exposure design pass.")
+            Text("Outbound only: Grux sends each URL a JSON message signed with HMAC-SHA256 (in the X-Grux-Signature header) and keeps the secrets in your macOS Keychain. Nothing here receives calls from outside; the Digest inbox switch in Settings is the one listener for another service's pushes, and it is off unless you turn it on.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

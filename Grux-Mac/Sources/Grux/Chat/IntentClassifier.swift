@@ -270,7 +270,7 @@ enum ChatIntentClassifier {
     /// these exact words and this exact plan, or else one call of its own.
     static func resolvePIM(plan: PIMPlan, utterance: String, preDecided: PreDecidedPIM?,
                            engine: DecisionEngine, threshold: Double) async -> PIMRouteDecision {
-        if !plan.kind.isJudged {
+        if !plan.isJudged {
             return PIMRouteDecision(confidence: 1, latencyMs: 0, provider: .local, confirmed: true)
         }
         if let preDecided, preDecided.applies(to: plan, utterance: utterance) { return preDecided.decision }
@@ -286,12 +286,25 @@ enum ChatIntentClassifier {
     /// card title and a time, could not tell a calendar event from a note, and
     /// could not check "Friday" against anything, so it held back plain asks
     /// (live 2026-09-27: 0.33 for a calendar ask, 0.46 for a note).
+    ///
+    /// A timed "remind me to" also names the reminder and the time now, so "in
+    /// 2 minutes" can be checked against "reminder today at 12:32 PM" (D147,
+    /// live: held back at 0.18 without them).
     static func pimState(plan: PIMPlan, utterance: String, today: Date = Date()) -> String {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US")
         f.dateFormat = "EEEE, MMMM d yyyy"
-        return "The person said: \(utterance)\nToday is \(f.string(from: today)).\n"
-            + "Grux is about to \(plan.kind.judgeAction) without asking anything else: "
+        var clock = ""
+        var action = plan.kind.judgeAction
+        if plan.reminder != nil {
+            let t = DateFormatter()
+            t.locale = Locale(identifier: "en_US")
+            t.dateFormat = "h:mm a"
+            clock = " It is now \(t.string(from: today))."
+            action += " and remind them of it at the time named"
+        }
+        return "The person said: \(utterance)\nToday is \(f.string(from: today)).\(clock)\n"
+            + "Grux is about to \(action) without asking anything else: "
             + "\(plan.cardTitle). \(plan.cardDetail)"
     }
 

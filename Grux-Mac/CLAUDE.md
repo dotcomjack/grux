@@ -289,6 +289,7 @@ All under `~/.grux/`:
 | `fire-chat-show-earlier` | Tap the transcript's Show earlier row, then write `chat-status.json` once the view settles |
 | `fire-chat-scroll` (contents = points, negative is up) | Scroll the transcript the way a trackpad scroll reaches Chat, then write `chat-status.json` |
 | `fire-chat-latest` | Tap the Latest chip (back to the newest message), then write `chat-status.json` |
+| `fire-chat-thread` (contents = `new` or a thread id) | Start a new chat as New chat does, or open that thread as picking it does, then write `chat-status.json` with `activeThreadId`. Anything else changes nothing |
 | `fire-pane-width` (contents = points) | Set the open pane's width through the Command Panel's window sizer, never under the pane's floor, then write `chat-status.json` |
 | `fire-workflow-open-run` (contents = run id) | Open that run's steps in Workflows the way Drill in does, then write `workflows-status.json` |
 | `fire-workflows-status` | Write `workflows-status.json` with no side effects: every workflow card's title and kind word and, when a run is open, its step titles and statuses |

@@ -16,6 +16,9 @@ struct JaxApprovalsSection: View {
     let approvals: [PendingApproval]
     let onApprove: (UUID) -> Void
     let onSkip: (UUID) -> Void
+    // Read live, so a card that would be turned down (`CannotRunNow`) changes the
+    // moment self-upgrade is switched on or off.
+    @ObservedObject private var appState = AppState.shared
 
     /// The empty queue's copy, static so it can be asserted on.
     ///
@@ -42,6 +45,7 @@ struct JaxApprovalsSection: View {
                     ForEach(approvals) { approval in
                         JaxApprovalCard(
                             approval: approval,
+                            blocker: CannotRunNow.cardLine(for: approval, foundryEnabled: appState.config.foundryEnabled),
                             onApprove: { onApprove(approval.id) },
                             onSkip: { onSkip(approval.id) }
                         )
@@ -54,6 +58,9 @@ struct JaxApprovalsSection: View {
 
 struct JaxApprovalCard: View {
     let approval: PendingApproval
+    /// Why approving would be turned down right now, or nil. Shown in place of
+    /// the gate's reason, with Approve held until it clears (D126).
+    var blocker: String? = nil
     let onApprove: () -> Void
     let onSkip: () -> Void
 
@@ -84,8 +91,17 @@ struct JaxApprovalCard: View {
                 .foregroundStyle(GruxTheme.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            // Why the gate paused instead of proceeding.
-            if !approval.reason.isEmpty {
+            // Why a yes now would be turned down, in place of why it paused.
+            if let blocker {
+                HStack(alignment: .firstTextBaseline, spacing: GruxSpacing.s) {
+                    Image(systemName: "exclamationmark.triangle.fill").font(GruxType.caption).foregroundStyle(GruxTheme.warnAmber)
+                    Text(blocker)
+                        .font(GruxType.body)
+                        .foregroundStyle(GruxTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else if !approval.reason.isEmpty {
+                // Why the gate paused instead of proceeding.
                 HStack(alignment: .firstTextBaseline, spacing: GruxSpacing.s) {
                     Image(systemName: "pause.circle.fill").font(GruxType.caption).foregroundStyle(GruxTheme.warnAmber)
                     Text(approval.reason)
@@ -226,9 +242,14 @@ struct JaxApprovalCard: View {
     }
 
     // Tight pill controls, never chunky. Approve is the iridescent primary.
+    // A flow, not an HStack: on a narrow pane the row squeezed Approve to 51 of
+    // its 65pt (PaneFitSweep, once D200 item 1 left the approvals undimmed), and a
+    // chip label truncates rather than wraps; the chips now wrap whole.
     private var controls: some View {
-        HStack(spacing: 8) {
+        GruxFlow(spacing: 8, rowSpacing: 8) {
             GruxChip(title: "Approve", systemImage: "checkmark", style: .primary, action: onApprove)
+                .disabled(blocker != nil)
+                .opacity(blocker == nil ? 1 : 0.4)
             GruxChip(
                 title: expanded ? "Hide" : "Edit",
                 systemImage: expanded ? "chevron.up" : "pencil",
@@ -236,8 +257,8 @@ struct JaxApprovalCard: View {
                 action: { withAnimation(.easeInOut(duration: 0.16)) { expanded.toggle() } }
             )
             GruxChip(title: "Skip", systemImage: "xmark", style: .secondary, action: onSkip)
-            Spacer()
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, 2)
     }
 }

@@ -108,7 +108,7 @@ measured, never a rounded impression. No em dashes, no en dashes.
 The feature renders `needs-setup` with a setup card showing these exact strings.
 
 - Sites to monitor: "Add the URLs you want Grux to check in Settings."
-- Anthropic API key: "Add your Anthropic API key in Settings to use Claude. Get one at console.anthropic.com. Chat also runs on a local model with no key."
+- Anthropic API key: "Add your Anthropic API key in Settings to use Claude. Get one at console.anthropic.com. Many features run on a local model with no key."
 - Notifications: "Allow notifications so Grux can nudge you. Open System Settings, Notifications, Grux, and turn them on."
 
 An empty `grux.uptime.targets` is `needs-setup`. A dashboard that reports "0 down" while

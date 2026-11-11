@@ -100,62 +100,88 @@ struct LevelStep: View {
 struct HowItWorksStep: View {
     @ObservedObject private var model = OnboardingModel.shared
 
+    /// It said "the moment it has a model key", read on first run by people
+    /// whose chat already runs on a local model with no key (D116).
+    static let mostTabsNeedNothing =
+        "The majority of Grux works the moment it has a model, a local model on this Mac or a key. Where a tab does need something, it says so on the tab, in place, and never as an error."
+
+    /// D166 item 4: it said "the capture layer redacts before anything is
+    /// sent", jargon that also promised more than the code does. W53-FIX: the
+    /// first rewrite said screen and mail text was blanked out, while
+    /// `read_screen` sends a screenshot as it is; the second dropped the
+    /// model that sorts new mail (`MailStore.judgeNeedsYou`) and notifications
+    /// (`TriageClassifier`) unasked, and Focus's screenshots (`FocusWatcher`).
+    /// Round 3 added listening (`AmbientMemoryExtractor`,
+    /// `AmbientHourlySummarizer`), whose transcript is fenced, not redacted.
+    /// Mail and notification text pass `SecretRedactor`; screenshots do not;
+    /// `FilesystemTool` refuses a file that holds a key.
+    static let whatStaysHere =
+        "Your notes, mail, contacts and files are read on this Mac. A model gets what you ask and the context it needs to answer, which can be your mail or a picture of your screen. Grux can also have a model sort new mail and notifications, note what it hears while listening is on, and, once Focus is set up, look at your screen now and then. Passwords and keys are taken out of mail and notification text first; what it hears and a picture of your screen go as they are. When a model asks to read a file, Grux refuses one that holds an API key. Once a day Grux checks GitHub's public release page for a new version; it sends nothing about you, and Settings, General turns it off."
+
+    enum Part { case selfUpgradeLadder, point(Wayfinding) }
+
+    /// The screen, top to bottom. D166 item 4: it opened on the self-upgrade
+    /// ladder, the one thing here that is off and stays off for a stranger, so
+    /// the first words a new person read were about Grux rewriting its own
+    /// code. The ladder still shows whole (see below), with the other things
+    /// that are off until you say so.
+    @MainActor
+    static var parts: [Part] {
+        [.point(Wayfinding(title: "What stays here", body: whatStaysHere)),
+         .point(Wayfinding(title: "Most tabs need nothing", body: mostTabsNeedNothing)),
+         .point(Wayfinding(title: "Core and labs",
+                           body: "Core features are finished. Labs features are the ones being built, and they are labelled so you know which is which before you rely on one.")),
+         .point(Wayfinding(title: "What it costs",
+                           body: "You pay your model provider directly, per use. Chat shows the estimated cost of your next send at API rates, and a local model costs nothing. Terminal sessions are the exception: they run on whatever your agent CLI is already signed in to, so on a subscription they draw from that plan instead of billing you per use. There is no Grux subscription.")),
+         // NAMED AT FIRST RUN, per the house rule, and this one earns the
+         // slot more than most: the moment a user is most likely to want
+         // it is right after being told there are more credentials and
+         // permissions waiting.
+         .point(Wayfinding(title: "You can hand the rest to your agent",
+                           body: "The setup left over is mostly mechanical, and Grux will write a prompt describing exactly what this Mac still needs. Copy it from Settings, paste it into whatever coding agent you already use, and it does the parts it can. It never asks it for a credential or a permission, because it cannot get either.")),
+         // REWRITTEN FOR 3.0 (P-F-1). It said two voice features ship
+         // off; 3.0 has one Listening control, and the microphone opens
+         // only once the person turns it on and macOS has asked. The wake
+         // word is NAMED AT FIRST RUN here (measured 2026-08-22: it appeared
+         // zero times in this flow while the chat empty state told every
+         // user to say it).
+         .point(Wayfinding(title: "What is off until you say so",
+                           body: "Listening is off until you turn it on, and macOS asks for the microphone only when you do. You choose Always on, which is Ambient mode: Grux hears you all the time on this Mac and decides, in under a second, whether you were talking to it. Or you choose after the wake word, \"\(WakeWordListener.spokenPhrase)\", which is the app's name and does not change when you rename the assistant. With Always on, what it hears is kept as text on this Mac. Any model Grux uses, on this Mac or at your model provider, can read that text, for example to remember plans, facts, people and decisions you mention, passwords said aloud included. Always on's audio never leaves this Mac; the wake word uses Apple's speech recognition, which may send short audio to Apple. Change it any time in Tuning, under Acts on what I say.")),
+         .point(Wayfinding(title: "Screen control is off too",
+                           body: "Screen control lets Grux click, type and scroll for you through the macOS Accessibility API, so it can finish a task hands-free once it can see the screen. It ships off and stays off until you turn it on in Settings and grant Accessibility. With it off, Grux never moves your pointer or keyboard.")),
+         .selfUpgradeLadder,
+         // NAMED AT FIRST RUN, per the house rule. It renames the
+         // person's own files, so the promise of what it never does is
+         // half the point. No permission is asked here: macOS asks for
+         // the folders only when the person turns it on in Settings.
+         .point(Wayfinding(title: "Files can name themselves",
+                           body: "Grux can rename a new screenshot, or a download with a machine-made name like IMG_4471, from the text it shows, so it reads as Acme Invoice Oct 2026 in Finder. It ships off and stays off until you turn it on in Settings. The text is read on this Mac by a model running on this Mac, and nothing about the file leaves it. It never moves a file, never renames one you named yourself, and every rename can be undone.")),
+         // NAMED AT FIRST RUN, per the house rule. Grux runs a real shell on
+         // the user's machine and spends a credential they are signed in to.
+         // Deliberately states the MECHANISM (which credential, what
+         // concurrency does) and never predicts an account consequence we
+         // cannot substantiate.
+         .point(Wayfinding(title: "Grux can run a terminal for you",
+                           body: "Parts of Grux work by opening a headless terminal session on this Mac and driving the agent CLI you already have installed, so it can finish long jobs without you sitting there. It uses whatever that CLI is already signed in to, so on a subscription the work comes out of that plan, and Grux strips API key variables out of the session so it cannot quietly bill an API account instead. Running several sessions at once is what pushes a plan into its rate limits, so Grux caps how many it starts for you, and Settings is where you raise or lower that cap.")),
+        ] + wayfinding.map { Part.point($0) } + [
+         .point(Wayfinding(title: "How to stop it",
+                           body: "Every autonomous loop has an off switch in Settings, and the menu bar icon quits the app outright. Nothing continues after you quit.")),
+        ]
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("How Grux works")
                 .font(GruxTheme.Font.display)
                 .foregroundStyle(GruxTheme.textPrimary)
 
-            autonomy
-
             VStack(alignment: .leading, spacing: 10) {
-                point("What stays here",
-                      "Your notes, mail, contacts and files are read on this Mac. What goes to a model is the text of what you asked and the context it needs, and the capture layer redacts before anything is sent. Once a day Grux checks GitHub's public release page for a new version; it sends nothing about you, and Settings, General turns it off.")
-                point("Most tabs need nothing",
-                      "The majority of Grux works the moment it has a model key. Where a tab does need something, it says so on the tab, in place, and never as an error.")
-                point("Core and labs",
-                      "Core features are finished. Labs features are the ones being built, and they are labelled so you know which is which before you rely on one.")
-                point("What it costs",
-                      "You pay your model provider directly, per use. Chat shows the estimated cost of your next send at API rates, and a local model costs nothing. Terminal sessions are the exception: they run on whatever your agent CLI is already signed in to, so on a subscription they draw from that plan instead of billing you per use. There is no Grux subscription.")
-                // NAMED AT FIRST RUN, which the house rule requires and which
-                // nothing did. Measured 2026-08-22: the wake word appeared ZERO
-                // times in this entire flow while `config.wakeWordEnabled`
-                // shipped false, and the chat empty state told every user to say
-                // "hey grux" from anywhere. So the one place the phrase appeared
-                // was an instruction to use something switched off that had
-                // never been introduced. The rule wants three things and this is
-                // the missing one: named here, a permanent home in Settings, and
-                // its off state explained.
-                // NAMED AT FIRST RUN, per the house rule, and this one earns the
-                // slot more than most: the moment a user is most likely to want
-                // it is right after being told there are more credentials and
-                // permissions waiting.
-                point("You can hand the rest to your agent",
-                      "The setup left over is mostly mechanical, and Grux will write a prompt describing exactly what this Mac still needs. Copy it from Settings, paste it into whatever coding agent you already use, and it does the parts it can. It never asks it for a credential or a permission, because it cannot get either.")
-                // REWRITTEN FOR 3.0 (P-F-1). It said two voice features ship
-                // off; 3.0 has one Listening control, and the microphone opens
-                // only once the person turns it on and macOS has asked.
-                point("What is off until you say so",
-                      "Listening is off until you turn it on, and macOS asks for the microphone only when you do. You choose Always on, which is Ambient mode: Grux hears you all the time on this Mac and decides, in under a second, whether you were talking to it. Or you choose after the wake word, \"\(WakeWordListener.spokenPhrase)\", which is the app's name and does not change when you rename the assistant. Nothing you say is kept unless you ask Grux to remember it, and audio never leaves this Mac. Change it any time in Tuning, under Acts on what I say.")
-                point("Screen control is off too",
-                      "Screen control lets Grux click, type and scroll for you through the macOS Accessibility API, so it can finish a task hands-free once it can see the screen. It ships off and stays off until you turn it on in Settings and grant Accessibility. With it off, Grux never moves your pointer or keyboard.")
-                // NAMED AT FIRST RUN, per the house rule. It renames the
-                // person's own files, so the promise of what it never does is
-                // half the point. No permission is asked here: macOS asks for
-                // the folders only when the person turns it on in Settings.
-                point("Files can name themselves",
-                      "Grux can rename a new screenshot, or a download with a machine-made name like IMG_4471, from the text it shows, so it reads as Acme Invoice Oct 2026 in Finder. It ships off and stays off until you turn it on in Settings. The text is read on this Mac by a model running on this Mac, and nothing about the file leaves it. It never moves a file, never renames one you named yourself, and every rename can be undone.")
-                // NAMED AT FIRST RUN, per the house rule, and this is the one
-                // that was missing entirely. Grux runs a real shell on the
-                // user's machine and spends a credential they are signed in to,
-                // and onboarding said nothing about either. Deliberately states
-                // the MECHANISM (which credential, what concurrency does) and
-                // never predicts an account consequence we cannot substantiate.
-                point("Grux can run a terminal for you",
-                      "Parts of Grux work by opening a headless terminal session on this Mac and driving the agent CLI you already have installed, so it can finish long jobs without you sitting there. It uses whatever that CLI is already signed in to, so on a subscription the work comes out of that plan, and Grux strips API key variables out of the session so it cannot quietly bill an API account instead. Running several sessions at once is what pushes a plan into its rate limits, so Grux caps how many it starts for you, and Settings is where you raise or lower that cap.")
-                ForEach(Self.wayfinding, id: \.title) { point($0.title, $0.body) }
-                point("How to stop it",
-                      "Every autonomous loop has an off switch in Settings, and the menu bar icon quits the app outright. Nothing continues after you quit.")
+                ForEach(Array(Self.parts.enumerated()), id: \.offset) { _, part in
+                    switch part {
+                    case .selfUpgradeLadder: autonomy.padding(.vertical, 6)
+                    case .point(let p): point(p.title, p.body)
+                    }
+                }
             }
         }
         // PINNED. This screen needs about 1100pt to lay out, so its only exit
@@ -189,17 +215,20 @@ struct HowItWorksStep: View {
     }
 
     private var autonomy: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Grux can improve its own code. You choose how far that goes.")
+        let c = AppState.shared.config
+        let card = HowItWorksCopy.autonomy(enabled: c.foundryEnabled, tier: c.selfUpgradeMaxTier,
+                                              earned: TrustLedger.shared.highestTier.rawValue)
+        return VStack(alignment: .leading, spacing: 8) {
+            Text(card.intro)
                 .font(GruxTheme.Font.body)
                 .foregroundStyle(GruxTheme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            tier("TIER 0", "Proposes", "Grux writes up what it would change and waits. Nothing is built and nothing lands.", current: true)
-            tier("TIER 1", "Builds", "Grux writes the change and runs the tests, then waits for you to look at it.", current: false)
-            tier("TIER 2", "Lands", "Grux merges its own work once the tests pass, without asking each time.", current: false)
+            tier("TIER 0", "Proposes", "Grux writes up what it would change and waits. Nothing is built and nothing lands.", current: card.current == 0)
+            tier("TIER 1", "Builds", "Grux writes the change and runs the tests, then waits for you to look at it.", current: card.current == 1)
+            tier("TIER 2", "Lands", "Grux merges its own work once the tests pass, without asking each time.", current: card.current == 2)
 
-            Text("You are starting at TIER 0. It stays there until you raise it in Tuning.")
+            Text(card.caption)
                 .font(GruxTheme.Font.caption)
                 .foregroundStyle(GruxTheme.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -499,6 +528,8 @@ struct ConnectionsStep: View {
     @State private var drafts: [String: String] = [:]
     @State private var saved: Set<String> = []
     @State private var choices: [String: Bool] = [:]
+    @State private var companionDrafts: [String: String] = [:]
+    @State private var rejected: Set<String> = []
 
     /// Inbox LAST. The list lives on the model so a test can assert that.
     private var connections: [SetupRequirement] { OnboardingModel.connectionOrder }
@@ -531,7 +562,10 @@ struct ConnectionsStep: View {
 
     @ViewBuilder
     private func row(_ req: SetupRequirement) -> some View {
-        let done = saved.contains(req.rawValue) || CapabilityResolver.isSatisfied(req)
+        let companion = CapabilityResolver.companion(for: req)
+        let done = OnboardingModel.connectionDone(savedHere: saved.contains(req.rawValue),
+                                                  satisfied: CapabilityResolver.isSatisfied(req),
+                                                  hasCompanion: companion != nil)
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: GruxSpacing.s) {
                 Text(req.label)
@@ -568,14 +602,37 @@ struct ConnectionsStep: View {
                     // A paste field, because a key IS one value and sending
                     // somebody to Settings mid-flow to paste it would be
                     // theatre.
-                    HStack(spacing: GruxSpacing.s) {
-                        SecureField("", text: binding(req), prompt: Text("paste here"))
-                            .textFieldStyle(.roundedBorder)
-                            .frame(maxWidth: 260)
-                            .onSubmit { save(req) }
-                        Button("Save") { save(req) }
-                            .controlSize(.small)
-                            .disabled(draft(req).isEmpty)
+                    if !keySet(req) {
+                        HStack(spacing: GruxSpacing.s) {
+                            SecureField("", text: binding(req), prompt: Text("paste here"))
+                                .textFieldStyle(.roundedBorder)
+                                .frame(maxWidth: 260)
+                                .onSubmit { save(req) }
+                            Button("Save") { save(req) }
+                                .controlSize(.small)
+                                .disabled(draft(req).isEmpty)
+                        }
+                    }
+                    // The second half (W57-FIX 3), as Settings, Credentials asks for it.
+                    if let companion, !companion.isSatisfied() {
+                        HStack(spacing: GruxSpacing.s) {
+                            Text(companion.title)
+                                .font(GruxTheme.Font.caption)
+                                .foregroundStyle(GruxTheme.textSecondary)
+                            TextField("", text: companionBinding(req), prompt: Text(companion.placeholder))
+                                .textFieldStyle(.roundedBorder)
+                                .labelsHidden()
+                                .frame(maxWidth: 200)
+                                .onSubmit { saveCompanion(req, companion) }
+                            Button("Save") { saveCompanion(req, companion) }
+                                .controlSize(.small)
+                                .disabled(companionDraft(req).isEmpty)
+                        }
+                        if rejected.contains(req.rawValue) {
+                            Text("Not accepted, check the format.")
+                                .font(GruxTheme.Font.caption)
+                                .foregroundStyle(GruxTheme.warnAmber)
+                        }
                     }
                 } else {
                     // An endpoint is several fields and sometimes a server, so
@@ -653,10 +710,40 @@ struct ConnectionsStep: View {
         model.clearSkip(req)
     }
 
+    /// The key itself is stored, saved here or before.
+    private func keySet(_ req: SetupRequirement) -> Bool {
+        if saved.contains(req.rawValue) { return true }
+        guard let slot = CapabilityResolver.keychainKey(for: req) else { return false }
+        return !KeychainStore.get(slot).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func companionDraft(_ req: SetupRequirement) -> String {
+        companionDrafts[req.rawValue]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private func companionBinding(_ req: SetupRequirement) -> Binding<String> {
+        Binding(get: { companionDrafts[req.rawValue] ?? "" },
+                set: { companionDrafts[req.rawValue] = $0 })
+    }
+
+    private func saveCompanion(_ req: SetupRequirement, _ companion: CredentialCompanion) {
+        let value = companionDraft(req)
+        guard !value.isEmpty else { return }
+        if companion.save(value) {
+            companionDrafts[req.rawValue] = ""
+            rejected.remove(req.rawValue)
+            model.clearSkip(req)
+        } else {
+            rejected.insert(req.rawValue)
+        }
+    }
+
     /// Everything still unconnected is recorded as skipped, so each one can be
     /// offered again on the tab that needs it.
     private func finish() {
-        for req in connections where !CapabilityResolver.isSatisfied(req) && !saved.contains(req.rawValue) {
+        for req in connections where !OnboardingModel.connectionDone(
+            savedHere: saved.contains(req.rawValue), satisfied: CapabilityResolver.isSatisfied(req),
+            hasCompanion: CapabilityResolver.companion(for: req) != nil) {
             model.markSkipped(req)
         }
         model.advance(from: .connections)
@@ -734,7 +821,8 @@ struct UpdateStep: View {
             // that Grux uses their cloud model by default.
             routesToCloud: ModelRegistry.shared.resolvedProvider == .anthropic,
             localServerRunning: await ollama.isHealthy(),
-            installedTags: ollama.installedTags)
+            installedTags: ollama.installedTags,
+            chatModel: ModelRegistry.shared.resolvedProvider == .local ? ModelRegistry.shared.modelId() : nil)
         refreshing = false
     }
 }
@@ -756,7 +844,8 @@ struct ModelUpdateSummary: View {
                 line("Your Mac", report.machineSummary)
                 line("Cloud model", report.cloudSummary)
                 line("Local models", report.localServerSummary)
-                line("What runs here", report.capabilitySummary)
+                line("Best fit for this Mac", report.capabilitySummary)
+                if let chat = report.chatSummary { line("Chat uses", chat) }
             }
 
             // The honest part, in its own box so it does not read as one more
@@ -773,7 +862,8 @@ struct ModelUpdateSummary: View {
                 )
 
             if report.offersLocalOption {
-                Text("The Local Models tab has the full list and can download any of them.")
+                Text(HowItWorksCopy.localModelsLine(door: FeatureRegistry.disposition(for: "cookbook"),
+                                                    developerUnlocked: AppState.shared.config.developerSurfacesUnlocked))
                     .font(GruxTheme.Font.caption)
                     .foregroundStyle(GruxTheme.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -867,7 +957,7 @@ struct CloneStep: View {
                 // Honest dead end. Every source is behind something the user has
                 // not granted or has no data for, so there is nothing to offer
                 // and the button below says exactly that.
-                Text("Nothing is readable yet. Grant the access above whenever you like, or come back from Settings. Grux works fine without this.")
+                Text("Nothing is readable yet. Grant the access above whenever you like, then index from Jax Command's Memory card. Grux works fine without this.")
                     .font(GruxTheme.Font.caption)
                     .foregroundStyle(GruxTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1028,6 +1118,89 @@ struct WelcomeBackStep: View {
 
 /// Copy for How Grux works that another surface or a test also reads.
 enum HowItWorksCopy {
+    /// The self-upgrade card: what it says and which tier it marks "you are here".
+    struct Autonomy: Equatable {
+        let intro: String
+        /// The tier marked "you are here"; nil marks none.
+        let current: Int?
+        let caption: String
+    }
+
+    /// Where first run's last screen sends a person for the full local model list.
+    /// It said "The Local Models tab" while Local Models sat behind the Developer
+    /// door, which is off on a new install, so a stranger looked for a tab the rail
+    /// did not show (D134). Every surface also opens from the palette.
+    static func localModelsLine(door: FeatureRow.Disposition, developerUnlocked: Bool) -> String {
+        let list = "has the full list and can download any of them"
+        switch door {
+        case .rail:
+            return "The Local Models tab \(list)."
+        case .developer where developerUnlocked:
+            // "door" is the code's word; the sidebar row reads Developer (D138 item 5).
+            return "Local Models, under Developer in the sidebar, \(list)."
+        default:
+            return "Local Models \(list). Open it from the command palette, \(PaletteHotkeyConfig.spokenShortcut)."
+        }
+    }
+
+    /// It marked "TIER 0 Proposes" as "you are here" on every new install, where
+    /// self-upgrade is off and Grux proposes nothing (D133). With it off no tier is
+    /// marked. `tier` is Tuning's ceiling ("Self-upgrade, at most"), not where Grux
+    /// is: every lane starts at TIER 0 and earns its way up to it
+    /// (`FoundryEngine.cappedTier`), and a tier the governor does not know reads as
+    /// TIER 0, as `TrustTier(rawValue:)` does there.
+    /// `earned` is the furthest any part has climbed (`TrustLedger.highestTier`). On a
+    /// re-run from Settings the card names it rather than "starting at TIER 0" (W38-FIX
+    /// P3 5), but marks the tier a filed proposal acts at: the lower of the earned tier,
+    /// capped as the governor caps it, and `ProposalSynthesizer.filedTier`, which
+    /// `FoundryEngine.shouldAutoLand` also takes. An earned tier is a fact, never a
+    /// promise to build or land, on or off (wave 39 rounds 1 and 2).
+    static func autonomy(enabled: Bool, tier: Int, earned: Int = 0) -> Autonomy {
+        let ceiling = TrustTier(rawValue: tier)?.rawValue ?? 0
+        let earnedTier = TrustTier(rawValue: earned) ?? .propose
+        let reached = FoundryEngine.cappedTier(earned: earnedTier, ceiling: ceiling).rawValue
+        let acts = min(FoundryEngine.cappedTier(earned: earnedTier, ceiling: ceiling), ProposalSynthesizer.filedTier).rawValue
+        let fact: String? = earnedTier == .propose ? nil
+            : earnedTier.rawValue > reached ? "A part of Grux has earned TIER \(earnedTier.rawValue), and Tuning holds it to TIER \(reached)."
+            : reached == ceiling ? "A part of Grux has earned TIER \(reached), the most Tuning allows."
+            : "A part of Grux has earned TIER \(reached)."
+        let waits = acts == 0
+        // It said "until you raise it in Tuning" and "the most Tuning allows", and first
+        // run never said what in Tuning holds a tier or how one is earned (D138 item 6).
+        // Both name Tuning's own dial and the trust ledger's own streak.
+        let dial = "\"\(TuningCopy.selfUpgradeDial)\""
+        let earns = "a part of Grux moves up a tier each time \(TrustLedger.promotionStreak) of its changes in a row are approved and kept"
+        let held = "stays there while \(dial) in Tuning is set to \(TuningCopy.selfUpgradeChoices[0]). Raise that limit and \(earns)."
+        let climbs = earns.prefix(1).uppercased() + earns.dropFirst()
+            + ", as far as TIER \(ceiling), the limit \(dial) sets in Tuning."
+        guard enabled else {
+            let intro = "Grux can improve its own code once you switch self-upgrade on. It is off, so Grux "
+                + "proposes nothing and spends nothing on it. Turn it on in Settings or Self-Upgrade."
+            if let fact {
+                return Autonomy(intro: intro, current: nil,
+                                caption: fact + (waits ? " Switched on, every proposal still waits for your OK before it is built."
+                                                       : " Switched on, Grux works at TIER \(acts)."))
+            }
+            return Autonomy(
+                intro: intro,
+                current: nil,
+                caption: ceiling == 0
+                    ? "Switched on, it starts at TIER 0 and \(held)"
+                    : "Switched on, it starts at TIER 0. \(climbs)")
+        }
+        if let fact {
+            return Autonomy(intro: "Grux can improve its own code. You choose how far that goes.",
+                            current: acts,
+                            caption: fact + (waits ? " Every proposal still waits for your OK before it is built, so Grux works at TIER 0."
+                                                   : " Grux works at TIER \(acts)."))
+        }
+        return Autonomy(intro: "Grux can improve its own code. You choose how far that goes.",
+                        current: 0,
+                        caption: ceiling == 0
+                            ? "You are starting at TIER 0. It \(held)"
+                            : "You are starting at TIER 0. \(climbs)")
+    }
+
     static let decisionsKeyTitle = "The Decisions key"
     static let decisionsKeyBody = "Grux decides what you meant on this Mac, for free, matching what you say word for word. "
         + "A Decisions key (Jev, from TypeSafe) also judges what you meant when you put it another way: a busy day of "

@@ -122,6 +122,16 @@ struct CognitionEvent: Codable, Identifiable, Hashable {
     var firedHeuristicNames: [String] { heuristicsFired }
     var retrievedMemories: [String] { memoriesRetrieved }
 
+    // The autonomy setting the card shows, or nil. Every writer stamps the goal
+    // pursuit mode, but it governs only the goal cycle: a chat turn, an email
+    // draft or a fact check ran for real whatever it reads, and "Simulate"
+    // under one said nothing ran (D179 item 5). Old logs carry it too, so the
+    // rule is read here, not at the writers.
+    var autonomyTag: String? {
+        guard kind == .goalCycle, let m = AutonomyMode(rawValue: mode) else { return nil }
+        return m.label
+    }
+
     init(
         id: UUID = UUID(),
         timestamp: Date = Date(),
@@ -332,8 +342,67 @@ final class CognitionTrace: ObservableObject {
             mode: mode,
             outcome: verdict.isTrulyConfused
                 ? (verdict.clarifyingQuestion ?? "Paused to ask one clarifying question.")
-                : "Confident enough to proceed."
+                : Self.confidentOutcome
         )
+    }
+
+    // One chat turn is one card on the Cognition Map. The gate's verdict is
+    // recorded on its own only when it stops the turn to ask; a turn that goes
+    // ahead carries the verdict on its completed trace (`noteTurn`).
+    @discardableResult
+    func noteGate(_ verdict: ConfidenceVerdict, trigger: String, mode: String) -> CognitionEvent? {
+        guard verdict.isTrulyConfused else { return nil }
+        return note(confidence: verdict, trigger: trigger, mode: mode)
+    }
+
+    // The completed chat turn: what it pulled, what it answered, and the gate's
+    // score for it when the gate ran.
+    @discardableResult
+    func noteTurn(trigger: String,
+                  gate: ConfidenceVerdict?,
+                  heuristicsFired: [String],
+                  memoriesRetrieved: [String],
+                  mode: String,
+                  outcome: String) -> CognitionEvent {
+        note(kind: .prompt, trigger: trigger, heuristicsFired: heuristicsFired,
+             memoriesRetrieved: memoriesRetrieved, gateVerdict: nil,
+             gateReason: gate?.reason ?? "", confidence: gate?.confidence,
+             mode: mode, outcome: outcome)
+    }
+
+    // A log written before `noteTurn` holds two cards per chat turn: the gate's
+    // "Confident enough to proceed." and, moments later, the completed turn.
+    // Folds each such pair into the completed turn, newest first kept.
+    // A turn's reply lands within this long of its gate card.
+    static let gatePairWindow: TimeInterval = 300
+    static let confidentOutcome = "Confident enough to proceed."
+
+    static func foldingChatGatePairs(_ newestFirst: [CognitionEvent]) -> [CognitionEvent] {
+        var out = newestFirst
+        var drop = Set<Int>()
+        var folded = Set<Int>()
+        for (g, gate) in newestFirst.enumerated() {
+            guard gate.kind == .prompt, gate.gateVerdict.isEmpty, gate.confidence != nil,
+                  gate.outcome == confidentOutcome, gate.memoriesRetrieved.isEmpty else { continue }
+            let words = gate.trigger.trimmingCharacters(in: .whitespacesAndNewlines)
+            // The turn it led to is newer, so it sits earlier in the list; the
+            // nearest unclaimed one in time is it.
+            let turn = (0..<g).reversed().first { i in
+                let e = newestFirst[i]
+                let gap = e.timestamp.timeIntervalSince(gate.timestamp)
+                return !folded.contains(i) && !drop.contains(i)
+                    && e.kind == .prompt && e.confidence == nil && e.gateVerdict.isEmpty
+                    && e.outcome != confidentOutcome
+                    && gap >= 0 && gap <= gatePairWindow
+                    && e.trigger.trimmingCharacters(in: .whitespacesAndNewlines) == words
+            }
+            guard let t = turn else { continue }
+            out[t].confidence = gate.confidence
+            if out[t].gateReason.isEmpty { out[t].gateReason = gate.gateReason }
+            folded.insert(t)
+            drop.insert(g)
+        }
+        return out.enumerated().filter { !drop.contains($0.offset) }.map(\.element)
     }
 
     // MARK: Rollups
@@ -409,8 +478,10 @@ final class CognitionTrace: ObservableObject {
     // Public so the Cognition Map view can refresh on appear (.onAppear). Loads
     // the persisted log and recomputes the rollup.
     func load() {
-        events = Persistence.load([CognitionEvent].self, from: storeURL, fallback: [])
+        let stored = Persistence.load([CognitionEvent].self, from: storeURL, fallback: [])
+        events = Self.foldingChatGatePairs(stored)
         rollup = computeRollup()
+        if events.count != stored.count { save() }
     }
     private func save() {
         Persistence.save(events, to: storeURL)

@@ -80,7 +80,7 @@ enum MusicKitPlayer {
     // tell "needs the entitlement / developer token" apart from other failures.
     static func probe(testStoreID: String) async -> String {
         guard AudioOutput.permit(.music, source: "MusicKitPlayer.probe", text: testStoreID) else {
-            return "STOP: silent mode (~/.grux/SILENT), nothing played"
+            return "STOP: silent mode\(AudioOutput.silentNote), nothing played"
         }
         guard !AudioOutput.outputWouldAskForMic else {
             return "STOP: the microphone question is unanswered, and playing here would raise it"

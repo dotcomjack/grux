@@ -660,7 +660,7 @@ final class GoalPursuitEngine: ObservableObject {
     /// One plain step on `signal`, worded only from the signal itself.
     private static func advance(_ signal: Signal, rationale: String) -> Plan {
         Plan(domain: signal.domain, chosenGoal: signal.line, rationale: rationale,
-             action: PlannedSwarmAction(title: "Advance: \(signal.line.prefix(50))",
+             action: PlannedSwarmAction(title: "Advance: \(signal.line)",
                                         goal: "Advance this goal one concrete step, then stop and report: \(signal.line)",
                                         template: "singleWorker", budgetUSD: 5))
     }
@@ -688,8 +688,9 @@ final class GoalPursuitEngine: ObservableObject {
             let budgetRaw = (a["budgetUSD"] as? Double) ?? Double((a["budgetUSD"] as? Int) ?? 5)
             // Floor the budget: a model-returned 0 would make a LIVE swarm dispatch
             // a no-op / failure. SIMULATE does not execute, but the same plan is
-            // what LIVE would run, so keep it sane.
-            let budget = budgetRaw > 0 ? budgetRaw : 5
+            // what LIVE would run, so keep it sane. Cap it too, so no figure a
+            // model returns is shown or turned into whole numbers unbounded.
+            let budget = plannedBudget(budgetRaw)
             action = PlannedSwarmAction(title: title, goal: goal, template: tmpl, budgetUSD: budget)
         }
         // A decline with no goal is still a decline (W18-P3): it used to fail
@@ -707,19 +708,59 @@ final class GoalPursuitEngine: ObservableObject {
 
     // MARK: Mode-specific effects (only reached in OBSERVE / LIVE)
 
+    /// The largest figure one plan may carry: the largest budget
+    /// `agent_swarm_start` itself suggests (a full iOS app). The figure is shown,
+    /// not enforced, but a model's budget used to pass with no upper bound, and
+    /// 1e17 trapped Grux turning it into whole numbers (wave 27).
+    static let maxBudgetUSD = 25.0
+
+    /// A plan's budget as Grux will hold it: the default for nothing usable
+    /// (0, negative, not a number, infinite), the ceiling above it.
+    nonisolated static func plannedBudget(_ raw: Double) -> Double {
+        guard raw.isFinite, raw > 0 else { return 5 }
+        return min(raw, maxBudgetUSD)
+    }
+
     /// What a held LIVE plan's rationale opens with, so the card says why a
     /// plan that would have run is waiting instead.
     static let heldPrefix = "Held before starting: judged not worth running unattended. "
 
     /// The approval item a plan becomes: what OBSERVE queues, and what LIVE
     /// queues when the worth judgment holds it.
+    ///
+    /// It carries the `agent_swarm_start` call the Live path would have made,
+    /// so a yes in Approvals replays it through `approveAndExecute` and the
+    /// session starts (wave 26: without it a yes recorded the answer and ran
+    /// nothing). No root folder: the tool makes one per start.
+    ///
+    /// A yes starts a session on the person's paid Claude sign-in, so the item
+    /// is flagged as a spend for `grux approvals` and the MCP row (W26-P3). No
+    /// session has a cost cap: `SwarmWorker` passes no `--max-budget-usd`, and
+    /// the job's budget is a figure the Agents pane shows. So the line says there
+    /// is no cap and names the plan's figure as usage, and no `amount_cents` puts
+    /// it in the header as if it were charged or capped (wave 27 round 2). The
+    /// card names the template the yes runs, not the model's raw word for it.
     static func approvalItem(_ a: PlannedSwarmAction, domain: String, rationale: String) -> PendingApproval {
-        PendingApproval(
+        let template = (SwarmTemplate(rawValue: a.template) ?? .singleWorker).rawValue
+        // The one figure the line and the replay both carry.
+        let budget = plannedBudget(a.budgetUSD)
+        var detail = ["goal": a.goal, "template": template, "domain": domain, "rationale": rationale,
+                      "__replay_tool": "agent_swarm_start"]
+        let replay: [String: Any] = [
+            "goal": a.goal, "title": a.title, "template": template,
+            "budget_usd": budget, "max_parallel": 3,
+        ]
+        if let json = JaxToolGate.encodeInput(replay) { detail["__replay_input"] = json }
+        let usage = budget < 0.01 ? "under $0.01" : "about \(AgentsView.money(budget))"
+        let title = a.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let ends = title.last.map { ".!?".contains($0) } ?? false
+        return PendingApproval(
             action: ProposedAction(
                 kind: .other,
-                summary: "Run a Claude Code session: \(a.title)",
+                summary: "Run a Claude Code session: \(title)\(ends ? "" : ".") It runs on your Claude sign-in with no spending cap; Grux planned \(usage) of usage.",
                 target: "claude-code-swarm",
-                detail: ["goal": a.goal, "template": a.template, "domain": domain, "rationale": rationale]
+                isSpend: true,
+                detail: detail
             ),
             urgent: false,
             reason: "\(UserIdentity.assistantName) goal-pursuit (\(domain)): \(rationale)"

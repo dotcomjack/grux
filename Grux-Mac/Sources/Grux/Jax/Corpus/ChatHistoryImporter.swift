@@ -1,4 +1,5 @@
 import Foundation
+import GruxAgentCore
 
 // Imports Claude + ChatGPT conversation exports and indexes THE USER'S turns
 // only. This is the highest-signal corpus source: the user reasoning in real
@@ -201,7 +202,7 @@ actor ChatHistoryImporter: CorpusIngester {
         proc.arguments = ["-o", "-q", zip.path, "-d", tmp.path]
         do {
             try proc.run()
-            proc.waitUntilExit()
+            proc.waitForExitBlocking()
         } catch {
             WakeLog.shared.log("corpus[chatHistory]: unzip failed for \(zip.lastPathComponent): \(error)")
             return []

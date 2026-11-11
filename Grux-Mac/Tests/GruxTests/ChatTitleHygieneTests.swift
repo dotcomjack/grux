@@ -99,8 +99,11 @@ final class ChatTitleWiringTests: XCTestCase {
         let t = try appState()
         XCTAssertTrue(t.contains("guard let title = await ChatCompactor.generateTitle("),
                       "a failed title call no longer returns, so it can rename the thread for good")
-        XCTAssertTrue(t.contains("$0.role == .user && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty"),
-                      "the fallback can land on an attachment-only first message and leave New chat")
+        XCTAssertTrue(t.contains("let userLines = visible.filter { $0.role == .user }.map(\\.content)"),
+                      "the title check no longer reads the person's own lines")
+        XCTAssertEqual(ChatTitleHygiene.clean(generated: "", userLines: ["", "  ", "Plan the Lisbon trip"]),
+                       "Plan the Lisbon trip",
+                       "the fallback can land on an attachment-only first message and leave New chat")
     }
 
     func test_whateverComesBackIsCheckedBeforeItIsShown() throws {

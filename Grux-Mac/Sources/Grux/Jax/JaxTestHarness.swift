@@ -148,9 +148,9 @@ enum JaxTestHarness {
             // would park this in the Jax HQ queue (the harness deliberately does
             // not enqueue, to keep test runs from polluting the live queue).
             if live {
-                report.line("Honored QUEUE verdict. A real compose_email call would park this in the Jax HQ approval queue for the user's one-tap approval. The harness does not auto-approve and does not enqueue a test item, so NOTHING was sent and the live queue is untouched.")
+                report.line("Honored QUEUE verdict. A real compose_email call would park this in the Jax HQ approval queue for the user's one-click approval. The harness does not auto-approve and does not enqueue a test item, so NOTHING was sent and the live queue is untouched.")
             } else {
-                report.line("DRY RUN. The gate would queue this for the user's one-tap approval. Nothing sent.")
+                report.line("DRY RUN. The gate would queue this for the user's one-click approval. Nothing sent.")
             }
             report.blank()
             report.subsection("WOULD SEND (after approval)")

@@ -62,12 +62,18 @@ enum RecordingConsent {
             // guarantees they will never be shown again. Nothing rewrote the file until the
             // next launch or an unrelated status write, and this is a menu-bar app that runs
             // for weeks.
-            CapabilityResolver.markStepCompleted(.stepRecordingConsentAcknowledged, true)
-            WakeLog.shared.log("meeting: recording consent acknowledged")
+            acknowledge()
         } else {
             WakeLog.shared.log("meeting: recording consent declined, capture not started")
         }
         return accepted
+    }
+
+    /// The one yes, from this alert or from the Meetings setup card (D138), which asks the
+    /// same question in the same words.
+    static func acknowledge() {
+        CapabilityResolver.markStepCompleted(.stepRecordingConsentAcknowledged, true)
+        WakeLog.shared.log("meeting: recording consent acknowledged")
     }
 
     /// Split out so a test can exercise the decision without an alert, and so the alert

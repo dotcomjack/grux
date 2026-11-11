@@ -629,7 +629,7 @@ final class AmbientListener {
                 WakeLog.shared.log("ambient: DEAF after \(deafAttempt) restarts, no audio from \(MicDevices.boundInputName(input)); stopped retrying")
                 AmbientState.shared.isCapturing = false
                 AmbientState.shared.status = "Error"
-                AmbientState.shared.error = "The microphone is not sending any sound. Tap the orb to try again."
+                AmbientState.shared.error = "The microphone is not sending any sound. Click the orb to try again."
             }
         }
     }

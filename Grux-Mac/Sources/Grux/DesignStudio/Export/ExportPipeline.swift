@@ -4,6 +4,7 @@ import WebKit
 #endif
 #if canImport(AppKit)
 import AppKit
+import GruxAgentCore
 #endif
 
 // Export pipeline for Design Studio projects. Turns a project's on-disk site/
@@ -137,7 +138,7 @@ enum ExportPipeline {
         process.standardOutput = pipe
 
         try process.run()
-        process.waitUntilExit()
+        await process.waitForExit()
         // zip exit code 12 means "nothing to do" which can happen on an empty
         // project; treat only a genuine failure (nonzero and no output file) as
         // an error.

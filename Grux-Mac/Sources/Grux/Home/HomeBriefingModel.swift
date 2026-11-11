@@ -39,7 +39,7 @@ struct HomeBriefingInput {
     var openCommitments: [CommitmentLine]
     // Most recent finalized meeting, if any.
     var latestMeeting: MeetingLine?
-    // Pending (non-terminal, non-landed) Foundry proposals, ranked best-first.
+    // Self-upgrade proposals waiting for review (ProposalStore.waitingForReview), ranked best-first.
     var pendingProposals: [ProposalLine]
     // Live agent jobs: anything non-terminal (running / queued / waiting /
     // paused), newest-first.
@@ -373,6 +373,7 @@ final class HomeBriefingModel: ObservableObject {
         var mailTotal = 0
         var hasMailAccount = false
         var watching: [TodayModel.WatchItem] = []
+        var watchingTitle = TodayModel.Copy.watchingTitle
     }
     @Published private(set) var today = TodaySnapshot()
 
@@ -494,7 +495,9 @@ final class HomeBriefingModel: ObservableObject {
             )
         }
 
-        let proposals = ProposalStore.shared.ranked().map { p in
+        // Only proposals waiting for review: Today's "N improvements to review"
+        // counts these, as Now does; an accepted or building one has a yes.
+        let proposals = ProposalStore.waitingForReview(ProposalStore.shared.ranked()).map { p in
             HomeBriefingInput.ProposalLine(id: p.id, title: p.title, estCostLabel: p.estCostLabel)
         }
 
@@ -559,7 +562,8 @@ final class HomeBriefingModel: ObservableObject {
         return TodaySnapshot(next: TodayModel.next(tasks: lines, events: agenda, now: now),
                              mail: mail.items, mailTotal: mail.total,
                              hasMailAccount: !EmailAccountStore.shared.accounts.isEmpty,
-                             watching: TodayModel.watching(watch))
+                             watching: TodayModel.watching(watch),
+                             watchingTitle: TodayModel.watchingTitle(watch))
     }
 
     private var lastAgenda: [CalendarService.EventSummary] = []

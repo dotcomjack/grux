@@ -71,6 +71,7 @@ final class DecisionUsageSummaryTests: XCTestCase {
         let rows = [
             ("Heard: question, right? -> voice.intent=not_a_command 0.97", "question, right?"),
             ("Heard: open my calendar\nGrux last spoke 12s ago and... -> voice.intent=tab:calendar 0.95", "open my calendar"),
+            // A gate-shaped state on another surface is left as written (W54-P3 item 4).
             ("The action is: Run tool 'shell_start' (unclassified side ... -> rule=neither 1.00", "Run tool 'shell_start' (unclassified side ..."),
             ("The person said: note that the soap is a 2 pack -> meant=0.90", "note that the soap is a 2 pack"),
         ]
@@ -79,6 +80,71 @@ final class DecisionUsageSummaryTests: XCTestCase {
                                         outputTokens: 0, at: Date(), summary: summary)
             XCTAssertEqual(DecisionUsageSummary.lastLine(e), "\(shown), 368 ms")
         }
+    }
+
+    /// D166 item 3's neighbour, item 2 (sense pass 20): Settings, Models read
+    /// "Last decision about: Run tool 'create_note' (unclassified side ...",
+    /// the gate's fallback state clipped at 57 characters. It names the tool
+    /// the way Approvals does.
+    func test_lastLineNamesAGatedToolTheWayApprovalsDoes() {
+        let rows = [
+            ("The action is: Run tool 'create_note' (unclassified side ... -> rule=not_a_command 0.85", "Save your note"),
+            ("The action is: Run tool 'create_event' (unclassified side ... -> rule=neither 1.00", "Add your event to your calendar"),
+            ("The action is: Run tool 'foundry_upgrade_cycle' (unclassified ... -> rule=neither 1.00", "Start a self-upgrade cycle"),
+            ("The action is: Run tool 'fs_list' (unclassified side effect). -> rule=neither 1.00", "Use the fs list tool"),
+            ("Run tool 'create_note' (unclassified side effect).", "Save your note"),
+        ]
+        for (summary, shown) in rows {
+            let e = DecisionLedgerEntry(surface: "jax.gate", provider: .local, latencyMs: 131, inputTokens: 0,
+                                        outputTokens: 0, at: Date(), summary: summary)
+            XCTAssertEqual(DecisionUsageSummary.lastLine(e), "\(shown), 131 ms", summary)
+        }
+    }
+
+    /// Only the gate's own shape is renamed: words a person said that start
+    /// the same way stay theirs.
+    func test_lastLineKeepsAPersonsOwnWordsAboutRunningATool() {
+        let e = row(200, .jev, at: Date(), summary: "Heard: run tool checks on the build -> voice.intent=not_a_command 0.90")
+        XCTAssertEqual(DecisionUsageSummary.lastLine(e), "run tool checks on the build, 200 ms")
+    }
+
+    /// W54-P3 items 2 to 4: a long id keeps its closing quote through the
+    /// ledger's clip, separators read as spaces, and only the gate's own
+    /// surface is renamed.
+    @MainActor
+    func test_aGatedToolIdOfAnyLengthAndSpellingIsNamed() {
+        let result = DecisionResult(answers: ["rule": .choice("neither", confidence: 1, probabilities: [:])],
+                                    latencyMs: 131, inputTokens: 0, outputTokens: 0, provider: .local)
+        let cases = [
+            ("enroll_speaker_from_current_meeting", "Learn a speaker's voice from a meeting"),
+            ("mcp__github__create_issue", "Use the mcp github create issue tool"),
+            ("mcp-github.create", "Use the mcp github create tool"),
+            (String(repeating: "x", count: 31), "Use the \(String(repeating: "x", count: 31)) tool"),
+            (String(repeating: "x", count: 32), "Use the \(String(repeating: "x", count: 32)) tool"),
+        ]
+        for (tool, shown) in cases {
+            let state = "The action is: Run tool '\(tool)' (unclassified side effect).\nIts target is: \(tool)\nDetails: tool \(tool)"
+            let summary = DecisionEngine.summary(state: state, result: result)
+            let e = DecisionLedgerEntry(surface: "jax.gate", provider: .local, latencyMs: 131, inputTokens: 0,
+                                        outputTokens: 0, at: Date(), summary: summary)
+            XCTAssertEqual(DecisionUsageSummary.lastLine(e), "\(shown), 131 ms", summary)
+        }
+    }
+
+    func test_aPersonsOwnQuotedRunToolStaysTheirs() {
+        let e = DecisionLedgerEntry(surface: "voice", provider: .jev, latencyMs: 200, inputTokens: 0, outputTokens: 0,
+                                    at: Date(), summary: "Heard: Run tool 'create_note' please -> voice.intent=not_a_command 0.90")
+        XCTAssertEqual(DecisionUsageSummary.lastLine(e), "Run tool 'create_note' please, 200 ms")
+    }
+
+    /// The ledger's clip still applies to everything else.
+    @MainActor
+    func test_theClipIsUnchangedForOtherStates() {
+        let result = DecisionResult(answers: [:], latencyMs: 1, inputTokens: 0, outputTokens: 0, provider: .local)
+        let long = String(repeating: "a", count: 61)
+        XCTAssertEqual(DecisionEngine.summary(state: long, result: result), String(repeating: "a", count: 57) + "... -> ")
+        let sixty = String(repeating: "a", count: 60)
+        XCTAssertEqual(DecisionEngine.summary(state: sixty, result: result), sixty + " -> ")
     }
 
     func test_lastLineSurvivesASummaryWithNoArrow() {

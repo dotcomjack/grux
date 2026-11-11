@@ -617,7 +617,7 @@ struct Approvals: ParsableCommand {
 
     /// The rail, on the same stream as everything else a person reads.
     private func sayRail(_ frame: Frame, _ beat: Beat, _ subtitle: String? = nil) {
-        let rail = frame.renderer.rail(current: beat)
+        let rail = frame.rail(beat)
         if !rail.isEmpty { say("\n  " + rail) }
         if let subtitle { say("\n" + frame.renderer.prose(subtitle)) }
         say("")

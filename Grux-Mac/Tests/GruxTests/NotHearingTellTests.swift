@@ -27,8 +27,8 @@ final class NotHearingTellTests: XCTestCase {
 
     func test_theCopyIsHonestWhereverTheTellShows() {
         XCTAssertTrue(ComposerPlaceholder.text(for: .notHearing).contains("can't hear"))
-        XCTAssertTrue(TodayModel.sayItLine(.notHearing).contains("Tap the orb"))
-        XCTAssertTrue(ListeningTell.notHearing.help.contains("tap the orb"))
+        XCTAssertTrue(TodayModel.sayItLine(.notHearing).contains("Click the orb"))
+        XCTAssertTrue(ListeningTell.notHearing.help.contains("click the orb"))
     }
 
     /// Every surface that shows the word reads the fact, so none can say ARMED

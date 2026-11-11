@@ -287,12 +287,12 @@ enum ListeningTell: String, CaseIterable, Sendable {
     var help: String {
         switch self {
         case .armed:    return "Listening. Just talk, no wake word needed."
-        case .muted:    return "Muted. Tap the orb to listen again."
+        case .muted:    return "Muted. Click the orb to listen again."
         case .speaking: return "Grux is speaking."
         case .thinking: return "Grux is working on it."
         case .off:      return "Listening is off. Turn it on in Tuning."
-        case .notHearing: return "The microphone is not sending any sound. Grux keeps trying; tap the orb to try now."
-        case .waiting:  return "Listening is on in Tuning, but the microphone stays closed until you agree. Choose Allow listening to read what it does and say yes."
+        case .notHearing: return "The microphone is not sending any sound. Grux keeps trying; click the orb to try now."
+        case .waiting:  return "Listening is on in Tuning, but the microphone stays closed until you agree. Choose \(ListeningTell.allowTitle) to read what it does, then \(MicConsent.confirmTitle)."
         }
     }
 }

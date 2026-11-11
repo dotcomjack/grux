@@ -54,10 +54,47 @@ struct Doctor: ParsableCommand {
                           + "act on your behalf. Open it and run this again."))
             leave(.waitingOnYou)
         }
-        if case .failure(let e) = statusResult {
-            leave(frame.explain(e))
+        guard case .success(let status) = statusResult else {
+            if case .failure(let e) = statusResult { leave(frame.explain(e)) }
+            leave(.failed)
         }
-        print(r.prose("Everything this command can check is in order."))
-        leave(.done)
+        // THE SAME ANSWER `grux next` GIVES. Doctor said "in order" on a Mac where next named
+        // Mail server as blocking Mailbox, because it only checked that Grux runs. It now
+        // asks the one decision both commands share, and points at next for the remedy.
+        switch NextStep.pick(status, signInExpired: ClaudeSignIn.expired()) {
+        case .chooseFeatures:
+            print(r.prose("Grux runs, and nothing is turned on yet. grux next says where to "
+                          + "start."))
+            leave(.waitingOnYou)
+        case .unblock(let cap, let blocking, let orUnblocks):
+            print(r.prose("Grux runs, and \(cap.label) is still missing: "
+                          + NextStep.unblockClauses(blocking: blocking.map(\.label),
+                                                    orUnblocks: orUnblocks.map(\.label),
+                                                    list: r.list)
+                          + ". grux next says what to do."))
+            leave(.waitingOnYou)
+        case .chooseOne(let options, let needed, let blocking):
+            let n = blocking.count
+            print(r.prose("Grux runs, and none of \(r.either(options.map(\.label))) is set up: "
+                          + "\(n) feature\(n == 1 ? "" : "s") you turned on cannot run until "
+                          + (needed == 1 ? "one of them is" : "\(needed) of them are")
+                          + ", namely "
+                          + r.list(blocking.map(\.label)) + ". grux next says what to do."))
+            leave(.waitingOnYou)
+        case .turnOn(let needs, let feature):
+            let names = needs.map { id in status.features.first { $0.id == id }?.label ?? id }
+            print(r.prose("Grux runs, and \(feature.label) needs \(r.list(names)), which "
+                          + (names.count == 1 ? "is" : "are") + " off. grux next says what "
+                          + "to do."))
+            leave(.waitingOnYou)
+        case .signIn(let blocking):
+            print(r.prose("Grux runs, and Claude's sign-in has expired: "
+                          + ClaudeSignIn.blockedPhrase(blocking.map(\.label), list: r.list)
+                          + " until you sign in. grux next says what to do."))
+            leave(.waitingOnYou)
+        case .nothingRequired:
+            print(r.prose("Everything this command can check is in order."))
+            leave(.done)
+        }
     }
 }

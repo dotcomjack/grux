@@ -68,7 +68,7 @@ enum ContactsTool {
 
             let granted = await ContactsService.shared.ensureAccess()
             guard granted else {
-                return "error: Contacts access not authorized. Grant it in System Settings, Privacy and Security, Contacts."
+                return "error: Contacts access not authorized. Grant it in System Settings, Privacy & Security, Contacts."
             }
             if await ContactsService.shared.contacts.isEmpty {
                 await ContactsService.shared.refresh()

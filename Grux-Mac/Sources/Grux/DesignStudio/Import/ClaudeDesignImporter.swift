@@ -1,4 +1,5 @@
 import Foundation
+import GruxAgentCore
 
 // Importer for a competitor design tool's export ZIP. The archive is a static
 // web bundle (an index HTML plus co-located CSS, JS, and asset files). We do
@@ -53,7 +54,7 @@ enum ClaudeDesignImporter {
         unzip.standardOutput = pipe
         unzip.standardError = pipe
         try unzip.run()
-        unzip.waitUntilExit()
+        unzip.waitForExitBlocking()
         // unzip returns 1 for non-fatal warnings; only fail when nothing landed.
         let extracted = (try? fm.contentsOfDirectory(atPath: scratch.path))?.isEmpty == false
         if unzip.terminationStatus > 1 && !extracted {

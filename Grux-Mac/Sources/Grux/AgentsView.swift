@@ -37,6 +37,7 @@ struct AgentsView: View {
                 // The one place Agents says BETA (3.0: no per-row pills).
                 HStack(spacing: 6) {
                     Text("Agents").font(GruxType.title).foregroundStyle(GruxTheme.textPrimary)
+                        .unlessPaneTitle("Agents")
                     LabsHeaderBadge(feature: "agents")
                     Spacer()
                 }
@@ -222,10 +223,6 @@ struct AgentsView: View {
     }
 
     private func jobContextMarkdown(_ job: AgentJob) -> String {
-        let done = job.workers.filter { $0.status == .done }.count
-        let failed = job.workers.filter { $0.status == .failed }.count
-        let running = job.workers.filter { $0.status == .running }.count
-        let paused = job.workers.filter { $0.status == .pausedForAuth }.count
         var lines: [String] = []
         lines.append("📋 **Loaded context for Grux job:** \(job.title)")
         lines.append("")
@@ -233,10 +230,7 @@ struct AgentsView: View {
         if let reason = job.pausedReason {
             lines.append("**Paused reason:** `\(reason.rawValue)`")
         }
-        lines.append("**Workers:** \(done)/\(job.workers.count) done"
-                     + (failed > 0 ? " · \(failed) failed" : "")
-                     + (running > 0 ? " · \(running) running" : "")
-                     + (paused > 0 ? " · \(paused) paused-for-auth" : ""))
+        lines.append("**Workers:** \(WorkerTally(job).line)")
         lines.append("**Cost:** \(AgentsView.spentOfBudget(job.spentUSD, job.budgetUSD))")
         lines.append("**Root dir:** `\(job.rootDir)`")
         lines.append("**Job ID:** `\(job.id)`")
@@ -264,11 +258,9 @@ struct AgentsView: View {
     }
 
     private func costSummary(_ job: AgentJob) -> String {
-        let done = job.workers.filter { $0.status == .done }.count
-        let failed = job.workers.filter { $0.status == .failed }.count
         var s = "Job: \(job.title)\n"
         s += "Status: \(job.status.rawValue)\n"
-        s += "Workers: \(done)/\(job.workers.count) done\(failed > 0 ? " · \(failed) failed" : "")\n"
+        s += "Workers: \(WorkerTally(job).line)\n"
         s += "Spent: \(AgentsView.spentOfBudget(job.spentUSD, job.budgetUSD))\n"
         s += "ID: \(job.id)\n"
         return s
@@ -380,12 +372,11 @@ private struct JobRow: View {
                 Spacer()
             }
             HStack(spacing: 6) {
-                let done = job.workers.filter { $0.status == .done }.count
-                let failed = job.workers.filter { $0.status == .failed }.count
-                let paused = job.workers.filter { $0.status == .pausedForAuth }.count
-                Text("\(done)/\(job.workers.count) done")
-                if failed > 0 { Text("· \(failed) failed").foregroundStyle(.red) }
-                if paused > 0 { Text("· \(paused) paused").foregroundStyle(.yellow) }
+                let tally = WorkerTally(job)
+                ForEach(Array(tally.lineParts.enumerated()), id: \.offset) { i, part in
+                    Text(i == 0 ? part.text : "· \(part.text)")
+                        .foregroundStyle(part.kind == .failed ? Color.red : part.kind == .paused ? Color.yellow : Color.secondary)
+                }
                 Text("· \(AgentsView.money(job.spentUSD))").foregroundStyle(.secondary)
             }
             .font(.caption)
@@ -447,6 +438,7 @@ struct JobDetailView: View {
         VStack(alignment: .leading, spacing: GruxSpacing.xs) {
             HStack {
                 Text(job.title).font(GruxType.title)
+                    .help("Job \(job.id)")
                 Spacer()
                 if job.status == .waiting && job.pausedReason == .authLimitHit {
                     Button("Resume…") {
@@ -466,7 +458,6 @@ struct JobDetailView: View {
                     .foregroundStyle(statusColor(job.status))
                 Text(AgentsView.spentOfBudget(job.spentUSD, job.budgetUSD))
                     .foregroundStyle(.secondary)
-                Text(job.id.prefix(8)).font(.caption).monospaced().foregroundStyle(.tertiary)
             }
             .font(.caption)
             Text(job.goal).font(.body).foregroundStyle(.secondary).lineLimit(3)
@@ -493,9 +484,11 @@ struct JobDetailView: View {
         VStack(alignment: .leading, spacing: GruxSpacing.xs) {
             HStack(spacing: GruxSpacing.xs + 2) {
                 Circle().fill(statusColor(w.status)).frame(width: 8, height: 8)
-                Text(w.label).font(.headline).lineLimit(1)
+                Text(Self.workerName(w)).font(.headline).lineLimit(1)
             }
-            Text(w.role.rawValue).font(.caption).foregroundStyle(.secondary)
+            if let roleLine = Self.workerRoleLine(w.role) {
+                Text(roleLine).font(.caption).foregroundStyle(.secondary)
+            }
             Text("\(AgentsView.money(w.spentUSD))").font(.caption2).foregroundStyle(.tertiary)
             if let err = w.errorMessage {
                 Text(err).font(.caption2).foregroundStyle(.red).lineLimit(1)
@@ -526,17 +519,45 @@ struct JobDetailView: View {
 
     private func stepRow(_ s: AgentStep) -> some View {
         HStack(alignment: .top, spacing: GruxSpacing.s) {
-            Text(prefix(for: s.kind)).font(.system(size: 14))
+            Text(Self.prefix(for: s.kind)).font(.system(size: 14))
             VStack(alignment: .leading, spacing: 2) {
                 if let wid = s.workerId, let w = job.workers.first(where: { $0.id == wid }) {
-                    Text(w.label).font(.caption2.bold()).foregroundStyle(.secondary)
+                    Text(Self.workerName(w)).font(.caption2.bold()).foregroundStyle(.secondary)
                 }
                 Text(s.text).font(.system(.body, design: .monospaced)).lineLimit(4)
             }
         }
     }
 
-    private func prefix(for k: AgentStep.Kind) -> String {
+    /// A worker's name as a person reads it. The plan's labels are code words ("solo",
+    /// "build-loop", "qa"); the card and the log say them as words (D208 item 2).
+    static func workerName(_ w: SwarmWorkerSpec) -> String {
+        let raw = w.label.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch raw.lowercased() {
+        case "", "solo": return "Agent"
+        case "qa":       return "Tester"
+        default:
+            let words = raw.replacingOccurrences(of: "-", with: " ")
+                .replacingOccurrences(of: "_", with: " ")
+            return words.prefix(1).uppercased() + words.dropFirst()
+        }
+    }
+
+    /// What a worker of this role does, or nil when the role adds nothing ("generic").
+    static func workerRoleLine(_ role: SwarmWorkerSpec.Role) -> String? {
+        switch role {
+        case .architect:   return "Plans the work"
+        case .implementor: return "Does the work"
+        case .integrator:  return "Puts the pieces together"
+        case .buildLoop:   return "Builds and tests until it passes"
+        case .qa:          return "Checks the work"
+        case .brand:       return "Reviews how it looks"
+        case .generic:     return nil
+        }
+    }
+
+    /// The glyph beside a log line. Internal, not private: AgentsLogGlyphTests reads it.
+    static func prefix(for k: AgentStep.Kind) -> String {
         switch k {
         case .workerStart:        return "▶"
         case .workerEnd:          return "■"
@@ -545,7 +566,8 @@ struct JobDetailView: View {
         case .toolResult:         return "✓"
         case .usage:              return "$"
         case .error:              return "❌"
-        case .orchestrator:       return "🎼"
+        // A job-level line (queued, ended). Was "🎼", a pun a stranger read as music (D179 item 9).
+        case .orchestrator:       return "◆"
         case .approvalRequested:  return "⏸"
         case .approvalGranted:    return "▶▶"
         case .info:               return "·"

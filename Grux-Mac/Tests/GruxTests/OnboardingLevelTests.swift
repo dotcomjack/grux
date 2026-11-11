@@ -276,7 +276,8 @@ final class OnboardingLevelTests: XCTestCase {
             level: .everything,
             skipped: ["perm.contacts", "endpoint.imap"],
             path: .question,
-            answer: "keep me on track")
+            answer: "keep me on track",
+            reviewedAFrame: true)
 
         let data = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(OnboardingModel.State.self, from: data)
@@ -287,6 +288,7 @@ final class OnboardingLevelTests: XCTestCase {
         XCTAssertEqual(decoded.skipped, ["perm.contacts", "endpoint.imap"])
         XCTAssertEqual(decoded.path, .question)
         XCTAssertEqual(decoded.answer, "keep me on track")
+        XCTAssertTrue(decoded.reviewedAFrame)
     }
 
     /// An install written before levels existed ran what is now Levels 1 and 2.

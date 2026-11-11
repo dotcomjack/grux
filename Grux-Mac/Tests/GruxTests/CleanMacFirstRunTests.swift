@@ -365,19 +365,44 @@ final class WatchingTruthTests: XCTestCase {
         }
     }
 
+    /// Wave 27 round 1 (P2): the Focus log's banner read a green "Watching"
+    /// above "Nothing is sampled right now. It is outside your active hours.",
+    /// the D101 mistake in the pane that explains watching. Every state x
+    /// every skip: the title says Watching only while the watcher samples.
+    func test_theStatusTitleSaysWatchingOnlyWhileSampling() throws {
+        let skips: [FocusWatcher.Skip?] = [nil, .screenAnalysisOff, .focusOff, .firstFrame, .exclusions,
+                                           .noScreenAccess, .outsideHours, .snoozed, .noTask, .noKey]
+        for shown in [PanelCopy.WatchingState.watching, .needsScreenAccess, .paused] {
+            for skip in skips {
+                let title = FocusLogView.statusTitle(shown, skip: skip)
+                let sampling = shown == .watching && skip == nil
+                XCTAssertEqual(title == PanelCopy.watching, sampling, "\(shown) \(String(describing: skip)): \(title)")
+                if !sampling { XCTAssertFalse(title.lowercased().contains("watching"), title) }
+            }
+        }
+        XCTAssertEqual(FocusLogView.statusTitle(.watching, skip: .outsideHours), PanelCopy.notSampling)
+        XCTAssertEqual(PanelCopy.notSampling, "Not sampling now")
+        // Both places that draw the title pass the skip.
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let src = try String(contentsOf: root.appendingPathComponent("Sources/Grux/LaunchRootView.swift"), encoding: .utf8)
+        XCTAssertEqual(src.components(separatedBy: "statusTitle(shown, skip:").count - 1, 2)
+        XCTAssertFalse(src.contains("statusTitle(shown)"), "a caller draws the title without the skip")
+    }
+
     func test_theFocusLogSaysNothingIsSampledWithoutScreenAccess() {
         let line = FocusLogView.samplingLine(.needsScreenAccess, interval: "every 8s", hours: "9:00 AM to 5:00 PM",
                                              model: "vision", drift: "2 checks", cooldown: "15m")
-        XCTAssertTrue(line.hasPrefix("Nothing is sampled until macOS allows screen recording."), line)
+        XCTAssertTrue(line.hasPrefix("Nothing is sampled until macOS allows Screen Recording."), line)
         XCTAssertFalse(line.contains("Grux samples your active window"), line)
         XCTAssertTrue(FocusLogView.samplingLine(.watching, interval: "every 8s", hours: "9:00 AM to 5:00 PM",
                                                 model: "vision", drift: "2 checks", cooldown: "15m")
             .hasPrefix("Grux samples your active window every 8s during 9:00 AM to 5:00 PM."))
-        XCTAssertEqual(FocusLogView.statusTitle(.needsScreenAccess), PanelCopy.needsScreenAccess)
-        XCTAssertEqual(FocusLogView.statusTitle(.watching), PanelCopy.watching)
-        XCTAssertEqual(FocusLogView.statusTitle(.paused), PanelCopy.paused)
+        XCTAssertEqual(FocusLogView.statusTitle(.needsScreenAccess, skip: nil), PanelCopy.needsScreenAccess)
+        XCTAssertEqual(FocusLogView.statusTitle(.watching, skip: nil), PanelCopy.watching)
+        XCTAssertEqual(FocusLogView.statusTitle(.paused, skip: nil), PanelCopy.paused)
         XCTAssertEqual(FocusLogView.emptyLine(.needsScreenAccess, interval: "every 8s"),
-                       "No samples. Grux needs screen recording to see your active window; Grant asks macOS.")
+                       "No samples. Grux needs Screen Recording to see your active window; Grant asks macOS.")
         // A fact, not a promise: the local prescreen and the daily ceiling can
         // skip a check without a sample (wave 8 review round 4).
         XCTAssertEqual(FocusLogView.emptyLine(.watching, interval: "every 8s"),
@@ -431,7 +456,7 @@ final class WatchingTruthTests: XCTestCase {
             let a = FocusLogView.samplingLine(.needsScreenAccess, interval: "every 8s", hours: "9:00 AM to 5:00 PM",
                                               model: "vision", drift: "2 checks", cooldown: "15m", skip: skip)
             let extra = skip == .noScreenAccess ? "" : " \(skip.line)"
-            XCTAssertTrue(a.hasPrefix("Nothing is sampled until macOS allows screen recording.\(extra) When nothing stands in the way, Grux will sample your active window every 8s"), a)
+            XCTAssertTrue(a.hasPrefix("Nothing is sampled until macOS allows Screen Recording.\(extra) When nothing stands in the way, Grux will sample your active window every 8s"), a)
             XCTAssertFalse(a.contains("Then Grux will sample"), a)
             // The banner names the reason; the empty list does not say it twice.
             XCTAssertEqual(FocusLogView.emptyLine(.watching, interval: "every 8s", skip: skip), "No samples yet.")

@@ -332,7 +332,7 @@ extension GruxControlTools {
     }
 
     /// Which gate refused a command: "allowlist" (strict ceiling), "containment" (outside
-    /// the folder), "silent" (it would make sound while ~/.grux/SILENT is on) or "headless"
+    /// the folder), "silent" (it would make sound while silent mode is on) or "headless"
     /// (it would script or open another app while ~/.grux/HEADLESS is on). The CLI
     /// answers each differently, so the kind is read from the reason's own shape.
     nonisolated static func shellBlockedKind(reason: String) -> String {

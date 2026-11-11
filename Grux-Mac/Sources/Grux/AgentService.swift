@@ -327,7 +327,8 @@ final class AgentService: ObservableObject {
         // Transient orb hint so the desktop surface acknowledges the pause
         // even if the user dismissed the notification banner.
         OrbHintBus.shared.show(
-            message: "AGENT PAUSED · TAP TO RESUME",
+            // A caption with no button behind it: it says where Resume is.
+            message: "AGENT PAUSED · RESUME IN AGENTS",
             state: .thinking,
             duration: 6.0
         )
@@ -541,7 +542,7 @@ final class AgentService: ObservableObject {
         // (wave 17 review). Agents and Now read the same verdict.
         if job.failedOnSignIn || SignInExpiry.detect(job.errorMessage ?? "") {
             return .assistantLine("\(name) could not run: Claude's sign-in on this Mac has expired. "
-                + "Sign in again (Claude sign-in, at the top of Now), then ask me to run it again.")
+                + "Sign in (Claude sign-in, at the top of Now), then ask me to run it again.")
         }
         return .assistantLine("\(name) stopped before it finished. "
             + "Agents shows what happened; ask me to try it again, or tell me what to change.")

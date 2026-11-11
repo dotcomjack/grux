@@ -38,3 +38,21 @@ enum PaneHeading {
         return [rail, full]
     }
 }
+
+/// Draws a surface's own literal heading only when the pane bar does not
+/// already print it (D115 item 11: Integrations, Local Models and Social said
+/// their name twice). Outside a pane the heading is the only title and stays.
+private struct UnlessPaneTitle: ViewModifier {
+    let heading: String
+    @Environment(\.paneTitles) private var paneTitles
+
+    func body(content: Content) -> some View {
+        if !PaneHeading.repeats(heading, paneTitles: paneTitles) { content }
+    }
+}
+
+extension View {
+    func unlessPaneTitle(_ heading: String) -> some View {
+        modifier(UnlessPaneTitle(heading: heading))
+    }
+}

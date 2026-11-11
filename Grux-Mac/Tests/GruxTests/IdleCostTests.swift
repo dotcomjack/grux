@@ -20,7 +20,7 @@ final class IdleCostTests: XCTestCase {
     /// Where the file-drop triggers live. The table moved out of `GruxApp.swift` into
     /// `Triggers/AppTriggers.swift` in P-R-7, and both are read, so a trigger added back
     /// into `GruxApp.swift` is still judged by the guards below.
-    private static let triggerFiles = ["GruxApp.swift", "Triggers/AppTriggers.swift"]
+    private static let triggerFiles = ["GruxApp.swift", "Triggers/AppTriggers.swift", "Triggers/InjectChatWatcher.swift"]
 
     /// The regression this exists for: 57 separate repeating timers, each polling for a
     /// file-drop trigger in `~/.grux`, together making 93 stat() calls and 93 main-thread
@@ -32,10 +32,13 @@ final class IdleCostTests: XCTestCase {
     func testNoFileTriggerIsPolledOnATimer() throws {
         var offenders: [String] = []
         for file in Self.triggerFiles {
-            let lines = try source(file).components(separatedBy: "\n")
-            for (i, line) in lines.enumerated() where line.contains("scheduledTimer") && line.contains("repeats: true") {
-                let body = lines[(i + 1)..<min(i + 4, lines.count)].joined(separator: "\n")
-                if body.contains("fileExists") {
+            let lines = try source(file).components(separatedBy: "\n").map(LaunchConsentGateTests.stripComment)
+            for (i, line) in lines.enumerated() where Self.startsARepeatingTimer(line) {
+                let body = lines[(i + 1)..<min(i + 7, lines.count)].joined(separator: "\n")
+                // D113: reading the file is polling for it too. The inject-chat door
+                // read `String(contentsOf: file` on a 0.8 s timer and slipped past a
+                // check for `fileExists` alone.
+                if Self.fileReads.contains(where: body.contains) {
                     offenders.append("\(file):\(i + 1)")
                 }
             }
@@ -43,6 +46,61 @@ final class IdleCostTests: XCTestCase {
         XCTAssertTrue(offenders.isEmpty,
                       "file-drop triggers must register with TriggerWatcher, not poll on a "
                       + "timer. Offending sites: \(offenders.joined(separator: ", "))")
+    }
+
+    /// The ways this codebase spells a repeating timer on one line. A repeat built from
+    /// `asyncAfter` or `Task.sleep` is not seen here; the inject-chat door bans those
+    /// outright (`testTheInjectChatDoorHasNoTimer`).
+    static func startsARepeatingTimer(_ line: String) -> Bool {
+        (line.contains("scheduledTimer") || line.contains("Timer(timeInterval:") || line.contains("Timer(fire:"))
+            && line.contains("repeats: true") || line.contains("makeTimerSource") || line.contains("Timer.publish(every:")
+    }
+
+    /// The ways a body reads a file or asks whether it is there.
+    static let fileReads = ["fileExists", "contentsOf:", "contents(atPath:", "attributesOfItem", "FileHandle("]
+
+    /// Wave 29 review: a timer whose body only calls a method (`{ self?.take() }`) reads
+    /// the file one call away, where a look at the body cannot see it. So the inject-chat
+    /// door, the one trigger that polled after the 57 were converted, carries no timer
+    /// at all, in its watcher or where Grux starts it, and its watcher schedules only
+    /// through one counted helper, which `InjectChatWatcherTests` reads while the door
+    /// sits idle.
+    func testTheInjectChatDoorHasNoTimer() throws {
+        let code = { (text: String) in
+            text.components(separatedBy: "\n").map(LaunchConsentGateTests.stripComment).joined(separator: "\n")
+        }
+        let watcher = code(try source("Triggers/InjectChatWatcher.swift"))
+        // Every way Swift and Foundation here put work off or repeat it. Wave 29 round 3:
+        // an `asyncAfter` that re-schedules itself and only stats the file passed a ban
+        // of timer words alone.
+        for api in ["Timer", "makeTimerSource", "repeats:", "CADisplayLink", "RunLoop", "Task", "sleep",
+                    "Thread", "afterDelay", "OperationQueue", "#selector", "Combine", "Publisher"] {
+            XCTAssertFalse(watcher.contains(api), "InjectChatWatcher uses \(api); the door is read on a write, not polled")
+        }
+        // The one way it schedules anything is `later`, which counts what is still waiting
+        // to run (InjectChatWatcherTests.testAnIdleDoorHasNothingScheduled, which fails on a
+        // poll of any period), and only the settle and the down-watch retry call it.
+        let later = try XCTUnwrap(watcher.range(of: "private func later("))
+        let laterEnd = try XCTUnwrap(watcher.range(of: "\n    }\n", range: later.upperBound..<watcher.endIndex))
+        let laterBody = watcher[later.lowerBound..<laterEnd.upperBound]
+        XCTAssertEqual(watcher.components(separatedBy: "DispatchQueue").count - 1, 1,
+                       "InjectChatWatcher reaches DispatchQueue outside `later`")
+        XCTAssertTrue(laterBody.contains("DispatchQueue.main.asyncAfter") && laterBody.contains("laterCount += 1")
+                      && laterBody.contains("outstanding += 1") && laterBody.contains("outstanding -= 1"),
+                      "`later` must count every step it puts off, and what is still waiting")
+        let lines = watcher.components(separatedBy: "\n")
+        for (i, line) in lines.enumerated() where line.contains("later(") && !line.contains("func later(") {
+            let owner = lines[..<i].last { $0.contains("func ") } ?? ""
+            XCTAssertTrue(owner.contains("func scheduleTake(") || owner.contains("func retryLater("),
+                          "`later` is called from \(owner.trimmingCharacters(in: .whitespaces)); only the settle and the retry put work off")
+        }
+        let app = try source("GruxApp.swift")
+        let start = try XCTUnwrap(app.range(of: "private func startInjectChatWatcher()"))
+        let end = try XCTUnwrap(app.range(of: "AppTriggers.register(in: dir)", range: start.upperBound..<app.endIndex))
+        let site = code(String(app[start.lowerBound..<end.lowerBound]))
+        for api in ["Timer", "makeTimerSource", "asyncAfter", "repeats:"] {
+            XCTAssertFalse(site.contains(api), "startInjectChatWatcher uses \(api); the door is read on a write, not polled")
+        }
     }
 
     /// The conversion moved 57 sites. If a later edit drops registrations on the floor the

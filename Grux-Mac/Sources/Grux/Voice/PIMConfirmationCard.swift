@@ -137,18 +137,35 @@ final class PIMConfirmationController {
 
     /// Undo affordance: cancels the pending plan inside the window. Nothing
     /// has executed yet, so undo is a pure cancel, no compensating delete.
-    func undo() {
+    func undo(speak: Bool = true) {
         guard let model, model.phase == .pending else { return }
         runTask?.cancel()
         runTask = nil
         model.phase = .cancelled
         let state = AppState.shared
-        if state.config.speakRepliesAloud && !state.voiceMuted {
+        if speak && state.config.speakRepliesAloud && !state.voiceMuted {
             SpeechEngine.shared.speak("Cancelled.")
         }
         ShellStateBus.shared.publish(mode: .idle, headline: "Cancelled", detail: model.plan.cardTitle, source: "pim")
         WakeLog.shared.log("pim: undo, cancelled \(model.plan.kind.rawValue)")
         scheduleDismiss(after: 1.0)
+    }
+
+    /// W57-FIX 2: "never mind" said inside the undo window is an undo. Cancels
+    /// a card that has not run yet and returns its title, or nil when nothing
+    /// is waiting (already running, done, or no card). Chat says what it
+    /// cancelled, so the card does not speak "Cancelled." over it.
+    func cancelPending() -> String? {
+        guard let model, model.phase == .pending else { return nil }
+        let title = model.plan.cardTitle
+        undo(speak: false)
+        return title
+    }
+
+    /// Puts a card in place without mounting its panel, for the tests.
+    func hold(_ model: PIMConfirmationModel) {
+        runTask?.cancel(); runTask = nil
+        self.model = model
     }
 
     /// Side-effects-only commit for a plan whose card was superseded by a
@@ -159,7 +176,8 @@ final class PIMConfirmationController {
     static func executeDetached(plan: PIMPlan, personAsked: Bool) async {
         switch plan.execution {
         case .tool(let name, let input):
-            let (result, _) = await runAndTell(name: name, input: input, personAsked: personAsked)
+            let (result, _) = await runAndTell(name: name, input: input, personAsked: personAsked,
+                                               reminder: plan.reminder)
             WakeLog.shared.log("pim: early-committed \(plan.kind.rawValue) → \(result.prefix(120))")
         case .chat(let prompt):
             WakeLog.shared.log("pim: early-committed \(plan.kind.rawValue) to chat")
@@ -199,10 +217,24 @@ final class PIMConfirmationController {
         name: String,
         input: [String: Any],
         personAsked: Bool,
+        reminder: GruxReminder? = nil,
+        schedule: @MainActor (GruxReminder) -> Void = { GruxReminderState.shared.schedule($0) },
+        taskId: @MainActor (String) -> UUID? = { title in AppState.shared.activeTasks.first { $0.title == title }?.id },
         via dispatcher: (String, [String: Any]) async -> String = ChatService.dispatchTool(name:input:)
     ) async -> (result: String, reply: String) {
         let result = await dispatch(name: name, input: input, personAsked: personAsked, via: dispatcher)
-        let reply = ToolReplyCopy.forPerson(tool: name, input: input, result: result)
+        var reply = ToolReplyCopy.forPerson(tool: name, input: input, result: result)
+        // A timed "remind me to" (D147): Grux's own reminder, only once the
+        // task really landed, and the line says when it comes.
+        // It carries the task it belongs to, so a task checked off or removed
+        // before then takes its reminder with it (W47-P3 item 3).
+        if var reminder, let at = reminder.scheduledFor, case .done = endPhase(result: result, reply: reply) {
+            reminder.taskId = (input["title"] as? String).flatMap(taskId)
+            if reminder.taskId != nil { reminder.taskTitle = input["title"] as? String }
+            schedule(reminder)
+            reply += " I'll remind you \(PIMIntents.spokenWhen(at, allDay: false)) if Grux is open then."
+            WakeLog.shared.log("pim: reminder scheduled for \(at): \(reminder.title.prefix(80))")
+        }
         AppState.shared.appendChat(ChatMessage(role: .assistant, content: reply))
         if AppState.shared.config.memoryEnabled {
             SemanticMemory.shared.store(kind: .chatAssistant, text: reply)
@@ -214,7 +246,8 @@ final class PIMConfirmationController {
         model?.phase = .executing
         switch plan.execution {
         case .tool(let name, let input):
-            let (result, reply) = await Self.runAndTell(name: name, input: input, personAsked: personAsked)
+            let (result, reply) = await Self.runAndTell(name: name, input: input, personAsked: personAsked,
+                                                        reminder: plan.reminder)
             let phase = Self.endPhase(result: result, reply: reply)
             let failed = phase == .failed(reply)
             model?.phase = phase

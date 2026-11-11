@@ -78,12 +78,13 @@ final class PaneHeadingTests: XCTestCase {
         XCTAssertFalse(PaneHeading.repeats("Notes", paneTitles: []), "outside a pane the heading is the only title")
     }
 
-    /// PR 35 review: the bar says "Mail" over a "Mailbox" header and "Studio"
-    /// over "Design Studio", so those printed twice as well.
+    /// PR 35 review: the bar said "Mail" over a "Mailbox" header and says "Studio"
+    /// over "Design Studio", so those printed twice as well. D212 item 4 made Mail
+    /// one name everywhere, so its bar and header are the same word.
     func test_aBarsShortNameAndTheSurfacesFullNameAreTheSameTitle() {
-        XCTAssertEqual(PaneHeading.names(forKey: "mailbox"), ["Mail", "Mailbox"])
+        XCTAssertEqual(PaneHeading.names(forKey: "mailbox"), ["Mail"])
         XCTAssertEqual(PaneHeading.names(forKey: "designStudio"), ["Studio", "Design Studio"])
-        XCTAssertTrue(PaneHeading.repeats("Mailbox", paneTitles: PaneHeading.names(forKey: "mailbox")))
+        XCTAssertTrue(PaneHeading.repeats("Mail", paneTitles: PaneHeading.names(forKey: "mailbox")))
         XCTAssertTrue(PaneHeading.repeats("Design Studio", paneTitles: PaneHeading.names(forKey: "designStudio")))
         XCTAssertFalse(PaneHeading.repeats("Launch site", paneTitles: PaneHeading.names(forKey: "designStudio")),
                        "a project's own name must still show")

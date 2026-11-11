@@ -70,9 +70,18 @@ struct CapabilityCredentialsSection: View {
 
     /// The sentence under a credential's name: the contract's own sentence, so the reason
     /// this credential exists reads in the same words the setup card used to get them here,
-    /// minus " in Settings". This row IS Settings, directly above the field (D63).
+    /// minus the place it names. This row IS where the key goes, directly above the field:
+    /// not Settings (D63), not Integrations (D135 item 6).
     static func rowLine(_ req: SetupRequirement) -> String {
         req.remediation.replacingOccurrences(of: " in Settings", with: "")
+            .replacingOccurrences(of: " in Integrations", with: "")
+    }
+
+    /// For a section on the same page that needs this credential: it names the
+    /// one row that holds it rather than asking for it again (D135 item 8).
+    static func keyLivesInCredentials(_ req: SetupRequirement) -> String {
+        let noun = req.label.hasSuffix("token") ? "token" : "key"
+        return "Its \(noun) goes in \(req.label), under Credentials on this page."
     }
 
     @ViewBuilder

@@ -220,6 +220,8 @@ final class FoundryDashboardModel: ObservableObject {
     }
 
     var pendingCount: Int { proposals.filter { $0.status == .pending }.count }
+    /// Cards with a build still to run, which the off line names (D126).
+    var buildableCount: Int { proposals.filter { $0.stage == .proposed || $0.stage == .accepted }.count }
     var ranked: [FoundryProposalCardModel] { FoundryFormat.ranked(proposals) }
 
     // Marks the card accepted, records the decision in the local timeline,

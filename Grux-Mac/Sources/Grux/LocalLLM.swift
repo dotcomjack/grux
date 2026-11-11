@@ -247,8 +247,26 @@ struct AmbientLLMResult {
 //
 // `featureTag` names the caller (ambient summary, folder classifier, and so on)
 // so a call can be identified in the local logs.
+/// W64-FIX P1-1: thrown instead of sending the transcript elsewhere when chat
+/// is set to a local model and none is running.
+enum AmbientLLMError: Error, LocalizedError {
+    case localModelNotRunning
+    var errorDescription: String? {
+        "chat is set to a local model and none is running, so nothing was sent"
+    }
+}
+
 @MainActor
 enum AmbientLLM {
+    /// W64-FIX P1-1: the fallback below sent the day's transcript to Anthropic
+    /// with a stored key when chat was set to a local model and none was
+    /// running (`resolvedProvider` turns that `.local` into `.anthropic`),
+    /// while chat refuses the same state (`ChatReadiness.offlinePinnedButNoLocalModel`).
+    /// The same rule refuses here: a reason when the call must not go out.
+    nonisolated static func fallbackRefusal(chosen: ActiveProvider, routed: ActiveProvider) -> String? {
+        ModelRegistry.localChoiceFellBack(chosen: chosen, routed: routed)
+            ? "chat is set to a local model and none is running, so nothing is sent elsewhere" : nil
+    }
     // Primary entry point: returns the text AND the provider that produced it,
     // so the caller has race-free attribution in the local logs. Callers
     // that don't care which provider answered can use `complete` below.
@@ -285,7 +303,12 @@ enum AmbientLLM {
         // hosted-Anthropic-or-nothing the moment the local Qwen companion was
         // off or unreachable. A custom-endpoint user had no path here at all.
         // Resolved ONCE, after the local attempt, never inside a loop.
-        let routing = ModelRegistry.shared.resolvedRouting(provider: nil, modelOverride: nil)
+        let registry = ModelRegistry.shared
+        if let refusal = fallbackRefusal(chosen: registry.activeProvider, routed: registry.resolvedProvider) {
+            WakeLog.shared.log("ambientLLM: \(featureTag): \(refusal)")
+            throw AmbientLLMError.localModelNotRunning
+        }
+        let routing = registry.resolvedRouting(provider: nil, modelOverride: nil)
         // The empty-model fallback is unchanged: an unset model id is a 404 on
         // any provider, so the historical default still stands in.
         let cloudModel = routing.modelId.isEmpty ? "claude-haiku-4-5-20251001" : routing.modelId

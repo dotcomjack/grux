@@ -381,10 +381,9 @@ struct ChatView: View {
             let willMute = !state.voiceMuted
             state.voiceMuted = willMute
             if willMute {
-                // Cut any in-flight ElevenLabs streaming / system TTS and drop
-                // any queued polite-nudge so muting is truly instant.
-                speech.stop(reason: "user voice-mute toggle")
-                speech.cancelPendingPoliteSpeak()
+                // Cut any in-flight ElevenLabs streaming and system voice, and
+                // drop any queued polite-nudge, so muting is truly instant.
+                speech.silenceNow(reason: "user voice-mute toggle")
             }
         } label: {
             Image(systemName: state.voiceMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
@@ -437,7 +436,11 @@ struct ChatView: View {
             .accessibilityLabel(ChatComposerSend.voiceChipLabel(state: voiceState.label, vendor: voiceVendor))
     }
 
-    private var voiceVendor: String { state.config.useElevenLabs ? "ElevenLabs" : "macOS" }
+    private var voiceVendor: String {
+        VoiceEngineLogic.vendor(useElevenLabs: state.config.useElevenLabs, hasKey: !state.elevenLabsKey.isEmpty,
+                                offline: state.offlineMode, wouldAskForMic: AudioOutput.outputWouldAskForMic,
+                                silencedBy: AudioOutput.silencedBy)
+    }
 
     private var voiceState: VoiceStateChip {
         VoiceStateChip.resolve(speakRepliesAloud: state.config.speakRepliesAloud,
@@ -1330,13 +1333,14 @@ struct ChatView: View {
             }
             if !registry.localTags.isEmpty {
                 Section("Local (free)") {
-                    ForEach(registry.localTags, id: \.self) { tag in
+                    ForEach(registry.shownLocalModels(configured: state.config.offlineLLMModel), id: \.self) { tag in
                         Button {
                             state.config.offlineLLMModel = tag
                             state.saveConfig()
                             registry.setActiveProvider(.local)
                         } label: {
-                            Text(activeModelId == tag ? "\u{2713}  \(tag)" : tag)
+                            let name = Cookbook.personName(for: tag)
+                            Text(activeModelId == tag ? "\u{2713}  \(name)" : name)
                         }
                     }
                 }
@@ -1554,11 +1558,17 @@ struct MessageBubble: View {
     /// A system message is the app reporting something that happened (a
     /// meeting saved, a recording recovered). It is not the person and it is
     /// not Grux answering, and labelling it GRUX put words in Grux's mouth.
-    static func label(for role: ChatRole) -> String {
+    ///
+    /// The assistant's bubble carries the name the model is told it has
+    /// (`AboutYou`), so it never says GRUX over "I'm Jax" (D189). A name that is
+    /// blank or would read as another side's label falls back to GRUX.
+    static func label(for role: ChatRole, assistantName: String) -> String {
         switch side(for: role) {
         case .person: return "YOU"
-        case .grux:   return "GRUX"
         case .system: return "NOTICE"
+        case .grux:
+            let name = assistantName.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+            return name.isEmpty || name == "YOU" || name == "NOTICE" ? "GRUX" : name
         }
     }
 
@@ -1572,7 +1582,7 @@ struct MessageBubble: View {
             }
             VStack(alignment: MessageBubble.side(for: message.role) == .person ? .trailing : .leading,
                    spacing: GruxSpacing.xs) {
-                Text(MessageBubble.label(for: message.role))
+                Text(MessageBubble.label(for: message.role, assistantName: UserIdentity.assistantName))
                     .font(GruxTheme.Font.microCaps).kerning(1.5)
                     .foregroundStyle(MessageBubble.side(for: message.role) == .person ? GruxTheme.accentPrimaryLight.opacity(0.8) : GruxTheme.textTertiary)
                 if let imgData = message.imageData, let nsImg = NSImage(data: imgData) {

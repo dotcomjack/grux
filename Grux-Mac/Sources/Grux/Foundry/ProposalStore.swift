@@ -158,6 +158,19 @@ final class ProposalStore: ObservableObject {
         }
     }
 
+    /// How many proposals wait for the person's review: the count Now and
+    /// Self-Upgrade's "pending" show (`FoundryViewBridge.cardStatus` reads
+    /// `.pending`). One accepted, building or verifying already has their yes.
+    static func awaitingReview(_ proposals: [UpgradeProposal]) -> Int {
+        waitingForReview(proposals).count
+    }
+
+    /// The proposals `awaitingReview` counts, in the order given; for a surface
+    /// that lists them (Home) rather than counting them.
+    static func waitingForReview(_ proposals: [UpgradeProposal]) -> [UpgradeProposal] {
+        proposals.filter { FoundryViewBridge.cardStatus($0.status) == .pending }
+    }
+
     // MARK: - Persistence
 
     // Debounced write: collapses bursts of mutations into one disk

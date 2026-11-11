@@ -12,6 +12,14 @@ extension RelevanceState {
         /// Read with the slow inputs: `ChatReadiness.current()` reads the Keychain.
         var chatNeedsModel = false
 
+        /// Chat needs a model only once the local model check has answered.
+        /// Before it, a Mac whose Grux Local is installed and chosen read as
+        /// having none, and Now said "Connect a model" for the first minute
+        /// after launch (D172).
+        static func chatNeedsModel(canSend: Bool, localChecked: Bool) -> Bool {
+            !canSend && localChecked
+        }
+
         @MainActor
         static func live(now: Date = Date()) -> SlowInputs {
             var slow = SlowInputs()
@@ -27,7 +35,8 @@ extension RelevanceState {
             slow.setupGaps = FeatureRegistry.featuresNeedingSetup.compactMap { row in
                 setupGap(for: row, missing: FeatureRegistry.unmetBlocking(of: row))
             }
-            slow.chatNeedsModel = !ChatReadiness.current().canSend
+            slow.chatNeedsModel = chatNeedsModel(canSend: ChatReadiness.current().canSend,
+                                                 localChecked: ModelRegistry.shared.localChecked)
             return slow
         }
     }

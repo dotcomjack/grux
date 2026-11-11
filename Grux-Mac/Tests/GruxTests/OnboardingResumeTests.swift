@@ -155,7 +155,7 @@ final class OnboardingResumeTests: XCTestCase {
         for stage in Stage.allCases where stage != .done {
             let saved = OnboardingModel.State(stage: stage, skippedFirstLook: false,
                                               level: .everything, skipped: ["a.b"],
-                                              path: .question, answer: "run my inbox")
+                                              path: .question, answer: "run my inbox", reviewedAFrame: false)
             Persistence.save(saved, to: url)
             let loaded = Persistence.load(OnboardingModel.State.self, from: url,
                                           fallback: .initial)

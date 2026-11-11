@@ -231,11 +231,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard flag + 1 < args.count else { fail("needs a directory") }
                 let dir = URL(fileURLWithPath: args[flag + 1], isDirectory: true)
                 do {
-                    try TrainedTools.contractData(tools).write(to: dir.appendingPathComponent("trained-tools-v3.json"))
-                    try Data(TrainedTools.tableSource(tools).utf8).write(to: dir.appendingPathComponent("TrainedToolsV3.swift"))
+                    try TrainedTools.contractData(tools).write(to: dir.appendingPathComponent("trained-tools-v4.json"))
+                    try Data(TrainedTools.tableSource(tools).utf8).write(to: dir.appendingPathComponent("TrainedToolsV4.swift"))
                     let samples = try JSONSerialization.data(withJSONObject: TrainedTools.samples(),
                                                              options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
-                    try samples.write(to: dir.appendingPathComponent("trained-tools-v3-samples.json"))
+                    try samples.write(to: dir.appendingPathComponent("trained-tools-v4-samples.json"))
                 } catch { fail(error.localizedDescription) }
                 exit(0)
             case "--dump-local-requests":
@@ -273,7 +273,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSApp.terminate(nil)
             }
         }
-        // Shell commands that would make sound obey ~/.grux/SILENT like every other sound.
+        // Shell commands that would make sound obey ~/.grux/SILENT (and HEADLESS) like every other sound.
         _ = AudioOutput.wireShellDoors
         // An agent run that fails on an expired Claude sign-in says so in Now.
         _ = ClaudeSignInState.wireAgentRunners
@@ -1426,7 +1426,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // decision for with a modal, which is precisely what ChromeTabWatcher and
         // MusicWatcher are held back for. The probe itself no longer prompts either, so
         // this is belt and braces, and the step is the one the contract already wrote for
-        // this: "Nothing is indexed until you choose."
+        // this: "Nothing from them is indexed until you choose."
         //
         // Until then the rows read "Status unknown until first run.", which is true.
         if CapabilityResolver.isSatisfied(.stepCorpusSourcesConfirmed) {
@@ -1452,8 +1452,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private var injectChatSource: DispatchSourceFileSystemObject?
-    private var injectChatFD: Int32 = -1
+    private var injectChat: InjectChatWatcher?
     private func startInjectChatWatcher() {
         let dir = Persistence.gruxDir
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -1461,23 +1460,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 0600, LIKE THE SOCKET IT SHARES A SWITCH WITH. Anything written here reaches
         // ChatService.send() and therefore a model with tools, so the file's permissions are
         // part of the security posture and not a detail. It was created with the default
-        // mask, which leaves it world readable: a line sitting in it before the 0.8 second
-        // timer picks it up was legible to any other account on the Mac.
-        if !FileManager.default.fileExists(atPath: file.path) {
-            try? "".write(to: file, atomically: true, encoding: .utf8)
-        }
-        try? FileManager.default.setAttributes([.posixPermissions: 0o600],
-                                               ofItemAtPath: file.path)
-        Timer.scheduledTimer(withTimeInterval: 0.8, repeats: true) { _ in
-            guard let text = try? String(contentsOf: file, encoding: .utf8) else { return }
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { return }
-            try? "".write(to: file, atomically: true, encoding: .utf8)
+        // mask, which leaves it world readable: a line sitting in it before Grux read it
+        // was legible to any other account on the Mac. InjectChatWatcher keeps it 0600,
+        // and reads a line the moment it is written (D113: it was a 0.8 second timer).
+        let watcher = InjectChatWatcher(file: file) { trimmed in
             WakeLog.shared.log("inject-chat: '\(trimmed)'")
             // Swarm agents report through this file (AgentService), so a line
             // here is never the person's own ask.
             Task { @MainActor in await ChatService.shared.send(userText: trimmed, initiator: .agent) }
         }
+        watcher.start()
+        injectChat = watcher
 
         // Every ~/.grux/fire-* file-drop trigger, in Triggers/AppTriggers.swift.
         // Registered here, behind the same switch as inject-chat, and armed below.

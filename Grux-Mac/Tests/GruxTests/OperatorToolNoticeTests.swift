@@ -121,6 +121,52 @@ final class OperatorToolNoticeTests: XCTestCase {
     /// Pulls every `Sources/Grux/...` path out of prose. Stops at whitespace and
     /// at the punctuation that ends a sentence, so a trailing comma or full stop
     /// is not read as part of the filename.
+    // MARK: - The chat handover (D116 item 7)
+
+    /// Every prompt asks for source read, a rebuild and a test run, which only an
+    /// agent does. Chat on its own (a local model, or a key with Agents signed out)
+    /// answers it with a reply that cannot act, so the button waits on Agents.
+    func testOpenInChatIsOfferedOnlyWhenChatAndAgentsBothWork() {
+        let ready = "Ready"
+        XCTAssertTrue(OperatorTool.offersChatHandover(chatReady: true, agentsChosen: true, agentsStatus: ready))
+        XCTAssertNil(OperatorTool.chatHandoverNote(chatReady: true, agentsChosen: true, agentsStatus: ready))
+        for status in ["Needs a Claude sign-in", "Needs 1 thing", "Needs 2 things"] {
+            XCTAssertFalse(OperatorTool.offersChatHandover(chatReady: true, agentsChosen: true, agentsStatus: status),
+                           "chat was offered a code rebuild while Agents reads \(status)")
+        }
+        XCTAssertFalse(OperatorTool.offersChatHandover(chatReady: true, agentsChosen: false, agentsStatus: ready),
+                       "chat was offered a code rebuild with Agents turned off")
+        for chosen in [true, false] {
+            XCTAssertFalse(OperatorTool.offersChatHandover(chatReady: false, agentsChosen: chosen, agentsStatus: ready))
+            // With chat not usable, copying is the whole story; no second dead end.
+            XCTAssertNil(OperatorTool.chatHandoverNote(chatReady: false, agentsChosen: chosen, agentsStatus: ready))
+        }
+    }
+
+    func testTheNoteSaysWhatAgentsStillNeeds() {
+        XCTAssertEqual(OperatorTool.chatHandoverNote(chatReady: true, agentsChosen: true,
+                                                     agentsStatus: "Needs a Claude sign-in"),
+                       "Grux chat can make this change once Agents can run. Agents needs a Claude sign-in.")
+        XCTAssertEqual(OperatorTool.chatHandoverNote(chatReady: true, agentsChosen: true,
+                                                     agentsStatus: "Needs 2 things"),
+                       "Grux chat can make this change once Agents can run. Agents needs 2 things.")
+        XCTAssertEqual(OperatorTool.chatHandoverNote(chatReady: true, agentsChosen: false,
+                                                     agentsStatus: "Ready"),
+                       "Grux chat can make this change once Agents can run. Agents is turned off.")
+    }
+
+    /// The view asks the rule above with this Mac's answers, not the chat tab alone.
+    func testTheViewGatesTheButtonOnTheRule() throws {
+        let src = try String(contentsOf: Self.packageRoot()
+            .appendingPathComponent("Sources/Grux/Onboarding/OperatorToolNotice.swift"), encoding: .utf8)
+        XCTAssertTrue(src.contains("if OperatorTool.offersChatHandover("),
+                      "the Open in Grux chat button is not gated on offersChatHandover")
+        XCTAssertTrue(src.contains("OperatorTool.chatHandoverNote("),
+                      "the view never shows why the chat handover is missing")
+        XCTAssertTrue(src.contains("YourGrux.status(\"agents\")"),
+                      "the view does not read Agents' status from the rule first run uses")
+    }
+
     static func sourcePaths(in text: String) -> [String] {
         var out: [String] = []
         for token in text.split(whereSeparator: { $0 == " " || $0 == "\n" || $0 == "\t" }) {

@@ -299,7 +299,11 @@ final class FirstRunQuestionPathTests: XCTestCase {
     func test_howGruxWorksSaysWhatListeningIsIn30() throws {
         let steps = try source("Sources/Grux/Onboarding/OnboardingSteps.swift")
         XCTAssertFalse(steps.contains("Two voice features ship switched off"), "the 2.x listening line is back")
-        let line = try XCTUnwrap(steps.components(separatedBy: "point(\"What is off until you say so\",").dropFirst().first).prefix(900)
+        // D166 item 4: the screen draws `HowItWorksStep.parts`, so the line is read from there.
+        let line = try XCTUnwrap(HowItWorksStep.parts.compactMap { part -> String? in
+            if case .point(let p) = part, p.title == "What is off until you say so" { return p.body }
+            return nil
+        }.first, "the listening point is not on the screen")
         for phrase in ["Listening is off until you turn it on", "Ambient mode", "wake word", "Tuning", "never leaves this Mac"] {
             XCTAssertTrue(line.contains(phrase), "the listening line lost \"\(phrase)\"")
         }

@@ -1,4 +1,5 @@
 import Foundation
+import GruxAgentCore
 
 // SymbolCollisionScanner: the offline, deterministic half of the quality gate's
 // duplication defense. It catches the failure that produced "CognitiveMap" vs
@@ -168,7 +169,7 @@ enum SymbolCollisionScanner {
         let pipe = Pipe(); p.standardOutput = pipe; p.standardError = Pipe()
         do { try p.run() } catch { return "" }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        p.waitUntilExit()
+        p.waitForExitBlocking()
         return String(data: data, encoding: .utf8) ?? ""
     }
 }

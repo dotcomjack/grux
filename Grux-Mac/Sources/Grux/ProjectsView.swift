@@ -125,6 +125,7 @@ struct ProjectsView: View {
             Text("Projects").font(GruxType.title)
                 .lineLimit(1)
                 .fixedSize()
+                .unlessPaneTitle("Projects")
             if let snap = obs.snapshot {
                 sourcePill(snap)
             }
@@ -154,13 +155,41 @@ struct ProjectsView: View {
         .buttonStyle(.borderless)
     }
 
+    enum PillTone: Equatable { case live, local, cached, fault }
+
+    /// The header pill, as data. It read a red "offline" on every Mac that
+    /// never set a registry up, right above the empty state's "nothing here
+    /// is broken without it" (D179 item 7). Red is kept for a registry the
+    /// person named in projects-service.json that did not answer; with none
+    /// named, projects come from this Mac's folders, which is not a fault.
+    static func sourcePillCopy(source: RegistryFetchResult.Source, registryConfigured: Bool,
+                               fetchedAgo: String) -> (label: String, tone: PillTone) {
+        switch source {
+        case .macMini:   return ("live · remote host", .live)
+        case .localhost: return ("live · localhost", .live)
+        case .cache:     return ("cached · \(fetchedAgo)", .cached)
+        case .empty:
+            return registryConfigured ? ("registry not answering", .fault) : ("this Mac's folders", .local)
+        }
+    }
+
+    /// The empty state's "nothing here is broken" note holds only when no
+    /// registry was set up; with one set up and silent, the pill says so.
+    static func registryMissing(source: RegistryFetchResult.Source, registryConfigured: Bool) -> Bool {
+        source == .empty && !registryConfigured
+    }
+
     private func sourcePill(_ snap: ProjectsIndex.Snapshot) -> some View {
-        let (label, color): (String, Color) = {
-            switch snap.registrySource {
-            case .macMini:   return ("live · remote host", .green)
-            case .localhost: return ("live · localhost", .blue)
-            case .cache:     return ("cached · \(relativeTime(snap.registryFetchedAt))", .orange)
-            case .empty:     return ("offline", .red)
+        let copy = Self.sourcePillCopy(source: snap.registrySource,
+                                       registryConfigured: !ProjectRegistryClient.configuredBases.isEmpty,
+                                       fetchedAgo: relativeTime(snap.registryFetchedAt))
+        let label = copy.label
+        let color: Color = {
+            switch copy.tone {
+            case .live:   return snap.registrySource == .localhost ? .blue : .green
+            case .local:  return .secondary
+            case .cached: return .orange
+            case .fault:  return .red
             }
         }()
         return HStack(spacing: GruxSpacing.xs) {
@@ -224,7 +253,8 @@ struct ProjectsView: View {
     }
 
     private func emptyState(snap: ProjectsIndex.Snapshot) -> some View {
-        let copy = Self.emptyCopy(registryMissing: snap.registrySource == .empty)
+        let copy = Self.emptyCopy(registryMissing: Self.registryMissing(
+            source: snap.registrySource, registryConfigured: !ProjectRegistryClient.configuredBases.isEmpty))
         return VStack(spacing: GruxSpacing.m) {
             Image(systemName: "tray")
                 .font(.system(size: 40))
@@ -248,9 +278,7 @@ struct ProjectsView: View {
     // MARK: - Helpers
 
     private func relativeTime(_ d: Date) -> String {
-        let f = RelativeDateTimeFormatter()
-        f.unitsStyle = .short
-        return f.localizedString(for: d, relativeTo: Date())
+        RelativeStamp.string(for: d)
     }
 }
 

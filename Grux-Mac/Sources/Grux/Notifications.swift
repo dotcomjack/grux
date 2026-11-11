@@ -62,7 +62,11 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
 
     func requestAuthorization() {
         UNUserNotificationCenter.current().delegate = self
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
+        // Records what macOS answered: the cached grant every setup card and
+        // Settings read had no writer at launch, so it read "not allowed" forever.
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in
+            CapabilityResolver.refreshNotificationStatus()
+        }
         registerCategories()
     }
 
@@ -139,9 +143,9 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
     func sendAgentPaused(jobId: String, title: String, accountLabel: String?) {
         let body: String
         if let acct = accountLabel, !acct.isEmpty {
-            body = "Anthropic monthly limit hit on \(acct). Tap to switch accounts and resume."
+            body = "Anthropic monthly limit hit on \(acct). Click to switch accounts and resume."
         } else {
-            body = "Anthropic monthly limit hit. Tap to switch accounts and resume."
+            body = "Anthropic monthly limit hit. Click to switch accounts and resume."
         }
         // actionRequired: a paused swarm blocks until the user acts, so this
         // interrupts even when agentLifecycle's base policy is batch/silent
@@ -270,7 +274,7 @@ final class NotificationManager: NSObject, UNUserNotificationCenterDelegate {
         route(.emailTriage, TriageEnvelope(
             identifier: "grux.support.\(UUID().uuidString)",
             title: newCount == 1 ? "1 new support draft" : "\(newCount) new support drafts",
-            body: "\(totalWaiting) waiting. Tap to review and send.",
+            body: "\(totalWaiting) waiting. Click to review and send.",
             userInfo: ["kind": "supportDrafts"]
         ))
     }

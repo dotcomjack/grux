@@ -387,6 +387,7 @@ struct FoldersManagementView: View {
         HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Folders").font(GruxType.title).foregroundStyle(GruxTheme.textPrimary)
+                    .unlessPaneTitle("Folders")
                 Text("Organize meetings and memories. The description steers Grux's AI auto-filer.")
                     .font(.caption)
                     .foregroundStyle(.secondary)

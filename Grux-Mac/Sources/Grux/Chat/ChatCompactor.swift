@@ -32,6 +32,15 @@ enum ChatCompactor {
 
     // MARK: - Public API
 
+    // What a thread keeps once its summary is in (D144): everything it holds
+    // NOW except the messages the summary folded. A summary on a local model
+    // can take most of a minute, and a list chosen before it started would
+    // write over every turn sent while it ran.
+    static func kept(afterSummary latest: [ChatMessage], folded: [ChatMessage]) -> [ChatMessage] {
+        let foldedIDs = Set(folded.map(\.id))
+        return latest.filter { !foldedIDs.contains($0.id) }
+    }
+
     // Best-effort summary of `messages`, optionally folded into an existing
     // prior summary. Returns nil when the call fails (missing key, network,
     // non-2xx, etc.) - callers keep the old summary in that case.
@@ -75,6 +84,11 @@ enum ChatCompactor {
     // person said instead. Measured 2026-10-27 on a 16 GB Mac mini, before
     // that difference existed: no title came back on 49 of 50 turns and the
     // call ran again after every reply, 1.27 s of the local model each time.
+    // The title names what the person asked about, in their own words. It is
+    // handed only their lines (`buildTitlePayload`), because handed Grux's
+    // replies it named those: "weather and task assistant" over a person who
+    // asked "What can you do?" (sense pass 31, 2026-11-09).
+    static let titleSystemPrompt = "Pick a crisp 2 to 5 word title naming what the person asked about, using their own words. Lowercase ok. No quotes, no trailing period. Output ONLY the title."
     static func generateTitle(
         messages: [ChatMessage],
         backend: ModelBackend,
@@ -82,7 +96,7 @@ enum ChatCompactor {
         apiKey: String
     ) async -> String? {
         let payload = buildTitlePayload(messages: messages)
-        let system = "Pick a crisp 2 to 5 word title for the chat below. Lowercase ok. No quotes, no trailing period. Output ONLY the title."
+        let system = titleSystemPrompt
 
         do {
             let reply = try await backend.completeShortAnswer(
@@ -147,14 +161,14 @@ enum ChatCompactor {
         }
     }
 
-    // Build the title-prompt payload from the first 6 turns. Single-newline
-    // separated so the model sees a tight conversation, not a sparse one.
+    // Build the title-prompt payload from the person's first 6 messages, and
+    // only theirs: a title names what they asked, never Grux's reply. Single
+    // newline separated so the model sees a tight list, not a sparse one.
     static func buildTitlePayload(messages: [ChatMessage]) -> String {
-        let lines = messages.prefix(6).map { m -> String in
-            let who = m.role == .user ? "User" : "Grux"
-            return "\(who): \(m.content)"
+        let lines = messages.filter { $0.role == .user }.prefix(6).map { m -> String in
+            "User: \(m.content)"
         }.joined(separator: "\n")
-        return "CHAT:\n\(lines)\n\nTitle:"
+        return "THE PERSON WROTE:\n\(lines)\n\nTitle:"
     }
 
     // Strip wrapping quotes / trailing periods, cap length at 60 chars, and

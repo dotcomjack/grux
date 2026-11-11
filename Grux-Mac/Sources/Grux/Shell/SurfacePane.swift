@@ -29,7 +29,7 @@ struct SurfacePane: View {
                 // key opens Chat with Skills open. One clause, so moving
                 // between the two never rebuilds the conversation.
                 case .chat, .skills: ChatView(opensSkills: selection == .skills).capabilityGated("chat")
-                case .jaxHQ: JaxHQView().capabilityGated("jaxHQ")
+                case .jaxHQ: JaxHQView().capabilityGated("jaxHQ", keepsUnneededPartsLive: true)
                 case .jaxCommand: JaxCommandView().capabilityGated("jaxCommand")
                 case .cognitionMap: CognitionMapView().capabilityGated("cognitionMap")
                 case .featureReview: FeatureReviewView().capabilityGated("featureReview")

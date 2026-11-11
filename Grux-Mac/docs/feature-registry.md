@@ -174,7 +174,7 @@ becomes a change request. Feature Review and Self-Upgrade are both in that categ
 | `cognition.map` | Cognition Map | core | none | `key.anthropic` | none | none |
 | `feature.review` | Feature Review | labs | none | `key.anthropic` | none | none |
 | `projects` | Projects | core | none | `endpoint.registry` | none | none |
-| `tasks` | Task Stack | core | none | none | none | none |
+| `tasks` | Tasks | core | none | none | none | none |
 | `agents` | Agents | labs | none | none | `step.agent_cli_installed`, `step.terminal_sessions_explained` | none |
 
 **Notes.**
@@ -287,7 +287,7 @@ is `labs`.
 
 | id | label | tier | requires | optional | steps (blocking) | optionalSteps (degrading) |
 |---|---|---|---|---|---|---|
-| `mailbox` | Mailbox | core | `endpoint.imap` | `endpoint.microsoft_graph` | none | none |
+| `mailbox` | Mail | core | `endpoint.imap` | `endpoint.microsoft_graph` | none | none |
 | `mailbox.compose` | Compose and send | labs | `key.resend`, `endpoint.imap` | none | none | none |
 | `calendar` | Calendar | core | `perm.calendar` | none | none | none |
 | `notes` | Notes | core | none | none | none | none |
@@ -390,7 +390,7 @@ private host, and `LocalLLM.swift:351` reports to the hardcoded analytics token.
 
 | id | label | tier | requires | optional | steps (blocking) | optionalSteps (degrading) |
 |---|---|---|---|---|---|---|
-| `research` | Research | core | `key.brave`, `key.anthropic` | none | none | none |
+| `research` | Research | core | `key.brave`, 1 of {`key.anthropic`, `endpoint.ollama`} | none | none | none |
 | `skills` | Skills | core | none | none | none | none |
 | `compare` | Compare | core | `key.anthropic`, `endpoint.ollama` | none | none | none |
 | `cookbook` | Local Models | core | none | `endpoint.ollama` | none | none |
@@ -530,6 +530,23 @@ floating overlay, its hotkey, the coding agent hook it installed, its Settings s
 and its sidebar key are gone, and its one setup step, installing the terminal hook, left
 the contract with it. Grux still reads Claude Code session logs, for the Workday log. The Sessions
 pane it shared Settings with stays: that is the session engine, a different feature.
+
+**Amended 2026-10-31, CR-40. `research` requires the web search key and one of the
+Anthropic key or a local model, as `chat` and `design.studio` do; and a setup card may
+carry a feature's own line for an item.**
+
+The CR-38 defect one row along. `Research/DeepResearchEngine.swift` resolves all three
+model calls through `ModelRegistry.resolvedRouting` and gates only on the web research
+switch, a Brave key and a non-empty route key, which a local route fills with its
+placeholder. So an install whose chat runs on a local model was shown "Research needs 2
+more things" with an Anthropic key among them (loop row D100).
+
+The card half (loop row D96): the contract sentence for `key.anthropic` ends "Chat also
+runs on a local model with no key", true on Chat's card and wrong on every other. Focus
+log's vision call is pinned to Anthropic, so there the sentence offered a stand-in that
+does not exist and never said why the key is needed. `FeatureRegistry.cardLines` holds a
+feature's own sentence for such an item, under the same 140 character cap, and the card
+reads it before the contract sentence. The contract sentences are unchanged.
 
 **Amended 2026-09-22, CR-38. `design.studio` requires one of the Anthropic key or a
 local model, exactly as `chat` does since CR-33.**

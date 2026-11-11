@@ -170,9 +170,7 @@ enum TodayModel {
         var out: [WatchItem] = []
         if let task = w.focusTask, !task.isEmpty {
             // Watching and drift are claimed only while the watcher samples (D44).
-            // A "no task" skip beside a task is from a tick before the task was set: stale.
-            let watched = w.focusWatched == .no(because: FocusWatcher.Skip.noTask.line) ? .unknown : w.focusWatched
-            switch watched {
+            switch focusReading(w) {
             case .yes:
                 out.append(WatchItem(id: "focus", icon: "scope",
                                      line: w.drifting ? "Focusing on \(task), and you have drifted" : "Focusing on \(task)",
@@ -206,6 +204,21 @@ enum TodayModel {
         return out
     }
 
+    /// The focus reading the card goes by. A "no task" skip beside a task is
+    /// from a tick before the task was set: stale, so nothing is known.
+    private static func focusReading(_ w: WatchInput) -> FocusWatched {
+        w.focusWatched == .no(because: FocusWatcher.Skip.noTask.line) ? .unknown : w.focusWatched
+    }
+
+    /// The card's title, from the same reading as its focus line (D101). It
+    /// read a fixed "Watching" above "Not watched: macOS has not allowed screen
+    /// recording." A named task the watcher is not sampling is kept track of,
+    /// not watched.
+    static func watchingTitle(_ w: WatchInput) -> String {
+        guard let task = w.focusTask, !task.isEmpty, focusReading(w) != .yes else { return Copy.watchingTitle }
+        return Copy.trackingTitle
+    }
+
     /// The watcher's state in the order the foot and the Focus log read it: paused, then
     /// screen access, then the watcher's own last skip.
     static func focusWatched(shown: PanelCopy.WatchingState, skip: FocusWatcher.Skip?) -> FocusWatched {
@@ -235,9 +248,9 @@ enum TodayModel {
         case .armed:    return "Just say it. Grux is listening, no wake word needed."
         case .speaking: return "Grux is talking. Say something to answer."
         case .thinking: return "Grux is working on what you asked."
-        case .muted:    return "Your microphone is muted. Tap the orb to just say it."
+        case .muted:    return "Your microphone is muted. Click the orb to just say it."
         case .off:      return "Listening is off. Turn it on in Tuning to just say it."
-        case .notHearing: return "Grux can't hear your microphone right now. Tap the orb to try again."
+        case .notHearing: return "Grux can't hear your microphone right now. Click the orb to try again."
         case .waiting:  return "Listening is on, and waits for your OK before the microphone opens."
         }
     }
@@ -248,6 +261,8 @@ enum TodayModel {
         static let nextEmpty = "Nothing on the calendar and no open tasks. Add a task, or just say what you want to do."
         static let mailEmpty = "Nothing in your mail needs you right now."
         static let mailNoAccount = "Connect a mailbox and Grux shows only the mail that needs a reply."
+        static let watchingTitle = "Watching"
+        static let trackingTitle = "Keeping track"
         static let watchingEmpty = "Nothing running in the background. When Grux works on something for you, it shows up here."
     }
 }

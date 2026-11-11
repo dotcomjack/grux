@@ -91,8 +91,10 @@ final class ChatCompactorTests: XCTestCase {
 
     // MARK: - buildTitlePayload
 
+    // The title payload carries the person's first six messages and none of
+    // Grux's (D210 item 1: handed Grux's replies, the title named them).
     func test_buildTitlePayload_capsAtSixTurns() {
-        let messages = (0..<10).map { msg($0.isMultiple(of: 2) ? .user : .assistant, "msg\($0)") }
+        let messages = (0..<10).map { msg(.user, "msg\($0)") }
         let payload = ChatCompactor.buildTitlePayload(messages: messages)
         XCTAssertTrue(payload.contains("msg0"))
         XCTAssertTrue(payload.contains("msg5"))
@@ -100,19 +102,27 @@ final class ChatCompactorTests: XCTestCase {
         XCTAssertFalse(payload.contains("msg9"))
     }
 
+    func test_buildTitlePayload_skipsGruxTurns() {
+        let messages = (0..<10).map { msg($0.isMultiple(of: 2) ? .user : .assistant, "msg\($0)") }
+        let payload = ChatCompactor.buildTitlePayload(messages: messages)
+        for i in stride(from: 0, to: 10, by: 2) { XCTAssertTrue(payload.contains("msg\(i)")) }
+        for i in stride(from: 1, to: 10, by: 2) { XCTAssertFalse(payload.contains("msg\(i)")) }
+    }
+
     func test_buildTitlePayload_singleNewlineSeparated() {
         let payload = ChatCompactor.buildTitlePayload(messages: [
             msg(.user, "a"),
-            msg(.assistant, "b")
+            msg(.assistant, "b"),
+            msg(.user, "c")
         ])
         let lines = payload
-            .replacingOccurrences(of: "CHAT:\n", with: "")
+            .replacingOccurrences(of: "THE PERSON WROTE:\n", with: "")
             .replacingOccurrences(of: "\n\nTitle:", with: "")
             .components(separatedBy: "\n")
         XCTAssertEqual(lines.count, 2)          // single newline between turns, not a blank line
         XCTAssertTrue(lines[0].hasSuffix(": a"))
-        XCTAssertTrue(lines[1].hasSuffix(": b"))
-        XCTAssertNotEqual(speaker(lines[0]), speaker(lines[1]))
+        XCTAssertTrue(lines[1].hasSuffix(": c"))
+        XCTAssertEqual(speaker(lines[0]), speaker(lines[1]))
     }
 
     // MARK: - cleanTitle

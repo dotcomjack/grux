@@ -40,6 +40,11 @@ struct SynthesisOutcome: Equatable, Sendable {
 }
 
 enum ProposalSynthesizer {
+    // The tier every proposal is filed at. A lane's earned tier is capped by it
+    // (`FoundryEngine.shouldAutoLand`), so at TIER 0 every proposal waits for a
+    // person's OK; first run's tier card reads it too (`HowItWorksCopy.autonomy`).
+    static let filedTier: TrustTier = .propose
+
 
     static let maxPerPass = 8
     static let maxOpen = 16
@@ -278,7 +283,7 @@ enum ProposalSynthesizer {
             out.append(UpgradeProposal(
                 title: title, lane: lane, domain: domain, evidence: evidence,
                 expectedGain: gain, riskClass: risk, estCostLabel: "$\(usd) estimated",
-                tierRequired: .propose, createdAt: now, updatedAt: now,
+                tierRequired: filedTier, createdAt: now, updatedAt: now,
                 readyPrompt: brief + "\n\n" + briefRules, touchedPaths: paths))
         }
         let kept = Array(out.sorted { $0.expectedGain > $1.expectedGain }.prefix(max(0, limit)))
@@ -372,7 +377,7 @@ enum ProposalSynthesizer {
         let killer = DispatchWorkItem { if p.isRunning { p.terminate() } }
         DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: killer)
         let data = capture ? out.fileHandleForReading.readDataToEndOfFile() : Data()
-        p.waitUntilExit()
+        p.waitForExitBlocking()
         killer.cancel()
         return (p.terminationStatus == 0, String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
     }

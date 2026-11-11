@@ -36,7 +36,7 @@ public struct SwarmWorkerSpec: Codable, Identifiable, Sendable {
     public var dependsOn: [String]     // ids of workers that must finish first
     public var model: String           // coding model, e.g. SubscriptionModels.code
     public var maxTurns: Int?          // optional hard cap, unset = unbounded
-    public var budgetUSD: Double       // hard stop on cost
+    public var budgetUSD: Double       // planned usage, shown; not enforced (no --max-budget-usd)
     public var allowedTools: [String]?  // nil = default; explicit list narrows
     public var status: Status
     public var startedAt: Date?

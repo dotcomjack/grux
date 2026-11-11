@@ -146,12 +146,12 @@ struct EnergyRecapView: View {
                 }
                 Spacer()
                 if expandedProject != nil {
-                    Text("tap chip to close")
+                    Text("click the chip to close")
                         .font(.system(size: 9, weight: .medium, design: .monospaced))
                         .kerning(1.2)
                         .foregroundStyle(.tertiary)
                 } else if !data.topProjects.isEmpty {
-                    Text("tap a chip to dive in")
+                    Text("click a chip to dive in")
                         .font(.system(size: 9, weight: .medium, design: .monospaced))
                         .kerning(1.2)
                         .foregroundStyle(.tertiary)

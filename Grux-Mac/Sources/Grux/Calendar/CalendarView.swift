@@ -311,7 +311,7 @@ struct CalendarView: View {
         GruxEmptyState(
             icon: "calendar.badge.exclamationmark",
             line: "Calendar access is off",
-            detail: "Enable Grux in System Settings > Privacy & Security > Calendars, then come back.",
+            detail: "Turn on Grux AI in System Settings > Privacy & Security > Calendars, then come back.",
             ctaTitle: "Open System Settings",
             ctaAction: {
                 if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars") {

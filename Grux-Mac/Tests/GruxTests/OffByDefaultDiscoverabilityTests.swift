@@ -71,6 +71,9 @@ final class OffByDefaultDiscoverabilityTests: XCTestCase {
         "listeningBannerExplained": OffFeature(
             introducedAtFirstRun: nil,
             reason: "Not a feature. A once-per-device latch that records whether the explanatory banner preceding the first spoken-command banner has been shown. There is nothing for a user to discover or turn on; the banner itself is the introduction."),
+        "answeredWithoutModel": OffFeature(
+            introducedAtFirstRun: nil,
+            reason: "Not a feature. A mark on one of the person's chat messages saying Grux answered it itself with no model, so a chat holding only such turns still counts as fresh for \"What can you do for me?\". It lives on ChatMessage, not in the config; there is nothing for a user to discover or turn on."),
         "musicDuckingEnabled": OffFeature(
             introducedAtFirstRun: nil,
             reason: "A refinement of how Grux speaks, and it lives directly under the spoken-replies toggles that ARE the introduction. Off because turning it on is what sends the first Apple event to Music, which macOS answers with a consent dialog; nothing in the app had ever said Grux touches Music."),
@@ -82,7 +85,7 @@ final class OffByDefaultDiscoverabilityTests: XCTestCase {
             reason: "A sub-setting of ambient mode with nothing to read until ambient is on, and ambient IS introduced. It sits in the ambient section under a paragraph saying both nightly passes send the transcript to a model. Off because it keeps notes about OTHER PEOPLE by name, and it had no switch of any kind before the first-run audit."),
         "spokenBriefingsEnabled": OffFeature(
             introducedAtFirstRun: nil,
-            reason: "Sits directly under the spoken-replies toggles that ARE the introduction, in the same Settings section. Not named at first run because it needs a mail account to have anything to say and the mail step is the LAST thing the flow offers, so at the point it could be described there is nothing yet to describe."),
+            reason: "Sits directly under the spoken-replies toggles that ARE the introduction, in the same Settings section. Not named at first run because its 7 AM and 9 PM schedule waits for a mail account and the mail step is the LAST thing the flow offers, so at the point it could be described there is nothing yet to describe."),
         "foundryEnabled": OffFeature(
             introducedAtFirstRun: nil,
             reason: "The self-upgrade loop. Off is what the contract has said all along (`grux.foundry.enabled`, \"CR-20, the self-upgrade loop, off by default\"); the flag is new because nothing implemented it and the governor ran unconditionally. Not introduced at first run because it proposes changes to a Grux the person has not used yet, so there is nothing for it to have learned."),

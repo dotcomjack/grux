@@ -82,7 +82,10 @@ def parse_markdown_table_rows(text: str, header_contains: list[str]) -> list[lis
         if not stripped.startswith("|"):
             in_table = False
             continue
-        cells = [c.strip() for c in stripped.strip("|").split("|")]
+        # A cell may hold a pipe escaped as markdown writes it, `\|` (the agent tool's
+        # install line, `curl ... | bash`): split only on bare pipes, then unescape.
+        inner = stripped[1:-1] if stripped.endswith("|") and not stripped.endswith("\\|") else stripped[1:]
+        cells = [c.strip().replace("\\|", "|") for c in re.split(r"(?<!\\)\|", inner)]
         lowered = " ".join(cells).lower()
         if all(h in lowered for h in header_contains):
             in_table = True

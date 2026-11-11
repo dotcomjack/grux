@@ -77,6 +77,30 @@ final class PermissionsSectionReachabilityTests: XCTestCase {
             + "Recording. It no longer does, so it needs its own row.")
     }
 
+    /// D192 item 5: the omitted permission is still named on the panel. A
+    /// stranger who read "System audio capture" in the README, or saw Meetings
+    /// ask for it, found no such row; the row whose switch grants it says so.
+    func testThePermissionMacOSBundlesIsNamedUnderTheRowThatGrantsIt() throws {
+        let omitted = SetupRequirement.allCases.filter {
+            $0.rawValue.hasPrefix("perm.") && !CapabilityRequest.onboardingOrder.contains($0)
+        }
+        XCTAssertFalse(omitted.isEmpty)
+        for req in omitted {
+            let carriers = CapabilityRequest.onboardingOrder.filter {
+                PermissionsSection.alsoCovers($0)?.contains(req.label) == true
+            }
+            XCTAssertEqual(carriers, [.permScreenRecording],
+                           "\(req.label) should be named under exactly the row whose switch grants it")
+        }
+        XCTAssertEqual(PermissionsSection.alsoCovers(.permScreenRecording),
+                       "The same switch is System audio capture, so Meetings can hear the other side of a call.")
+        for req in CapabilityRequest.onboardingOrder where req != .permScreenRecording {
+            XCTAssertNil(PermissionsSection.alsoCovers(req), req.rawValue)
+        }
+        let e = try XCTUnwrap(entry)
+        XCTAssertTrue(e.matches("system audio"), "searching for system audio finds the panel")
+    }
+
     /// Proves the search matcher can fail, so the assertions above mean
     /// something. A matcher that returns true for everything would pass every
     /// test in this file.

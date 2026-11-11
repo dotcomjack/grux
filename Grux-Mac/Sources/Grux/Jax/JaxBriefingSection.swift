@@ -25,6 +25,11 @@ struct JaxBriefingSection: View {
         }
     }
 
+    /// "spoken 3:00 PM" only for a briefing a speaker played (D117).
+    static func stamp(_ briefing: Briefing) -> String {
+        (briefing.spoken == true ? "spoken " : "written ") + JaxTime.clock(briefing.date)
+    }
+
     private func content(_ briefing: Briefing) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
@@ -34,7 +39,7 @@ struct JaxBriefingSection: View {
                 Text(briefing.slot.kicker)
                     .font(GruxTheme.Font.microCaps).kerning(1.2)
                     .foregroundStyle(GruxTheme.accentCo)
-                Text("spoken \(JaxTime.clock(briefing.date))")
+                Text(Self.stamp(briefing))
                     .font(GruxTheme.Font.caption)
                     .foregroundStyle(GruxTheme.textTertiary)
                 Spacer()

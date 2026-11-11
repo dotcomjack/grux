@@ -28,13 +28,13 @@ final class FileNamingDiscoverabilityTests: XCTestCase {
         let start = try XCTUnwrap(steps.range(of: "struct HowItWorksStep"),
                                   "control: HowItWorksStep moved, so this test is aimed at the wrong place")
         let screen = String(steps[start.upperBound...])
-        XCTAssertTrue(screen.contains("point(\"Screen control is off too\""),
+        XCTAssertTrue(screen.contains("Wayfinding(title: \"Screen control is off too\""),
                       "control: the scan cannot see the screen control point it sits beside")
-        XCTAssertTrue(screen.contains("point(\"Files can name themselves\""),
+        XCTAssertTrue(screen.contains("Wayfinding(title: \"Files can name themselves\""),
                       "How Grux works never names Files that name themselves")
         // The off state, in the same breath: off until Settings, on this Mac,
         // and what it will never do.
-        let line = try XCTUnwrap(screen.components(separatedBy: "point(\"Files can name themselves\",")
+        let line = try XCTUnwrap(screen.components(separatedBy: "Wayfinding(title: \"Files can name themselves\",")
             .dropFirst().first).prefix(700)
         for phrase in ["stays off until you turn it on in Settings", "this Mac", "never moves a file",
                        "never renames one you named yourself", "undone"] {

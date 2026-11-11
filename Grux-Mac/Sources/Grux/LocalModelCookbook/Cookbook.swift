@@ -53,6 +53,72 @@ enum ModelFit: String, Codable {
 
 enum Cookbook {
 
+    // MARK: Card words
+
+    /// The line under the hardware card naming the pick. The card for that model
+    /// shows its pull tag under TAG, so this line does not repeat it (D108).
+    static func recommendedLine(_ pick: CookbookModel) -> String {
+        "Recommended: \(pick.displayName) \(pick.parameterLabel)"
+    }
+
+    /// The line under the pick naming the local model set for Grux, when that is not
+    /// the pick. Its own card says Selected, but further down the list, out of view,
+    /// so the top of the pane read as if nothing was in use (D115). It names the
+    /// setting and claims nothing about chat: with a Claude key or a custom endpoint
+    /// chat goes elsewhere. Nothing when the model is the pick, is not on this Mac,
+    /// or none is set.
+    static func inUseLine(configured: String, installed: Bool, headline: CookbookModel?) -> String? {
+        let id = configured.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !id.isEmpty, installed else { return nil }
+        if let headline, headline.id.lowercased() == id.lowercased() { return nil }
+        return "Your local model: \(personName(for: id))"
+    }
+
+    /// A model as a person reads it: "Grux Local 2B" for a catalog model, the
+    /// tag itself for one the catalog does not know (D111).
+    static func personName(for id: String) -> String {
+        guard let known = catalog.first(where: { $0.id.lowercased() == id.lowercased() }) else { return id }
+        return "\(known.displayName) \(known.parameterLabel)"
+    }
+
+    /// One name per model a local server holds (D130): Ollama lists every name a
+    /// model was pulled or copied under, sharing one digest. Each model is shown
+    /// once, by the configured name, else the catalog id, else a name that is not
+    /// ":latest", else the first; in the server's order. Names without a digest
+    /// stand alone.
+    static func shownLocalModels(_ tags: [String], digests: [String: String],
+                                 configured: String) -> [String] {
+        var order: [String] = []
+        var groups: [String: [String]] = [:]
+        for tag in tags {
+            let key = digests[tag].map { "digest:" + $0 } ?? "name:" + tag
+            if groups[key] == nil { order.append(key); groups[key] = [] }
+            if !(groups[key] ?? []).contains(tag) { groups[key]?.append(tag) }
+        }
+        let wanted = configured.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let catalogIds = Set(catalog.map { $0.id.lowercased() })
+        return order.compactMap { key in
+            let names = groups[key] ?? []
+            return names.first { !wanted.isEmpty && $0.lowercased() == wanted }
+                ?? names.first { catalogIds.contains($0.lowercased()) }
+                ?? names.first { !$0.lowercased().hasSuffix(":latest") }
+                ?? names.first
+        }
+    }
+
+    /// The Context chip: the window Grux runs the model at on this Mac
+    /// (`LocalTurn.contextTokens`), or the model's own maximum when that is smaller.
+    /// The Memory chip beside it was measured at Grux's window, so the model's
+    /// maximum (256K for Grux Local) beside it promised a context in that memory
+    /// that this Mac never runs (D108).
+    static func contextChip(modelTokens: Int, macTokens: Int) -> String {
+        label(tokens: min(modelTokens, macTokens))
+    }
+
+    private static func label(tokens: Int) -> String {
+        tokens >= 1024 ? "\(tokens / 1024)K" : "\(tokens)"
+    }
+
     // Curated catalog, smallest to largest.
     //
     // REFRESHED 2026-08-21, and the previous list is why this comment exists. It
@@ -182,7 +248,9 @@ enum Cookbook {
         CookbookModel(
             id: "qwen3-vl:4b", displayName: "Qwen 3 VL", parameterLabel: "4B",
             diskGB: 3.3, estimatedMemoryGB: 6.0, contextTokens: 262_144,
-            strengths: "Reads screenshots and images, small enough for any Mac",
+            // D190: Grux shows it pictures attached in Chat; Focus log and
+            // read-my-screen are pinned to Claude (FocusVisionTruthTests).
+            strengths: "Reads pictures you attach in Chat; Focus log and screen questions use Claude",
             supportsTools: true,
             measuredQuality: 0.490, qualitySource: Cookbook.s1,
             minimumOllama: "0.30.0"),
@@ -190,7 +258,7 @@ enum Cookbook {
             id: "qwen3.5:4b", displayName: "Qwen 3.5", parameterLabel: "4B",
             // estimatedMemoryGB measured, see MEASURED FOOTPRINTS above the catalog
             diskGB: 3.4, estimatedMemoryGB: 4.4, contextTokens: 262_144,
-            strengths: "Small generalist with tool calling and a 256K window",
+            strengths: "Small generalist with tool calling, quick on a 16 GB Mac",
             supportsTools: true,
             measuredQuality: 0.868, qualitySource: Cookbook.s1,
             // Measured on a 16 GB Mac mini, 2026-10-22, think false: 0.58 s
@@ -238,7 +306,7 @@ enum Cookbook {
         CookbookModel(
             id: "mistral-small3.2:24b", displayName: "Mistral Small 3.2", parameterLabel: "24B",
             diskGB: 15.0, estimatedMemoryGB: 22.0, contextTokens: 131_072,
-            strengths: "Vision and tools, the strongest non-Qwen mid size",
+            strengths: "Reads pictures in Chat and calls tools, the strongest non-Qwen mid size",
             supportsTools: true,
             measuredQuality: 0.781, qualitySource: Cookbook.s1),
         CookbookModel(
@@ -252,7 +320,7 @@ enum Cookbook {
             id: "qwen3.8:27b", displayName: "Qwen 3.8", parameterLabel: "27B",
             // estimatedMemoryGB measured, see MEASURED FOOTPRINTS above the catalog
             diskGB: 18.0, estimatedMemoryGB: 17.4, contextTokens: 262_144,
-            strengths: "Newest Qwen, thinking and vision at a 27B footprint",
+            strengths: "Newest Qwen, thinks, and reads pictures in Chat at a 27B footprint",
             supportsTools: true,
             measuredQuality: 0.927, qualitySource: Cookbook.s1,
             minimumOllama: "0.32.12"),
@@ -260,7 +328,7 @@ enum Cookbook {
             id: "gemma4:26b", displayName: "Gemma 4", parameterLabel: "26B",
             // estimatedMemoryGB measured, see MEASURED FOOTPRINTS above the catalog
             diskGB: 18.0, estimatedMemoryGB: 19.2, contextTokens: 131_072,
-            strengths: "Gemma at full size, vision and tools",
+            strengths: "Gemma at full size, reads pictures in Chat and calls tools",
             supportsTools: true,
             measuredQuality: 0.945, qualitySource: Cookbook.s1,
             minimumOllama: "0.30.9"),
@@ -593,7 +661,7 @@ enum Cookbook {
     /// an empty model as `GruxConfig.defaultLocalModel`, so an empty field is the
     /// default wearing different clothes and is eligible for the pick.
     static func userHasChosenModel(_ stored: String) -> Bool {
-        !stored.isEmpty && stored != GruxConfig.defaultLocalModel
+        !modelKey(stored).isEmpty && !sameModel(stored, GruxConfig.defaultLocalModel)
     }
 
     /// The local model id a machine should end up on, as a pure function.
@@ -633,6 +701,71 @@ enum Cookbook {
     /// which is the honest answer for a Mac too small for any local model: the
     /// caller keeps whatever it had rather than being handed an empty tag, and
     /// the "no local model" copy in `ModelUpdateReport` is what tells the user.
+    /// The catalog model to chat on when the one chat is set to is gone from
+    /// the server (D152: removed with `ollama rm`, and every turn answered
+    /// 404). `userHasChosenModel` protects a choice; a model the server no
+    /// longer has is not one anyone can keep. Nil when it is installed, when
+    /// the list is empty (nothing read), or when no catalog model is: an
+    /// unknown tag is never guessed at.
+    ///
+    /// Only a model a person chose: nothing stored, or the shipped default
+    /// nobody pulled, is first run's to settle (it adopts what is installed),
+    /// and "is no longer in Ollama" would be false for it (wave 49 review).
+    /// Names compare in every spelling `sameModel` reads as one.
+    static func replacementForMissingModel(current: String, installed: [String], profile: HardwareProfile,
+                                           ollamaVersion: String? = Cookbook.knownOllamaVersion) -> CookbookModel? {
+        let has: (String) -> Bool = { id in OllamaManager.isInstalled(id, in: installed) }
+        guard userHasChosenModel(current), !installed.isEmpty, !has(current) else { return nil }
+        return recommended(for: profile, ollamaVersion: ollamaVersion).first { has($0.id) }
+    }
+
+    /// Local Models' line after discovery moved the local model, only while it
+    /// is still true: the configured model is the one Grux moved to and the
+    /// one that left is still gone. It claims nothing about where chat runs.
+    static func modelGoneLine(_ gone: CookbookState.ModelGone?, configured: String,
+                              installed: [String]) -> String? {
+        guard let gone, sameModel(configured, gone.to), !OllamaManager.isInstalled(gone.from, in: installed) else { return nil }
+        let name = catalog.first { sameModel($0.id, gone.to) }.map { "\($0.displayName) \($0.parameterLabel)" } ?? gone.to
+        return "\(gone.from) is no longer in Ollama, so Grux's local model is now \(name). Pick another here any time."
+    }
+
+    /// One model is one name in every spelling Ollama answers for: any case,
+    /// spaces around it, ":latest" left off, and the long
+    /// `registry.ollama.ai/library/` form of a library model (wave 49 P3s). A
+    /// different host is a different name: `gruxai.com/grux/grux-local:2b` is
+    /// not `grux-local:2b`, even when they share blobs.
+    nonisolated static func modelKey(_ name: String) -> String {
+        var key = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if key.hasPrefix("registry.ollama.ai/library/") { key.removeFirst("registry.ollama.ai/library/".count) }
+        if key.hasSuffix(":latest") { key.removeLast(":latest".count) }
+        return key
+    }
+
+    /// How many models a local server holds, and how many of them the catalog
+    /// knows. "9 models installed" over two Installed chips read as seven
+    /// missing (D170 item 5); first run and the Cookbook pane both say this.
+    /// `onThisMac` puts the place beside the count, never after "catalog".
+    static func installedCountPhrase(_ tags: [String], onThisMac: Bool = false) -> String {
+        let count = "\(tags.count) model\(tags.count == 1 ? "" : "s") installed" + (onThisMac ? " on this Mac" : "")
+        let known = tags.filter { tag in catalog.contains { sameModel($0.id, tag) } }.count
+        if known == tags.count { return count }
+        if tags.count == 1 { return count + ", not from Grux's catalog" }
+        return count + ", \(known == 0 ? "none" : "\(known)") of them in Grux's catalog"
+    }
+
+    nonisolated static func sameModel(_ a: String, _ b: String) -> Bool {
+        let key = modelKey(a)
+        return !key.isEmpty && key == modelKey(b)
+    }
+
+    /// The move Local Models reports, once chat's local model is set again:
+    /// set to anything but the model Grux moved to, the move is over, so
+    /// setting that model again later says nothing (wave 49 P3).
+    static func modelGone(_ gone: CookbookState.ModelGone?, afterConfigured configured: String) -> CookbookState.ModelGone? {
+        guard let gone, sameModel(configured, gone.to) else { return nil }
+        return gone
+    }
+
     static func defaultModelID(for profile: HardwareProfile,
                                userHasChosen: Bool,
                                current: String,

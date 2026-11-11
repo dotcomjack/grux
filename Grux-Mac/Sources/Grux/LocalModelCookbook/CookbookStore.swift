@@ -13,6 +13,15 @@ struct CookbookState: Codable, Equatable {
     /// The line the speed check after a download left, nil when the last
     /// timed model was fast enough (LocalModelSpeedCheck).
     var speedNote: String? = nil
+    /// The model chat's local model was when discovery found it gone from
+    /// this Mac's Ollama, and the one it moved to (D152). Local Models says so
+    /// while it is still true (`Cookbook.modelGoneLine`); cleared when a model
+    /// is picked there, or set anywhere to another model (`settleModelGone`).
+    var modelGone: ModelGone? = nil
+    struct ModelGone: Codable, Equatable {
+        var from: String
+        var to: String
+    }
 
     static let empty = CookbookState()
 
@@ -27,6 +36,7 @@ struct CookbookState: Codable, Equatable {
         autoServeOnLaunch = try c.decodeIfPresent(Bool.self, forKey: .autoServeOnLaunch) ?? false
         lastProfile = try c.decodeIfPresent(HardwareProfile.self, forKey: .lastProfile)
         speedNote = try c.decodeIfPresent(String.self, forKey: .speedNote)
+        modelGone = try c.decodeIfPresent(ModelGone.self, forKey: .modelGone)
     }
 }
 
@@ -55,8 +65,9 @@ final class CookbookStore: ObservableObject {
 
     func select(modelId: String?) {
         load()
-        guard state.selectedModelId != modelId else { return }
+        guard state.selectedModelId != modelId || state.modelGone != nil else { return }
         state.selectedModelId = modelId
+        state.modelGone = nil
         scheduleSave()
     }
 
@@ -78,6 +89,23 @@ final class CookbookStore: ObservableObject {
         load()
         guard state.speedNote != note else { return }
         state.speedNote = note
+        scheduleSave()
+    }
+
+    func noteModelGone(_ gone: CookbookState.ModelGone?) {
+        load()
+        guard state.modelGone != gone else { return }
+        state.modelGone = gone
+        scheduleSave()
+    }
+
+    /// Called on every config save: a move Local Models reports ends once
+    /// chat's local model is set to anything else (`Cookbook.modelGone`).
+    func settleModelGone(configured: String) {
+        load()
+        let settled = Cookbook.modelGone(state.modelGone, afterConfigured: configured)
+        guard state.modelGone != settled else { return }
+        state.modelGone = settled
         scheduleSave()
     }
 

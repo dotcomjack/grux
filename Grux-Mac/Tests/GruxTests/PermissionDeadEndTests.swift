@@ -86,8 +86,11 @@ final class PermissionDeadEndTests: XCTestCase {
     func testTheInstructionNamesTheControlThatIsThere() {
         XCTAssertTrue(CapabilityRequest.howToGrant(.permNotifications)
             .contains("switch on Allow Notifications"))
+        XCTAssertTrue(CapabilityRequest.howToGrant(.permAutomation).contains("turn on the apps under it"),
+                      "Automation's switches are the apps under Grux AI")
+        XCTAssertTrue(SetupRequirement.permAutomation.remediation.contains("turn on apps under Grux AI"))
         for req in [SetupRequirement.permAccessibility, .permFullDiskAccess, .permMicrophone] {
-            XCTAssertTrue(CapabilityRequest.howToGrant(req).contains("tick Grux AI in the list"),
+            XCTAssertTrue(CapabilityRequest.howToGrant(req).contains("turn on Grux AI in the list"),
                           "\(req.rawValue) does not name the control")
         }
     }

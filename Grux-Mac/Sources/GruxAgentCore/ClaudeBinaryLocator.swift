@@ -8,6 +8,11 @@ import Foundation
 // Terminal.
 public enum ClaudeBinaryLocator {
 
+    // Claude Code's own installer. It writes ~/.local/bin/claude, the first candidate
+    // below, so what this installs is what the setup step detects. The step's sentence
+    // holds it word for word and the setup card's button copies it (D160).
+    public static let installCommand = "curl -fsSL https://claude.ai/install.sh | bash"
+
     // Fixed locations first, in the order the three callers always used, then the
     // folders `npm install -g` writes to under nvm (newest node first), Volta, and an
     // npm prefix of ~/.npm-global.

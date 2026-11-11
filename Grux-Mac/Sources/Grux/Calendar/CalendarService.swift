@@ -52,7 +52,7 @@ final class CalendarService {
         var errorDescription: String? {
             switch self {
             case .permissionDenied:
-                return "Calendar permission not granted. Enable it in System Settings > Privacy & Security > Calendars."
+                return "Calendar permission not granted. Turn on Grux AI in System Settings > Privacy & Security > Calendars."
             case .eventNotFound(let id):
                 return "No calendar event found with id '\(id)'."
             case .noWritableCalendar:

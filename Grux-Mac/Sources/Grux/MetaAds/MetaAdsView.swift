@@ -146,7 +146,7 @@ struct MetaAdsView: View {
                 .font(.system(size: 10, weight: .medium, design: .monospaced))
                 .foregroundStyle(GruxTheme.textTertiary)
             Spacer()
-            killButton
+            if Self.offersKill(store.snapshot) { killButton }
             if store.servingStale {
                 Text("CACHED").font(GruxTheme.Font.microCaps)
                     .padding(.horizontal, 6).padding(.vertical, 2)
@@ -180,6 +180,12 @@ struct MetaAdsView: View {
     // state change, no affordance. The one control in the tab that must never
     // look ignored was the last one still ignoring itself.
     @State private var killNote: String?
+
+    // KILL WAITS FOR AN ENGINE. A nil snapshot means no live pull ever succeeded and no
+    // cached one was on disk at start, so there is nothing Grux has ever seen running and a
+    // press could only post to a service it has never reached. It read "Not connected ·
+    // OBSERVE" beside a live KILL. Any snapshot, live or cached, brings the chip back.
+    static func offersKill(_ snapshot: MetaAdsSnapshot?) -> Bool { snapshot != nil }
 
     private var killButton: some View {
         let on = store.snapshot?.killSwitchOn ?? false
@@ -217,7 +223,7 @@ struct MetaAdsView: View {
         // of seconds of dead Emergency Stop. The refusal is gone instead,
         // `setKill(on: true)` bypasses the gate, so the press always goes
         // out and there is nothing left to protect the user from.
-        .help(on ? "Engine halted. Tap to resume." : "Halt all autonomous action now.")
+        .help(on ? "Engine halted. Click to resume." : "Halt all autonomous action now.")
 
         if let killNote {
             Text(killNote)
@@ -316,7 +322,7 @@ struct MetaAdsView: View {
                         .foregroundStyle(GruxTheme.warnAmber)
                 }
                 .buttonStyle(.plain)
-                .help("Dismiss. Re-tapping the control retries the command.")
+                .help("Dismiss. Clicking the control again retries the command.")
             }
         }
         .padding(12)

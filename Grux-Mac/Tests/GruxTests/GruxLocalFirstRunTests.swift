@@ -39,7 +39,7 @@ final class GruxLocalFirstRunTests: XCTestCase {
                       "the asked press runs while the step is busy or gone")
         XCTAssertTrue(src.contains("guard !probingLocal, !model.validating else { return }\n        localError = nil"),
                       "a second press runs beside the first")
-        XCTAssertTrue(src.contains("installed: recommendedLocal.map { ollama.isInstalled($0.id) } ?? false)) {\n                        useLocalModel(fetchRecommended: true)"),
+        XCTAssertTrue(src.contains("installed: recommendedLocal.map { ollama.isInstalled($0.id) } ?? false)) {\n                            useLocalModel(fetchRecommended: true)"),
                       "the Grux Local button does not fetch")
         XCTAssertTrue(src.contains("Button(ModelGate.tryAgain) { useLocalModel(fetchRecommended: true) }"),
                       "a fetch other than the button and its Try again")

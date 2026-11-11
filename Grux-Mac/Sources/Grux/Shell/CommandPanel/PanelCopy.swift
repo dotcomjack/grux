@@ -29,9 +29,12 @@ enum PanelCopy {
     static let pin = "Pin"
     static let unpin = "Unpin"
     static let watching = "Watching"
+    /// Watching is on and allowed, but the watcher skips every tick (outside
+    /// active hours, no key, snoozed, ...), so nothing is sampled (wave 27).
+    static let notSampling = "Not sampling now"
     /// Watching is on but macOS has not granted screen recording, so nothing
     /// is being watched. A clean Mac read "Watching" anyway (W4, 2026-10-13).
-    static let needsScreenAccess = "Needs screen access"
+    static let needsScreenAccess = "Needs Screen Recording"
     static let grantScreenAccess = "Grant"
 
     /// What the watching status says: on and granted, on but not granted

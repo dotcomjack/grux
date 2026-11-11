@@ -241,6 +241,30 @@ final class PermissionTableTests: XCTestCase {
         )
     }
 
+    /// D192 item 5: the README counted nine permissions while Settings, General
+    /// lists eight rows, and a stranger looking there for System audio capture
+    /// found nothing. macOS grants it under the Screen Recording switch, so the
+    /// sentence says how many switches there are and which two share one, from
+    /// the same list the Settings panel draws.
+    func testTheCountSentenceNamesTheSwitchesSettingsShows() throws {
+        let url = repoRoot().appendingPathComponent("README.md")
+        let text = try String(contentsOf: url, encoding: .utf8)
+        let spell = NumberFormatter()
+        spell.numberStyle = .spellOut
+        spell.locale = Locale(identifier: "en_US")
+        func word(_ n: Int) -> String { spell.string(from: NSNumber(value: n)) ?? "\(n)" }
+
+        let rows = CapabilityRequest.onboardingOrder.count
+        let shared = Self.permissions.filter { !CapabilityRequest.onboardingOrder.contains($0) }
+        XCTAssertEqual(shared, [.permSystemAudio], "the README sentence names only system audio as shared")
+        let sentence = "\(word(Self.permissions.count).capitalized) permissions under \(word(rows)) macOS switches: "
+            + "System audio capture is the same Screen & System Audio Recording switch as Screen Recording, "
+            + "so Settings, General lists \(word(rows)) rows."
+        XCTAssertTrue(text.contains(sentence), "README should say: \(sentence)")
+        XCTAssertFalse(text.contains("Nine permissions, and only"),
+                       "the old count read as nine separate asks")
+    }
+
     // MARK: Helpers
 
     /// Every registry feature label that appears as a whole phrase in `cell`.

@@ -1,4 +1,5 @@
 import Foundation
+import GruxAgentCore
 
 // Per-brand time accounting.
 //
@@ -511,7 +512,7 @@ enum BrandAttribution {
         } catch {
             return 0
         }
-        proc.waitUntilExit()
+        proc.waitForExitBlocking()
         // Drain to avoid the pipe-full deadlock noted in NotificationWatcher.
         let outData = out.fileHandleForReading.readDataToEndOfFile()
         _ = err.fileHandleForReading.readDataToEndOfFile()

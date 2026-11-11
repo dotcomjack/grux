@@ -174,6 +174,9 @@ struct UpdateCheckState: Codable, Equatable {
     var latestTag: String?
     /// The version the person said Not now to. A newer one shows again.
     var dismissedVersion: String?
+    /// Why the last request got no release, nil once one answered. Without it a failed
+    /// check would read as the release seen before it.
+    var lastFailure: String?
 }
 
 @MainActor
@@ -194,8 +197,18 @@ final class UpdateChecker: ObservableObject {
 
     /// The newer version on offer ("3.2.0"), nil when there is none.
     @Published private(set) var available: String?
-    /// The last outcome's plain line, for Settings.
-    @Published private(set) var lastLine: String?
+    /// What the last real check found and when, for Settings: "up to date (the latest
+    /// release is 3.1.0), checked today at 4:41 PM". A scheduled look skipped inside the
+    /// day leaves it alone (D129: About read "not checked: checked less than a day ago"
+    /// beside a Now row offering 3.2.0); Check now that cannot ask says why. Made when
+    /// read, so the day it names is right after midnight (wave 37: stored as text, it
+    /// said "today" about yesterday until the next real check).
+    var lastLine: String? { cannotAskLine ?? resultLine(loadState()) }
+
+    /// Why Check now could not ask, until the next real answer replaces it.
+    @Published private var cannotAskLine: String?
+    /// Bumped by every real answer, so a view showing `lastLine` redraws.
+    @Published private var answers = 0
 
     private let environment: Environment
     private var inFlight = false
@@ -211,6 +224,26 @@ final class UpdateChecker: ObservableObject {
                 installed: environment.installedVersion(),
                 latest: UpdateCheck.Release(tagName: tag, draft: false, prerelease: false)), state: state)
         }
+    }
+
+    /// The last real check's answer, read from disk, with when it asked. nil before the
+    /// first one.
+    private func resultLine(_ state: UpdateCheckState) -> String? {
+        guard let asked = state.lastCheckedAt else { return nil }
+        let found: UpdateCheck.Outcome
+        if let why = state.lastFailure {
+            found = .failed(why)
+        } else if let tag = state.latestTag {
+            switch UpdateCheck.verdict(installed: environment.installedVersion(),
+                                       latest: UpdateCheck.Release(tagName: tag, draft: false, prerelease: false)) {
+            case .newer(let v): found = .newer(version: v)
+            case .upToDate(let latest): found = .upToDate(latest: latest)
+            case .ignored(let why): found = .ignored(why)
+            }
+        } else {
+            return nil
+        }
+        return found.line + ", checked " + FoundrySchedule.when(asked, now: environment.now(), calendar: .current)
     }
 
     /// The version a Now row offers for this verdict, nil for none or for the version
@@ -271,6 +304,7 @@ final class UpdateChecker: ObservableObject {
             } else if let release = try? JSONDecoder().decode(UpdateCheck.Release.self, from: data) {
                 state = loadState()
                 state.latestTag = release.tagName
+                state.lastFailure = nil
                 Persistence.save(state, to: environment.stateURL)
                 switch UpdateCheck.verdict(installed: environment.installedVersion(), latest: release) {
                 case .newer(let v): outcome = .newer(version: v)
@@ -283,6 +317,11 @@ final class UpdateChecker: ObservableObject {
         } catch {
             outcome = .failed(error.localizedDescription)
         }
+        if case .failed(let why) = outcome {
+            state = loadState()
+            state.lastFailure = why
+            Persistence.save(state, to: environment.stateURL)
+        }
         switch outcome {
         case .newer(let v): available = offered(.newer(version: v), state: loadState())
         case .upToDate: available = nil
@@ -292,7 +331,12 @@ final class UpdateChecker: ObservableObject {
     }
 
     private func finish(_ outcome: UpdateCheck.Outcome, manual: Bool) -> UpdateCheck.Outcome {
-        lastLine = outcome.line
+        if case .skipped = outcome {
+            if manual { cannotAskLine = outcome.line }
+        } else {
+            cannotAskLine = nil
+            answers += 1
+        }
         environment.log("update-check: \(manual ? "check now" : "scheduled"): \(outcome.line)")
         return outcome
     }

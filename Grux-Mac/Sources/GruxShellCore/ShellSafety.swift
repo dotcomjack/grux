@@ -59,8 +59,8 @@ public enum ShellSafety {
 
         // Strict mode: command allowlist first. Only accept binaries from the
         // curated list. The check is deliberately naive - first token compared
-        // against the list. Pipes / && chains with disallowed binaries are
-        // refused because the FIRST binary in the chain rules.
+        // against the list. A program later in a pipe or && chain is NOT
+        // checked here; it meets the same gates as in guarded below.
         if mode == .strict {
             if let reason = strictAllowlistBlock(command: trimmed) {
                 return ShellSafetyVerdict(
@@ -71,7 +71,11 @@ public enum ShellSafety {
             }
         }
 
-        // Containment: cd / pushd escape detection.
+        // Containment: cd / pushd escape detection. A cd inside rootDir is
+        // noted and the rest of the command is still judged below: returning
+        // allow here let `cd packages/core && npm publish` and `npm publish;
+        // cd .` skip the question (W64-FIX round 6).
+        var cdInside: String?
         if let cdTarget = detectCdTarget(command: trimmed) {
             let resolved = resolveRelative(target: cdTarget, cwd: currentCwd)
             if !pathIsInside(resolved, root: rootDir) {
@@ -81,7 +85,7 @@ public enum ShellSafety {
                     detectedCdTarget: resolved
                 )
             }
-            return ShellSafetyVerdict(decision: .allow, looksDestructive: false, detectedCdTarget: resolved)
+            cdInside = resolved
         }
 
         // Containment: absolute-path write outside rootDir.
@@ -89,7 +93,7 @@ public enum ShellSafety {
             return ShellSafetyVerdict(
                 decision: .blockedOutsideRoot(reason: "command writes to '\(absPath)' which is outside rootDir"),
                 looksDestructive: true,
-                detectedCdTarget: nil
+                detectedCdTarget: cdInside
             )
         }
 
@@ -98,12 +102,12 @@ public enum ShellSafety {
             return ShellSafetyVerdict(
                 decision: .requiresConfirm(reason: reason),
                 looksDestructive: false,
-                detectedCdTarget: nil
+                detectedCdTarget: cdInside
             )
         }
 
-        let destructive = looksDestructive(command: trimmed, cwd: currentCwd)
-        return ShellSafetyVerdict(decision: .allow, looksDestructive: destructive, detectedCdTarget: nil)
+        let destructive = looksDestructive(command: trimmed, cwd: cdInside ?? currentCwd)
+        return ShellSafetyVerdict(decision: .allow, looksDestructive: destructive, detectedCdTarget: cdInside)
     }
 
     // MARK: - CD detection
@@ -289,12 +293,75 @@ public enum ShellSafety {
         // npm publish, cargo publish
         if lc.contains("npm publish") { return "npm publish - snapshots can't un-publish" }
         if lc.contains("cargo publish") { return "cargo publish - snapshots can't un-publish" }
+        if let reason = publishPushOrDeploy(command) { return reason }
         // sudo
         if lc.hasPrefix("sudo ") || lc.contains(" sudo ") {
             return "sudo - operates outside rootDir and the snapshot scope"
         }
         return nil
     }
+
+    /// W64-FIX rounds 2 and 3: a publish, push or deploy through a tool the
+    /// lists above do not name (`yarn publish`, `mvn clean deploy`,
+    /// `pnpm -r publish`, `python3 -m twine upload`, `docker compose push`) ran
+    /// unasked, and `npm test;sudo ls` hid its sudo. Each statement and pipe
+    /// stage is read for its program: a build or package tool (`buildTools`) is
+    /// asked about when any argument before `--` is publish or deploy (a
+    /// `name:variant` script counts by its name); any other program when its
+    /// subcommand or `run` target is; a program that only names a path or
+    /// prints words (`pathOnly`) is not read, so `rm deploy` is not a deploy.
+    /// No list is complete: Settings, Sessions says one it does not recognize
+    /// is not asked about.
+    static func publishPushOrDeploy(_ command: String) -> String? {
+        for statement in splitStatements(command) {
+            for stage in statement.components(separatedBy: "|") {
+                var words = tokenize(stage.trimmingCharacters(in: .whitespaces)).map { $0.lowercased() }
+                while let first = words.first, first.contains("="), !first.hasPrefix("/") { words.removeFirst() }
+                guard let first = words.first else { continue }
+                var tool = (first as NSString).lastPathComponent
+                if tool == "sudo" { return "sudo - operates outside rootDir and the snapshot scope" }
+                guard words.count >= 2, !pathOnly.contains(tool) else { continue }
+                var args = Array(words.dropFirst())
+                if let end = args.firstIndex(of: "--") { args = Array(args[..<end]) }
+                if tool.hasPrefix("python"), let m = args.firstIndex(of: "-m"), m + 1 < args.count {
+                    tool = args[m + 1]
+                    args = Array(args[(m + 2)...])
+                }
+                let names = args.map { $0.split(separator: ":").first.map(String.init) ?? $0 }
+                let effect = "publishes or deploys; snapshots can't undo it"
+                if buildTools.contains(tool), let word = names.first(where: { $0 == "publish" || $0 == "deploy" }) {
+                    return "\(tool) \(word) - \(effect)"
+                }
+                let runsScript = names.first == "run" || names.first == "run-script"
+                if !localPublish.contains(tool), let target = runsScript ? names.dropFirst().first : names.first,
+                   target == "publish" || target == "deploy" {
+                    return "\(tool) \(args.prefix(runsScript ? 2 : 1).joined(separator: " ")) - \(effect)"
+                }
+                // twine run by itself or through a runner (`uv run twine upload`, round 5).
+                let twineUploads = (tool == "twine" && names.contains("upload"))
+                    || names.firstIndex(of: "twine").map { names[($0 + 1)...].contains("upload") } == true
+                if (pushingTools.contains(tool) && (names.contains("push") || names.contains("--push"))) || twineUploads {
+                    return "\(tool) push - sends a package or image out; snapshots can't undo it"
+                }
+            }
+        }
+        return nil
+    }
+    private static let pathOnly: Set<String> = [
+        "cat", "less", "more", "head", "tail", "grep", "egrep", "fgrep", "rg", "ag", "ls", "find", "echo",
+        "printf", "mkdir", "rmdir", "touch", "cd", "pushd", "wc", "stat", "file", "tree", "du", "which",
+        "man", "vim", "vi", "nano", "code", "git", "rm", "cp", "mv", "diff", "pytest",
+    ]
+    private static let buildTools: Set<String> = [
+        "npm", "pnpm", "yarn", "bun", "npx", "bunx", "pnpx", "deno", "mvn", "mvnw", "gradle", "gradlew",
+        "make", "just", "rake", "task", "lerna", "changeset", "cdk", "sls", "serverless", "netlify", "vercel",
+        "firebase", "wrangler", "fly", "flyctl", "heroku", "poetry", "uv", "hatch", "flit", "pdm", "twine",
+        "swift", "eas", "fastlane",
+    ]
+    private static let pushingTools: Set<String> = ["docker", "podman", "buildah", "gem", "helm", "dotnet"]
+    /// Tools whose `publish` builds a folder on this Mac: `dotnet publish`
+    /// (only `dotnet nuget push`, in `pushingTools`, sends anything out).
+    private static let localPublish: Set<String> = ["dotnet"]
 
     // MARK: - Destructive heuristic (triggers hybrid snapshot)
 
@@ -499,7 +566,9 @@ public enum ShellSafety {
     // MARK: - Strict-mode allowlist
 
     // Only these binaries can run in strict mode. Deliberately short; add on demand.
-    private static let strictAllowed: Set<String> = [
+    // Public and ordered because Settings, Sessions prints this very list as
+    // the Strict line (W64-FIX round 5: a hand-written copy drifted both ways).
+    public static let strictAllowedPrograms: [String] = [
         "ls", "cat", "echo", "pwd", "head", "tail", "grep", "rg", "find", "file",
         "wc", "sort", "uniq", "diff", "tree", "stat",
         "node", "npm", "npx", "yarn", "pnpm", "deno", "bun",
@@ -508,6 +577,7 @@ public enum ShellSafety {
         "git", "make", "cmake",
         "true", "false"
     ]
+    private static let strictAllowed = Set(strictAllowedPrograms)
 
     static func strictAllowlistBlock(command: String) -> String? {
         let tokens = tokenize(command)

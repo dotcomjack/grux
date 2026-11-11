@@ -98,22 +98,7 @@ private struct StudioCritic: DesignCritiquing {
             designSystemMarkdown: systemMarkdown,
             route: route
         )
-        switch verdict.status {
-        case .pass:
-            return "Critique: pass on all \(verdict.dimensions.count) dimensions."
-        case .fail:
-            let blockers = verdict.dimensions.filter { $0.blocks }
-                .prefix(2)
-                .map { "\($0.name): \($0.reason)" }
-                .joined(separator: " | ")
-            return "Critique: \(blockers.isEmpty ? verdict.summary : blockers)"
-        case .error:
-            // A critique outage never blocks the artifact, but note the skip so
-            // the transcript does not imply the design was reviewed and cleared.
-            return "(critique skipped: reviewer unavailable)"
-        case .pending, .running:
-            return nil
-        }
+        return CritiqueGate.personLine(verdict)
     }
 }
 

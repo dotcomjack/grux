@@ -297,6 +297,93 @@ final class UpdateCheckTests: XCTestCase {
         XCTAssertEqual(probes, 1, "Check now does look at the network")
     }
 
+    // MARK: - D129, About says what the last real check found and when
+
+    // Settings, General, About read "not checked: checked less than a day ago" beside a
+    // Now row offering 3.2.0: every hourly look inside the day overwrote the line with
+    // its own skip, and a relaunch showed nothing until the next look.
+
+    private var checkedNow: String { ", checked " + FoundrySchedule.when(clock, now: clock, calendar: .current) }
+
+    @MainActor
+    func testAnHourlyLookInsideTheDayKeepsTheLastResult() async {
+        let counter = Counter()
+        let c = checker(counter)
+        _ = await c.run(manual: false)
+        let found = "up to date (the latest release is 3.1.0)" + checkedNow
+        XCTAssertEqual(c.lastLine, found)
+        clock = clock.addingTimeInterval(3600)
+        _ = await c.run(manual: false)
+        XCTAssertEqual(c.lastLine, found, "a skipped look is not a result")
+    }
+
+    /// Wave 37: the line was text made at check time, and a skipped look leaves
+    /// it, so Grux running past midnight said "checked today" about yesterday.
+    @MainActor
+    func testTheLineNamesTheDayWhenItIsRead() async {
+        let counter = Counter()
+        let c = checker(counter)
+        let asked = clock
+        _ = await c.run(manual: false)
+        // One second inside the daily limit, and on the next calendar day.
+        let nextDay = Calendar.current.date(byAdding: .day, value: 1, to: asked)!
+        clock = nextDay.addingTimeInterval(-1)
+        if !Calendar.current.isDate(clock, inSameDayAs: nextDay) {
+            clock = Calendar.current.startOfDay(for: nextDay).addingTimeInterval(1)
+        }
+        _ = await c.run(manual: false)
+        XCTAssertEqual(counter.requests.count, 1, "inside the day, so not asked again")
+        XCTAssertEqual(c.lastLine, "up to date (the latest release is 3.1.0), checked "
+                       + FoundrySchedule.when(asked, now: clock, calendar: .current))
+        XCTAssertTrue(c.lastLine?.contains("yesterday") == true, c.lastLine ?? "nil")
+    }
+
+    @MainActor
+    func testARelaunchShowsTheLastResult() async {
+        let counter = Counter()
+        counter.body = #"{"tag_name":"v3.2.0","draft":false,"prerelease":false}"#
+        _ = await checker(counter).run(manual: false)
+        let expected = "Grux AI 3.2.0 is available" + checkedNow
+        clock = clock.addingTimeInterval(60)
+        XCTAssertEqual(checker(counter).lastLine, expected)
+    }
+
+    @MainActor
+    func testAFailedCheckSaysSoAfterARelaunchToo() async {
+        let counter = Counter()
+        counter.status = 503
+        let c = checker(counter)
+        _ = await c.run(manual: false)
+        let expected = "could not check: GitHub answered HTTP 503" + checkedNow
+        XCTAssertEqual(c.lastLine, expected)
+        XCTAssertEqual(checker(counter).lastLine, expected)
+
+        counter.status = 200
+        _ = await checker(counter).run(manual: true)
+        XCTAssertEqual(checker(counter).lastLine, "up to date (the latest release is 3.1.0)" + checkedNow,
+                       "a later answer replaces the failure")
+    }
+
+    @MainActor
+    func testCheckNowThatCannotAskSaysWhy() async {
+        let c = checker(Counter(), firstRunDone: false)
+        _ = await c.run(manual: true)
+        XCTAssertEqual(c.lastLine, "not checked: first run is not finished")
+    }
+
+    @MainActor
+    func testAStateFileFromBeforeThisReadsItsLastAnswer() {
+        // The file this Mini carried on 2026-11-02, written before the line was kept.
+        Persistence.save(UpdateCheckState(lastCheckedAt: clock, latestTag: "v3.2.0", dismissedVersion: "3.1.0"),
+                         to: tempState)
+        XCTAssertEqual(checker(Counter()).lastLine, "Grux AI 3.2.0 is available" + checkedNow)
+    }
+
+    @MainActor
+    func testNeverCheckedSaysNothing() {
+        XCTAssertNil(checker(Counter()).lastLine)
+    }
+
     func testTheNetworkIsClassifiedOfflineFirstThenMeteredThenLowData() {
         XCTAssertEqual(UpdateNetwork.classify(satisfied: true, expensive: false, constrained: false), .online)
         XCTAssertEqual(UpdateNetwork.classify(satisfied: false, expensive: true, constrained: true), .offline)

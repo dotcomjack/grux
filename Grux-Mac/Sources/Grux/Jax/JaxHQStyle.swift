@@ -15,7 +15,7 @@ import SwiftUI
 extension GatePersona {
     var tint: Color {
         switch self {
-        case .sarah: return GruxTheme.accentCo
+        case .assistant: return GruxTheme.accentCo
         case .owner: return GruxTheme.accentPrimaryLight
         case .none: return GruxTheme.textTertiary
         }
@@ -23,16 +23,18 @@ extension GatePersona {
 
     var icon: String {
         switch self {
-        case .sarah: return "person.fill.badge.plus"
+        case .assistant: return "person.fill.badge.plus"
         case .owner: return "person.crop.circle.fill"
         case .none: return "lock.fill"
         }
     }
 
     // Short chip label: who an outbound message would be signed as.
-    var chipLabel: String {
+    var chipLabel: String { chipLabel(roster: CommsRosterStore.current) }
+
+    func chipLabel(roster: CommsRoster) -> String {
         switch self {
-        case .sarah: return "AS SARAH"
+        case .assistant: return "AS \(roster.businessName.uppercased())"
         case .owner: return "AS YOU"
         case .none: return ""
         }
@@ -160,9 +162,25 @@ struct JaxBrandTag: View {
 
 enum JaxTime {
     static func ago(_ date: Date) -> String {
-        let f = RelativeDateTimeFormatter()
-        f.unitsStyle = .short
-        return f.localizedString(for: date, relativeTo: Date())
+        RelativeStamp.string(for: date)
+    }
+
+    /// "9:45 AM today", "12:08 AM yesterday", "4:11 PM Oct 30", and the year
+    /// when it is not this one: "7:00 AM Dec 30, 2025". A Mac set to a 24-hour
+    /// clock reads "16:11 Oct 30" (W32-P3 item 4); the calendar's locale says which.
+    static func clockAndDay(_ date: Date, now: Date, calendar: Calendar) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = calendar.timeZone
+        let hours = DateFormatter.dateFormat(fromTemplate: "j", options: 0, locale: calendar.locale ?? .autoupdatingCurrent) ?? "h a"
+        f.dateFormat = hours.contains("H") || hours.contains("k") ? "HH:mm" : "h:mm a"
+        let time = f.string(from: date)
+        if calendar.isDate(date, inSameDayAs: now) { return "\(time) today" }
+        if let yesterday = calendar.date(byAdding: .day, value: -1, to: now),
+           calendar.isDate(date, inSameDayAs: yesterday) { return "\(time) yesterday" }
+        f.dateFormat = calendar.component(.year, from: date) == calendar.component(.year, from: now)
+            ? "MMM d" : "MMM d, yyyy"
+        return "\(time) \(f.string(from: date))"
     }
 
     static func clock(_ date: Date) -> String {

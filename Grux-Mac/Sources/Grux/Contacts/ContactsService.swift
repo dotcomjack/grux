@@ -22,6 +22,24 @@ struct GruxContact: Identifiable, Equatable, Sendable {
         return emails.first ?? "Unnamed"
     }
 
+    /// The line under the name in the list: the organization, else the first
+    /// address, and never the name again. A contact with no name is titled by
+    /// its organization or address (`fullName`), and printed that twice
+    /// (D166 item 12).
+    var listSubtitle: String? {
+        [organization, emails.first ?? ""].first { !$0.trimmingCharacters(in: .whitespaces).isEmpty && !repeatsName($0) }
+    }
+
+    /// The line under the name on the detail card: the organization, unless
+    /// it is the title already.
+    var headerSubtitle: String? {
+        organization.trimmingCharacters(in: .whitespaces).isEmpty || repeatsName(organization) ? nil : organization
+    }
+
+    private func repeatsName(_ text: String) -> Bool {
+        text.trimmingCharacters(in: .whitespaces).caseInsensitiveCompare(fullName.trimmingCharacters(in: .whitespaces)) == .orderedSame
+    }
+
     var initials: String {
         let parts = [givenName, familyName].filter { !$0.isEmpty }
         if parts.isEmpty {
@@ -60,7 +78,7 @@ enum ContactsServiceError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .accessDenied:
-            return "Contacts access is not authorized. Grant it in System Settings, Privacy and Security, Contacts."
+            return "Contacts access is not authorized. Grant it in System Settings, Privacy & Security, Contacts."
         case .notFound(let id):
             return "No contact with identifier \(id)."
         case .mutationFailed(let why):

@@ -322,6 +322,16 @@ public struct Renderer {
         }
     }
 
+    /// The same list joined with "or", for a choice where any one will do.
+    public func either(_ items: [String]) -> String {
+        switch items.count {
+        case 0: return ""
+        case 1: return items[0]
+        case 2: return items[0] + " or " + items[1]
+        default: return items.dropLast().joined(separator: ", ") + " or " + items[items.count - 1]
+        }
+    }
+
     public func rule() -> String {
         style.ink(.dim, "  " + String(repeating: "-", count: max(20, style.width - 4)))
     }

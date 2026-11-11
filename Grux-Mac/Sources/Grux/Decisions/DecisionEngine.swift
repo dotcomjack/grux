@@ -8,7 +8,8 @@ final class DecisionEngine {
     static let shared = DecisionEngine(
         keyLookup: { DecisionEngine.isUnderTest ? "" : (KeychainStore.getWithoutWaiting(.typesafeApiKey) ?? "") },
         ledger: DecisionLedger.shared,
-        dailyBudget: { DecisionEngine.isUnderTest ? 0 : AppState.shared.config.dailyDecisionBudget })
+        dailyBudget: { DecisionEngine.isUnderTest ? 0 : AppState.shared.config.dailyDecisionBudget },
+        keyChecked: { record in if !DecisionEngine.isUnderTest { DecisionsSection.saveCheck(record) } })
 
     /// THE SUITE NEVER REACHES THE KEYCHAIN OR THE NETWORK.
     ///
@@ -29,15 +30,20 @@ final class DecisionEngine {
     private let ledger: DecisionLedger
     private let remote: (String) -> DecisionProvider
     private let local: DecisionProvider = LocalDecisionProvider()
+    /// Where a real decision's verdict on the key goes: the record the
+    /// Integrations, Decisions card reads (D166 item 3).
+    private let keyChecked: (DecisionsSection.KeyCheckRecord) -> Void
 
     init(keyLookup: @escaping () -> String,
          ledger: DecisionLedger,
          dailyBudget: @escaping () -> Int = { 0 },
-         remote: @escaping (String) -> DecisionProvider = { JevDecisionProvider(apiKey: $0) }) {
+         remote: @escaping (String) -> DecisionProvider = { JevDecisionProvider(apiKey: $0) },
+         keyChecked: @escaping (DecisionsSection.KeyCheckRecord) -> Void = { _ in }) {
         self.rawKey = keyLookup
         self.dailyBudget = dailyBudget
         self.ledger = ledger
         self.remote = remote
+        self.keyChecked = keyChecked
     }
 
     /// Whether a remote decision may be made right now: a key is saved and
@@ -92,7 +98,7 @@ final class DecisionEngine {
         var mayHaveBilled = false
         if !key.isEmpty {
             let provider = remote(key)
-            let asked = await askRemote(provider, surface: surface, state: state, questions: questions)
+            let asked = await askRemote(provider, key: key, surface: surface, state: state, questions: questions)
             answered = asked.result
             if answered == nil { fellBackFrom = provider.kind; mayHaveBilled = asked.mayHaveBilled }
         }
@@ -117,12 +123,17 @@ final class DecisionEngine {
     /// to fall back on device with no trace at all.
     /// `mayHaveBilled`: with no answer, whether the call may still have been
     /// billed (`mayHaveBeenBilled`), so the daily cap counts it.
-    func askRemote(_ provider: DecisionProvider, surface: String, state: String,
+    /// A call that answered, or that TypeSafe refused, is also a check of the
+    /// key it carried, recorded through `keyChecked`.
+    func askRemote(_ provider: DecisionProvider, key: String, surface: String, state: String,
                    questions: [String: DecisionQuestion]) async -> (result: DecisionResult?, mayHaveBilled: Bool) {
         let started = Date()
         do {
-            return (try await provider.decide(state: state, questions: questions), true)
+            let answer = try await provider.decide(state: state, questions: questions)
+            recordKeyCheck(Self.keyCheckFromUse(error: nil, key: key), carried: key)
+            return (answer, true)
         } catch {
+            recordKeyCheck(Self.keyCheckFromUse(error: error, key: key), carried: key)
             WakeLog.shared.log("decisions: \(surface) \(provider.kind.rawValue) gave no answer after "
                                + "\(Self.elapsedMs(since: started)) ms (\(Self.failureName(error))); answered on device")
             return (nil, Self.mayHaveBeenBilled(error))
@@ -141,6 +152,33 @@ final class DecisionEngine {
         case .malformed?: return true
         case .noKey?, nil: return false
         }
+    }
+
+    /// Only while the key the call carried is still the saved one: a call that
+    /// lands after the person saved another key (Save & Test, Disconnect) is
+    /// about the old key, and must not overwrite the new one's record
+    /// (W54-P3 item 1).
+    private func recordKeyCheck(_ check: DecisionsSection.KeyCheckRecord?, carried key: String) {
+        guard let check, rawKey() == key else { return }
+        keyChecked(check)
+    }
+
+    /// What a real decision says about the key it carried, the same reading
+    /// Save & Test uses: an answer means it works, a 401 or 403 means TypeSafe
+    /// refused it, and any other failure (out of credit, a rate limit, a
+    /// server error, a timeout, offline) says nothing about the key, so the
+    /// last check stands. Nil when there is nothing to record.
+    static func keyCheckFromUse(error: Error?, key: String, at: Date = Date()) -> DecisionsSection.KeyCheckRecord? {
+        let tail = DecisionsSection.tail(key)
+        guard !tail.isEmpty else { return nil }
+        let result: DecisionsSection.KeyCheck
+        if let error {
+            guard DecisionsSection.checkResult(of: error) == .refused else { return nil }
+            result = .refused
+        } else {
+            result = .worked
+        }
+        return DecisionsSection.KeyCheckRecord(result: result, at: at, keyTail: tail)
     }
 
     static func elapsedMs(since start: Date) -> Int { Int(Date().timeIntervalSince(start) * 1000) }
@@ -193,9 +231,28 @@ final class DecisionEngine {
                                           summary: Self.summary(state: heard, result: shown) + " (\(rule))"))
     }
 
+    /// The ledger keeps the first 57 characters of a state over 60, and never
+    /// cuts a gated tool's id: the card names the tool from it, and a long id
+    /// clipped before its closing quote read raw (W54-P3 item 2).
+    /// The quote it keeps closes a tool id (letters, digits, `_`, `-`, `.`),
+    /// so a person's "Run tool 'notes please ... I'm" keeps no more than 57
+    /// (wave 55 P3-1). A clip that would save fewer characters than its "..."
+    /// keeps the state whole.
+    static func clipped(_ gist: String) -> String {
+        guard gist.count > 60 else { return gist }
+        var keep = 57
+        if let open = gist.range(of: "Run tool '") {
+            let id = gist[open.upperBound...].prefix { $0.isLetter || $0.isNumber || "_-.".contains($0) }
+            if !id.isEmpty, id.endIndex < gist.endIndex, gist[id.endIndex] == "'" {
+                keep = max(keep, gist.distance(from: gist.startIndex, to: id.endIndex) + 1)
+            }
+        }
+        return keep + 3 >= gist.count ? gist : String(gist.prefix(keep)) + "..."
+    }
+
     static func summary(state: String, result: DecisionResult) -> String {
         let gist = DecisionUsageSummary.withoutPreamble(state)
-        let heard = gist.count > 60 ? String(gist.prefix(57)) + "..." : gist
+        let heard = clipped(gist)
         let decided = result.answers.map { name, a -> String in
             switch a {
             case .choice(let c, let conf, _): return "\(name)=\(c) \(String(format: "%.2f", conf))"

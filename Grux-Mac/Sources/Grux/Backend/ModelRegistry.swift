@@ -63,6 +63,39 @@ final class ModelRegistry: ObservableObject {
     // Model tags reported by the local server's /api/tags. Surfaced in Settings
     // so the user can see what's installed and pick one.
     @Published private(set) var localTags: [String] = []
+    // Each tag's digest from /api/tags: names one model was pulled or copied
+    // under share it, so the list shows that model once (D130). Empty for an
+    // OpenAI-compatible server, whose list carries none.
+    @Published private(set) var localDigests: [String: String] = [:]
+
+    /// The Ollama discovery line under the base URL: models, not names (D130).
+    nonisolated static func ollamaStatus(tags: [String], digests: [String: String]) -> String {
+        let count = Cookbook.shownLocalModels(tags, digests: digests, configured: "").count
+        return count == 0
+            ? "local server reachable, no models installed"
+            : "found \(count) local model\(count == 1 ? "" : "s")"
+    }
+
+    /// Whether any installed local tag matches: a presence check for callers
+    /// outside the registry, which never read the raw tags themselves
+    /// (LocalModelListNamesTests).
+    func holdsLocal(where matches: (String) -> Bool) -> Bool {
+        localTags.contains(where: matches)
+    }
+
+    /// The installed models as a person reads the list: one entry per model,
+    /// the configured name standing for its own (D130). Values are tags; show
+    /// each through `Cookbook.personName`.
+    /// Ollama, as the last discovery read it, holds this model (in any
+    /// spelling `Cookbook.sameModel` reads as one). False for a server that is
+    /// not Ollama: an OpenAI-compatible server's names do not mean pulled.
+    func ollamaHolds(_ modelId: String) -> Bool {
+        localServedByOllama && OllamaManager.isInstalled(modelId, in: localTags)
+    }
+
+    func shownLocalModels(configured: String) -> [String] {
+        Cookbook.shownLocalModels(localTags, digests: localDigests, configured: configured)
+    }
 
     /// A local server answered AND holds a model Grux can drive. Reachable is
     /// not usable: Ollama answering with zero models routed chat to it, so
@@ -85,6 +118,11 @@ final class ModelRegistry: ObservableObject {
     // Last discovery outcome string for the Settings UI ("found 3 models", "no
     // local server reachable", etc.). nil before the first attempt.
     @Published private(set) var localStatus: String? = nil
+
+    /// Discovery has answered at least once: every way out of `discoverLocal`
+    /// sets `localStatus`. Before that, no local model means "not looked yet",
+    /// not "none", so nothing may tell the person to connect one (D172).
+    var localChecked: Bool { localStatus != nil }
 
     // The explicit provider choice, nil until the user makes one. @Published so
     // the Settings row that names the active provider redraws the moment Use is
@@ -161,6 +199,14 @@ final class ModelRegistry: ObservableObject {
     /// local model still routes to Anthropic, because there is nowhere else to
     /// go and `ChatReadiness` already has a sentence for that, which is better
     /// than a route that silently points at nothing.
+    /// W64-FIX round 2: chat set to a local model with none running resolves
+    /// to Anthropic (`resolvedProvider`). Chat refuses that state
+    /// (`ChatReadiness.offlinePinnedButNoLocalModel`); every background caller of
+    /// `resolvedRouting(provider: nil, ...)` sent the person's words to Anthropic
+    /// instead. True exactly there, so the route can keep the choice local.
+    nonisolated static func localChoiceFellBack(chosen: ActiveProvider, routed: ActiveProvider) -> Bool {
+        chosen == .local && routed == .anthropic
+    }
     nonisolated static func anthropicRoute(hasKey: Bool, hasLocal: Bool) -> ActiveProvider {
         (!hasKey && hasLocal) ? .local : .anthropic
     }
@@ -309,23 +355,34 @@ final class ModelRegistry: ObservableObject {
         case "anthropic":
             return (anthropic, modelOverride ?? cfg.model, AppState.shared.anthropicKey)
         case "local":
-            // Use the discovered backend when present; otherwise build one
-            // directly from ollamaBaseURL so a local-pinned preset actually hits
-            // the local model even when discovery has not run yet (e.g. Ollama
-            // started after launch). The user explicitly chose local, so we do
-            // NOT silently fall back to Anthropic; a down server surfaces via the
-            // normal chat error path. Kick discovery so later turns reuse `local`.
-            if local == nil { Task { await discoverLocal() } }
-            let backend = local ?? compatBackend(forBaseURL: cfg.ollamaBaseURL)
-            return (backend,
-                    honoredOverride(modelOverride, onAnthropic: false) ?? cfg.offlineLLMModel,
-                    localApiKey())
+            return localRouting(modelOverride: modelOverride)
         default:
+            // A local choice with no local model running answers as the explicit
+            // local branch does, never from Anthropic (W64-FIX round 2): the
+            // dictation fix-up, ambient memory, meeting summaries and the coaches
+            // all come through here with the person's words.
+            if Self.localChoiceFellBack(chosen: activeProvider, routed: resolvedProvider) {
+                return localRouting(modelOverride: modelOverride)
+            }
             return (active(),
                     honoredOverride(modelOverride,
                                     onAnthropic: resolvedProvider == .anthropic) ?? modelId(),
                     apiKey())
         }
+    }
+
+    // Use the discovered backend when present; otherwise build one directly
+    // from ollamaBaseURL so a local-pinned preset actually hits the local model
+    // even when discovery has not run yet (e.g. Ollama started after launch).
+    // The user explicitly chose local, so we do NOT silently fall back to
+    // Anthropic; a down server surfaces via the normal chat error path. Kick
+    // discovery so later turns reuse `local`.
+    private func localRouting(modelOverride: String?) -> (backend: ModelBackend, modelId: String, apiKey: String) {
+        if local == nil { Task { await discoverLocal() } }
+        let backend = local ?? compatBackend(forBaseURL: AppState.shared.config.ollamaBaseURL)
+        return (backend,
+                honoredOverride(modelOverride, onAnthropic: false) ?? AppState.shared.config.offlineLLMModel,
+                localApiKey())
     }
 
     // MARK: - Backends
@@ -423,6 +480,7 @@ final class ModelRegistry: ObservableObject {
     func resetLocalForTest() {
         self.local = nil
         self.localTags = []
+        self.localDigests = [:]
         self.localServedByOllama = false
         self.localStatus = nil
         clearActiveProvider()
@@ -438,6 +496,7 @@ final class ModelRegistry: ObservableObject {
         guard !baseURL.isEmpty, let url = URL(string: "\(baseURL)/api/tags") else {
             self.local = nil
             self.localTags = []
+            self.localDigests = [:]
             self.localServedByOllama = false
             self.localStatus = "invalid local base URL"
             return
@@ -469,16 +528,21 @@ final class ModelRegistry: ObservableObject {
             }
             // Ollama /api/tags shape: { "models": [ { "name": "llama3.1:latest", ... } ] }
             var tags: [String] = []
+            var digests: [String: String] = [:]
             if let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                let models = obj["models"] as? [[String: Any]] {
                 tags = models.compactMap { $0["name"] as? String }
+                for m in models {
+                    if let name = m["name"] as? String, let digest = m["digest"] as? String {
+                        digests[name] = digest
+                    }
+                }
             }
             self.local = compatBackend(forBaseURL: baseURL)
             self.localTags = tags
+            self.localDigests = digests
             self.localServedByOllama = true
-            self.localStatus = tags.isEmpty
-                ? "local server reachable, no models installed"
-                : "found \(tags.count) local model\(tags.count == 1 ? "" : "s")"
+            self.localStatus = Self.ollamaStatus(tags: tags, digests: digests)
 
             // THE CATALOG TOLD AND NEVER ACTED, and this is the one line that
             // makes it act. `Cookbook.headline(for:)` has computed the right
@@ -512,6 +576,18 @@ final class ModelRegistry: ObservableObject {
                 if picked != cfg.offlineLLMModel, tags.contains(picked) {
                     AppState.shared.config.offlineLLMModel = picked
                     AppState.shared.saveConfig()
+                } else if LocalTurn.isLoopback(baseURL: baseURL),
+                          let swap = Cookbook.replacementForMissingModel(
+                            current: cfg.offlineLLMModel, installed: tags, profile: HardwareProfile.detect()) {
+                    // The local model a person chose is gone from this Mac's
+                    // Ollama, so every local turn would answer 404 (D152). It
+                    // moves to the best one installed, and Local Models says so.
+                    // A server on another machine is not this Mac's list.
+                    let gone = cfg.offlineLLMModel
+                    AppState.shared.config.offlineLLMModel = swap.id
+                    AppState.shared.saveConfig()
+                    CookbookStore.shared.noteModelGone(.init(from: gone, to: swap.id))
+                    WakeLog.shared.log("local discovery: \(gone) not installed -> local model now \(swap.id)")
                 }
             }
         } catch {
@@ -545,6 +621,7 @@ final class ModelRegistry: ObservableObject {
             } else {
                 self.local = nil
                 self.localTags = []
+                self.localDigests = [:]
                 self.localServedByOllama = false
                 self.localStatus = "no local server reachable at \(baseURL)"
             }
@@ -558,6 +635,7 @@ final class ModelRegistry: ObservableObject {
     private func recordAuthRejection(baseURL: String, code: Int, keySent: Bool) {
         self.local = nil
         self.localTags = []
+        self.localDigests = [:]
         self.localServedByOllama = false
         self.localStatus = keySent
             ? "endpoint at \(baseURL) rejected the stored API key (HTTP \(code)). Check the key on that endpoint under Custom endpoints."
@@ -588,6 +666,7 @@ final class ModelRegistry: ObservableObject {
         }
         self.local = compatBackend(forBaseURL: baseURL)
         self.localTags = tags
+        self.localDigests = [:]
         self.localServedByOllama = false
         self.localStatus = "OpenAI-compat endpoint reachable, \(tags.count) model\(tags.count == 1 ? "" : "s")"
         return .populated

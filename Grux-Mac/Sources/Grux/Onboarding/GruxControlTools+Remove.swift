@@ -670,7 +670,7 @@ extension GruxControlTools {
             // leave mail on screen from an account Grux had stopped reading.
             // READ BEFORE THE REMOVAL. Once the account is out of the store there is
             // nothing left to look the password up by.
-            let hadPassword = !EmailAccountStore.shared.password(for: account).isEmpty
+            let read = EmailAccountStore.shared.passwordRead(for: account)
             MailStore.shared.remove(accountId: account.id)
             MailStore.shared.saveNow()
             EmailAccountStore.shared.remove(account.id)
@@ -691,17 +691,16 @@ extension GruxControlTools {
             // password can be entered, was told a password had been forgotten that was never
             // there. On a screen whose whole job is naming what was destroyed, an invented
             // loss is the worst possible line.
-            stopped.append(hadPassword
-                ? "The password it kept in your login keychain is forgotten."
-                : "There was no password in your login keychain to forget. Nothing ever "
-                  + "entered one for this account.")
+            // Wave 75 round 3: a Keychain that would not answer said "nothing ever
+            // entered one", and its delete fails the same way, so it may still be there.
+            stopped.append(Self.passwordRemovalLine(read))
             kept = ["Your mail. Every message is on \(account.imapHost), where Grux only "
                     + "ever read it, and none of it was touched."]
             // KEYED ON THE ENABLED ONES, because that is what `endpoint.imap` is satisfied
             // by. "Your last account" would be false with a paused one still configured, and
             // this sentence is true either way.
             if EmailAccountStore.shared.enabledAccounts.isEmpty {
-                note = "Grux now has no mail account switched on, so Mailbox, the briefing "
+                note = "Grux now has no mail account switched on, so Mail, the briefing "
                      + "and email triage go back to needing setup."
             }
 
@@ -847,5 +846,21 @@ extension GruxControlTools {
              + "then delete the skill from Skills, beside the model in the Chat composer, "
              + "which is the surface that tells "
              + "you it is deleting it."
+    }
+}
+
+extension GruxControlTools {
+    /// What `grux remove mailbox` says about the account's password, read before
+    /// the removal.
+    static func passwordRemovalLine(_ read: ImapPasswordVault.PasswordRead) -> String {
+        switch read {
+        case .found:
+            return "The password it kept in your login keychain is forgotten."
+        case .missing:
+            return "There was no password in your login keychain to forget. Nothing ever entered one for this account."
+        case .unreadable:
+            return "Grux could not read your login keychain (it may be locked), so a password kept for this "
+                + "account may still be in it."
+        }
     }
 }

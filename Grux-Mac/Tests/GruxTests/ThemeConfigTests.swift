@@ -243,7 +243,10 @@ final class ThemeConfigTests: XCTestCase {
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("Sources/Grux/DesignSystem/AppearanceSettingsView.swift"), encoding: .utf8)
         XCTAssertFalse(src.contains("drop chip text or accent-on-base contrast below WCAG AA"))
-        XCTAssertTrue(src.contains("chip text under 3:1"))
+        // The caption is built from the audit's floors since D179 item 13, so
+        // the pin reads the built line, not a literal in the source.
+        XCTAssertTrue(src.contains("Text(Self.hueCaption)"))
+        XCTAssertTrue(AppearanceSettingsView.hueCaption.contains("chip text under 3.0:1"), AppearanceSettingsView.hueCaption)
     }
 
     /// The seal beside the line: a green check beside "Below WCAG AA" still read

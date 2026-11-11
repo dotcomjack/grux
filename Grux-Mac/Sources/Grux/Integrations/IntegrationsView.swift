@@ -57,6 +57,7 @@ struct IntegrationsView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Integrations")
                 .font(GruxType.title).foregroundStyle(GruxTheme.textPrimary)
+                .unlessPaneTitle("Integrations")
             Text(Self.headerLine)
                 .font(.callout)
                 .foregroundStyle(.secondary)
@@ -287,8 +288,8 @@ private struct NotionSection: View {
                             databaseId = db.id
                         } label: {
                             HStack {
-                                Image(systemName: databaseId == db.id ? "checkmark.circle.fill" : "circle")
-                                    .foregroundStyle(databaseId == db.id ? .green : .secondary)
+                                Image(systemName: NotionClient.sameDatabase(databaseId, db.id) ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(NotionClient.sameDatabase(databaseId, db.id) ? .green : .secondary)
                                 Text(db.title).font(.callout)
                                 Text(String(db.id.prefix(8)))
                                     .font(.system(.caption, design: .monospaced))
@@ -383,7 +384,7 @@ private struct NotionSection: View {
 
     private func saveAndTest() async {
         let trimmedTok = token.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedDB = databaseId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedDB = NotionClient.storedDatabaseId(databaseId)
         guard !trimmedTok.isEmpty else { return }
         _ = KeychainStore.set(.notionToken, trimmedTok)
         _ = KeychainStore.set(.notionDatabaseId, trimmedDB)

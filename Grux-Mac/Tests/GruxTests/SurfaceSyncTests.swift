@@ -199,4 +199,20 @@ final class SurfaceSyncTests: XCTestCase {
         )
         XCTAssertNotEqual(SurfaceSyncEngine.digest(of: a), SurfaceSyncEngine.digest(of: changed))
     }
+    // W48-P3 item 5: a reminder whose task was checked off or removed reaches
+    // the phone as dismissed at once, not as upcoming until its time.
+    @MainActor
+    func testReminderOfAnEndedTaskReachesThePhoneDismissed() {
+        let open = UUID(), ended = UUID()
+        func reminder(_ title: String, task: UUID?) -> GruxReminder {
+            GruxReminder(kind: .commitment, title: title, body: "",
+                         scheduledFor: Date().addingTimeInterval(3600), taskId: task)
+        }
+        let dtos = SurfaceSyncEngine.reminderDTOs(
+            from: [reminder("Call mom", task: open), reminder("Stretch", task: ended),
+                   reminder("Heard", task: nil)],
+            taskIsOpen: { $0 == open }, titleIsOpen: { _ in false })
+        XCTAssertEqual(dtos.map(\.title), ["Call mom", "Stretch", "Heard"])
+        XCTAssertEqual(dtos.map(\.dismissed), [false, true, false])
+    }
 }

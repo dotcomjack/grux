@@ -155,9 +155,10 @@ final class MicConsentTests: XCTestCase {
     /// a status of "Idle", while Home said listening waits for your OK. The
     /// section read the preference; the tell reads the mode in effect.
     func testWaitingForConsentIsNeverDescribedAsAnOpenMicrophone() throws {
-        // Home's own words (TodayModel.sayItLine), as the row asked.
-        XCTAssertEqual(ListeningSection.costNote(mode: .alwaysOn, awaitingConsent: true), TodayModel.sayItLine(.waiting))
-        XCTAssertEqual(ListeningSection.costNote(mode: .wakeWord, awaitingConsent: true), TodayModel.sayItLine(.waiting))
+        // The note says the microphone is closed (D135 item 5: it no longer
+        // repeats Home's line, which the status row under it already says).
+        XCTAssertEqual(ListeningSection.costNote(mode: .alwaysOn, awaitingConsent: true), ListeningSection.closedNote)
+        XCTAssertEqual(ListeningSection.costNote(mode: .wakeWord, awaitingConsent: true), ListeningSection.closedNote)
         // The mode line above it said "Grux hears you all the time" while
         // nothing was heard (wave 8 review): it is now conditional.
         XCTAssertTrue(ListeningSection.modeLine(mode: .alwaysOn, awaitingConsent: true)
@@ -179,6 +180,39 @@ final class MicConsentTests: XCTestCase {
         XCTAssertTrue(src.contains("Text(ListeningTell.waiting.phrase)"), "the status row reads Idle while it waits")
         XCTAssertTrue(src.contains("Text(Self.modeLine(mode: state.config.listeningMode, awaitingConsent: state.config.listeningAwaitingConsent))"),
                       "the mode line reads the preference alone")
+    }
+
+    /// D135 item 5 (sense pass 14): while listening waits for its yes, Voice
+    /// read "Listening is on, and waits for your OK before the microphone
+    /// opens." directly above the amber row "Listening needs your OK", the
+    /// same fact twice, the first calling it on. The note now says only what
+    /// the row does not: the microphone is closed, and which button opens it.
+    func testTheWaitingNoteNeverRepeatsTheStatusRowUnderIt() {
+        for mode in [ListeningMode.alwaysOn, .wakeWord] {
+            let note = ListeningSection.costNote(mode: mode, awaitingConsent: true) ?? ""
+            XCTAssertNotEqual(note, TodayModel.sayItLine(.waiting), "\(mode): the note repeats Home's line above the row")
+            XCTAssertFalse(note.lowercased().contains("your ok"),
+                           "\(mode): the note says what the row under it says: \(note)")
+            XCTAssertFalse(note.lowercased().contains("listening is on"),
+                           "\(mode): the note calls listening on above a row that says it waits: \(note)")
+            XCTAssertTrue(note.contains("closed"), "\(mode): the note no longer says the microphone is closed: \(note)")
+            XCTAssertTrue(note.contains(ListeningTell.allowTitle), "\(mode): the note names no way to open it: \(note)")
+        }
+    }
+
+    /// W39-FIX P3 10: the notes said "choose Allow listening and say yes",
+    /// but Allow listening opens a dialog whose yes button reads "Turn it on".
+    /// Every line that walks a person to the microphone names the button the
+    /// dialog really shows, and never asks for a "yes" no button says.
+    func testTheWayToOpenTheMicrophoneNamesTheDialogsOwnButton() {
+        let lines = [ListeningSection.closedNote, ListeningTell.waiting.help]
+        for line in lines {
+            XCTAssertTrue(line.contains(ListeningTell.allowTitle), "names no way to the dialog: \(line)")
+            XCTAssertTrue(line.contains(MicConsent.confirmTitle),
+                          "names no button the dialog shows (\(MicConsent.confirmTitle)): \(line)")
+            XCTAssertFalse(line.lowercased().contains("say yes"),
+                           "asks for a yes the dialog has no button for: \(line)")
+        }
     }
 
     /// The cost stays visible while it runs, rather than being explained once

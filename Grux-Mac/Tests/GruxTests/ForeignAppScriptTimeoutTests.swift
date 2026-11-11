@@ -253,7 +253,7 @@ final class ForeignAppScriptTimeoutTests: XCTestCase {
         ForeignAppScript.executeUnderTest = { _ in .failed(code: -1743, message: "Not authorized to send Apple events") }
         WindowFacade.headlessUnderTest = false
         let result = await BrowserTool.searchWeb("two plus two")
-        XCTAssertTrue(result.contains("Privacy & Security → Automation → Grux → Google Chrome"), result)
+        XCTAssertTrue(result.contains("Privacy & Security → Automation → Grux AI → Google Chrome"), result)
         let other = await AppleScriptRunner.run(source: "return 1")
         XCTAssertEqual(other, "error: applescript failed (-1743) - Not authorized to send Apple events")
     }

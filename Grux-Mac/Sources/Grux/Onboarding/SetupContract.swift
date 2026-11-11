@@ -89,7 +89,7 @@ enum SetupRequirement: String, CaseIterable, Identifiable {
         case .keyReddit: return "Reddit API credentials"
         case .keyReplicate: return "Replicate API token"
         case .keyBrave: return "Web search API key"
-        case .keyResend: return "Email sending API key"
+        case .keyResend: return "Resend API key"
         case .keySlack: return "Slack token"
         case .keyNotion: return "Notion token"
         case .keyTelegram: return "Telegram bot token"
@@ -114,7 +114,7 @@ enum SetupRequirement: String, CaseIterable, Identifiable {
         case .endpointSandboxRoot: return "Watched folder"
         case .endpointMicrosoftGraph: return "Microsoft 365 mail"
         case .stepFirstFrameReviewed: return "Review the first capture"
-        case .stepAgentCliInstalled: return "Install the agent command line tool"
+        case .stepAgentCliInstalled: return "Install Claude Code"
         case .stepCaptureExclusionsConfirmed: return "Confirm what stays private"
         case .stepRecordingConsentAcknowledged: return "Confirm you will tell people"
         case .stepSpeechModelDownloaded: return "Fetch the speech model"
@@ -130,7 +130,7 @@ enum SetupRequirement: String, CaseIterable, Identifiable {
     var remediation: String {
         switch self {
         case .keyAnthropic:
-            return "Add your Anthropic API key in Settings to use Claude. Get one at console.anthropic.com. Chat also runs on a local model with no key."
+            return "Add your Anthropic API key in Settings to use Claude. Get one at console.anthropic.com. Many features run on a local model with no key."
         case .keyGithub:
             return "Connect GitHub in Settings so Grux can read your repositories. A classic token with repo scope is enough."
         case .keyAppstoreconnect:
@@ -144,7 +144,7 @@ enum SetupRequirement: String, CaseIterable, Identifiable {
         case .keyBrave:
             return "Add a Brave Search API key in Settings so Grux can search the web. The free tier is enough."
         case .keyResend:
-            return "Add your email provider API key in Settings so Grux can send mail. Grux has no SMTP client."
+            return "Add a Resend API key in Settings so Grux can send mail. Get one at resend.com, the service Grux sends mail through."
         case .keySlack:
             return "Connect Slack in Settings so Grux can read and post in your workspace."
         case .keyNotion:
@@ -154,23 +154,23 @@ enum SetupRequirement: String, CaseIterable, Identifiable {
         case .keyTypesafe:
             return "Optional. Add a TypeSafe key in Integrations so Grux understands asks it cannot match word for word. Without one, it decides on this Mac."
         case .permScreenRecording:
-            return "Grux needs Screen Recording to see what you are working on. Open System Settings, Privacy and Security, Screen Recording, and enable Grux."
+            return "Grux needs Screen Recording to see your work. In System Settings, Privacy & Security, Screen & System Audio Recording, turn on Grux AI."
         case .permMicrophone:
-            return "Grux needs the microphone to hear you. Open System Settings, Privacy and Security, Microphone, and enable Grux."
+            return "Grux needs the microphone to hear you. Open System Settings, Privacy & Security, Microphone, and turn on Grux AI."
         case .permAccessibility:
-            return "Grux needs Accessibility to read the active window title. Open System Settings, Privacy and Security, Accessibility, and enable Grux."
+            return "Grux needs Accessibility to read the active window title. Open System Settings, Privacy & Security, Accessibility, and turn on Grux AI."
         case .permAutomation:
-            return "Grux needs Automation to control other apps. Approve the prompt macOS shows, or enable Grux under Privacy and Security, Automation."
+            return "Grux needs Automation to control other apps. Approve the macOS prompt, or in Privacy & Security, Automation, turn on apps under Grux AI."
         case .permCalendar:
-            return "Grux needs Calendar access to read and create events. Open System Settings, Privacy and Security, Calendars, and enable Grux."
+            return "Grux needs Calendar access to read and create events. Open System Settings, Privacy & Security, Calendars, and turn on Grux AI."
         case .permContacts:
-            return "Grux needs Contacts access to match people to conversations. Open System Settings, Privacy and Security, Contacts, and enable Grux."
+            return "Grux needs Contacts access to match people to conversations. Open System Settings, Privacy & Security, Contacts, and turn on Grux AI."
         case .permNotifications:
-            return "Allow notifications so Grux can nudge you. Open System Settings, Notifications, Grux, and turn them on."
+            return "Allow notifications so Grux can nudge you. Open System Settings, Notifications, Grux AI, and turn them on."
         case .permSystemAudio:
-            return "Grux needs system audio to transcribe meetings. Open System Settings, Privacy and Security, Screen Recording, and enable Grux."
+            return "Grux needs system audio to transcribe meetings. In System Settings, Privacy & Security, Screen & System Audio Recording, turn on Grux AI."
         case .permFullDiskAccess:
-            return "Grux needs Full Disk Access to read your messages. Open System Settings, Privacy and Security, Full Disk Access, and enable Grux."
+            return "Grux needs Full Disk Access to read your messages. Open System Settings, Privacy & Security, Full Disk Access, and turn on Grux AI."
         case .endpointRegistry:
             return "Point Grux at your project registry URL in Settings. Grux reads your projects from it and writes status changes back."
         case .endpointRepoList:
@@ -184,7 +184,9 @@ enum SetupRequirement: String, CaseIterable, Identifiable {
         case .endpointMediaService:
             return "Point Grux at your image generation service in Settings, or use a hosted provider key instead."
         case .endpointImap:
-            return "Add a mail account, its server and an app password in Settings to let Grux read your inbox."
+            // WAS "... in Settings to let Grux read your inbox.": Settings has no mail
+            // account form, and Set it up landed on General (D201).
+            return "Add a mail account in Mail: its address, its server and an app password from your provider. Set it up opens the form."
         case .endpointSocialAccounts:
             // WAS "Connect the social accounts you want Grux to watch in Settings.", which
             // named a Settings screen that does not exist. Social Ops talks to a service you
@@ -197,7 +199,9 @@ enum SetupRequirement: String, CaseIterable, Identifiable {
         case .stepFirstFrameReviewed:
             return "Grux will show you one frame, and the exact text it would send, before anything leaves your Mac. Nothing is sent until you approve."
         case .stepAgentCliInstalled:
-            return "Install the coding agent command line tool, then restart Grux. It was not found at any location Grux checks."
+            // Names the tool and holds `ClaudeBinaryLocator.installCommand` word for word, so a
+            // surface with no button (`grux status`) still says how (D160).
+            return "Install Claude Code: in Terminal, run curl -fsSL https://claude.ai/install.sh | bash. Grux notices it by itself once it is installed."
         case .stepCaptureExclusionsConfirmed:
             return "Check the list of apps Grux will never look at. Password managers and banking apps are excluded by default."
         case .stepRecordingConsentAcknowledged:
@@ -205,7 +209,7 @@ enum SetupRequirement: String, CaseIterable, Identifiable {
         case .stepSpeechModelDownloaded:
             return "Grux fetches a one time on-device speech model before it can transcribe. Connect to the internet and open Meetings once."
         case .stepCorpusSourcesConfirmed:
-            return "Pick which of your messages, notes and sent mail Grux may index. Nothing is indexed until you choose."
+            return "Pick which of your messages, notes and sent mail Grux may index. Nothing from them is indexed until you choose."
         case .stepTerminalSessionsExplained:
             return "Read what a headless session runs and which credential it spends, then turn terminal sessions on in Settings."
         case .stepPhonePaired:

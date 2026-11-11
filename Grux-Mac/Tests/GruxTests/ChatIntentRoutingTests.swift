@@ -151,10 +151,17 @@ final class ChatIntentRoutingTests: XCTestCase {
     }
 
     /// Anything that CREATES keeps the judge: a false positive leaves junk.
+    /// (A task named with a colon, "called" or "named", or put "on my task
+    /// list" has one reading and is the exception below, D151.)
     func test_creatingActionsKeepTheJudge() async throws {
-        for u in ["add a task: water the office plants", "put lunch with Sarah on my calendar Friday at 1pm"] {
+        // D180 item 1: "make a to-do list for my trip" is no task at all now (a
+        // list to make goes to the model); a to-do named as one keeps the judge.
+        for u in ["add a task to water the office plants", "make a to-do for the laundry",
+                  "remind me to water the office plants",
+                  "put lunch with Sarah on my calendar Friday at 1pm"] {
             let plan = try XCTUnwrap(ChatIntentClassifier.pimRoute(utterance: u), u)
             XCTAssertTrue(plan.kind.isJudged, u)
+            XCTAssertTrue(plan.isJudged, u)
             let d = await ChatIntentClassifier.resolvePIM(plan: plan, utterance: u, preDecided: nil,
                                                           engine: engine(judging: 0.2), threshold: 0.70)
             XCTAssertFalse(d.confirmed, "\(u): a creating action lost its judge")
@@ -163,6 +170,59 @@ final class ChatIntentRoutingTests: XCTestCase {
             XCTAssertEqual(kind.isJudged, ![.completeTask, .removeTask, .focusTask, .takeNote, .rememberFact].contains(kind),
                            kind.rawValue)
         }
+    }
+
+    // MARK: - A task named as a task skips the judge (D151)
+
+    /// Live 2026-11-03 2:29 PM: Jev held back "add a task: Email" at 0.63, the
+    /// local model then claimed "Added" with no tool call, and the reply guard
+    /// turned it into "I have not done that. Want me to?". A task the person
+    /// sets off with a colon, "called" or "named", or puts on their task list
+    /// by name, has one reading, and the card carries the 5 s undo. The open
+    /// shapes ("add a task to ...", "make a to-do for the laundry", "remind
+    /// me to ...") keep the judge above.
+    func test_aTaskNamedAsATaskIsNotJudged() async throws {
+        for (u, title) in [("add a task: Email", "Email"),
+                           ("Add a task: email Sarah the deck", "Email Sarah the deck"),
+                           ("create a to-do: renew the passport", "Renew the passport"),
+                           ("add a new task called Email", "Email"),
+                           ("make a task named gym", "Gym"),
+                           ("add Email to my tasks", "Email"),
+                           ("put buy milk on my to-do list", "Buy milk")] {
+            let plan = try XCTUnwrap(ChatIntentClassifier.pimRoute(utterance: u), u)
+            XCTAssertEqual(plan.kind, .addTask, u)
+            XCTAssertEqual(plan.cardTitle, title, u)
+            XCTAssertTrue(plan.requiresUndoWindow, "\(u): a task must carry the 5 s undo")
+            XCTAssertFalse(plan.isJudged, u)
+            let judge = CountingJudge(probability: 0.63)
+            let e = DecisionEngine(keyLookup: { "k" }, ledger: DecisionLedger(storeURL: nil), remote: { _ in judge })
+            let vetoed = ChatIntentClassifier.PreDecidedPIM(
+                utterance: u, planKind: plan.kind, cardTitle: plan.cardTitle,
+                decision: .init(confidence: 0.63, latencyMs: 169, provider: .jev, confirmed: false))
+            for pre in [nil, vetoed] {
+                let d = await ChatIntentClassifier.resolvePIM(plan: plan, utterance: u, preDecided: pre,
+                                                              engine: e, threshold: 0.70)
+                XCTAssertTrue(d.confirmed, "\(u): the judge still vetoes a task named as a task")
+            }
+            XCTAssertEqual(judge.calls, 0, "\(u): a paid call was spent on a task named as a task")
+        }
+    }
+
+    /// The exemption lives on the plan, so every gate reads the same answer:
+    /// no caller may ask the kind alone whether to judge.
+    func test_onlyThePlanSaysWhetherToJudge() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources")
+        var hits: [String] = []
+        let files = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)!
+        for case let url as URL in files where url.pathExtension == "swift" {
+            let text = try String(contentsOf: url, encoding: .utf8)
+            for (i, line) in text.components(separatedBy: "\n").enumerated()
+            where line.contains("kind.isJudged") && !line.contains("var isJudged") {
+                hits.append("\(url.lastPathComponent):\(i + 1)")
+            }
+        }
+        XCTAssertEqual(hits, [], "a gate reads kind.isJudged instead of plan.isJudged: \(hits)")
     }
 
     // MARK: - Explicit note commands skip the judge (A34 part 2, ruling 0v)

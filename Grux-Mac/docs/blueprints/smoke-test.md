@@ -27,8 +27,8 @@ is the problem. There is an optional extension below that adds one model call, a
 deliberately the last phase, so a failure there is unambiguous.
 
 If you install the extension, it requires `key.anthropic`, with the remediation "Add your
-Anthropic API key in Settings to use Claude. Get one at console.anthropic.com. Chat also runs
-on a local model with no key."
+Anthropic API key in Settings to use Claude. Get one at console.anthropic.com. Many features
+run on a local model with no key."
 
 ## Config keys read
 
@@ -176,7 +176,7 @@ help you diagnose a machine where nothing is configured.
 
 If you install the optional model phase and no key is present, that feature shows the
 `needs-setup` card with: "Add your Anthropic API key in Settings to use Claude. Get one
-at console.anthropic.com. Chat also runs on a local model with no key." The core still runs and still reports.
+at console.anthropic.com. Many features run on a local model with no key." The core still runs and still reports.
 
 ## Example, not a default
 

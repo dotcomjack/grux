@@ -392,6 +392,7 @@ final class AppState: ObservableObject {
     func saveConfig() {
         Persistence.save(config, to: Persistence.configURL)
         configSync?.noteOwnWrite()
+        CookbookStore.shared.settleModelGone(configured: config.offlineLLMModel)
     }
     func saveTasks() { Persistence.save(tasks, to: Persistence.tasksURL) }
     func saveEvents() { Persistence.save(events, to: Persistence.eventsURL) }
@@ -692,6 +693,17 @@ final class AppState: ObservableObject {
         NotificationCenter.default.post(name: .gruxFocusEvent, object: nil)
     }
 
+    /// Marks the person's message as answered by Grux with no model, in the
+    /// open chat and in its saved thread (wave 67 round 5).
+    func markAnsweredWithoutModel(_ id: UUID) {
+        guard let i = chat.lastIndex(where: { $0.id == id }), !chat[i].answeredWithoutModel else { return }
+        chat[i].answeredWithoutModel = true
+        guard let threadId = activeThreadId, var messages = ChatThreadStore.shared.load(id: threadId)?.messages,
+              let j = messages.lastIndex(where: { $0.id == id }) else { return }
+        messages[j].answeredWithoutModel = true
+        ChatThreadStore.shared.replaceMessages(id: threadId, messages: messages)
+    }
+
     func appendChat(_ m: ChatMessage) {
         let threadId = ensureActiveThread()
         chat.append(m)
@@ -771,14 +783,10 @@ final class AppState: ObservableObject {
         ) else { return }
         // And whatever does come back is checked before it is shown, because
         // the conversation itself can be about an error without the thread
-        // needing to be named after one.
-        // The first user message that has words: one that was only an
-        // attachment has none, and falling back to nothing leaves "New chat",
-        // so the next reply would ask again.
-        let firstUserLine = visible.first(where: {
-            $0.role == .user && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        })?.content ?? ""
-        let clean = ChatTitleHygiene.clean(generated: title, firstUserLine: firstUserLine)
+        // needing to be named after one, and it must name what the person
+        // asked, so it is checked against their own lines.
+        let userLines = visible.filter { $0.role == .user }.map(\.content)
+        let clean = ChatTitleHygiene.clean(generated: title, userLines: userLines)
         guard clean != ChatTitleHygiene.neutralDefault else { return }
         await MainActor.run {
             _ = ChatThreadStore.shared.rename(id: threadId, title: clean)
@@ -830,8 +838,8 @@ final class AppState: ObservableObject {
         // Notices (error bubbles, recovery hints) are for the person, never for
         // the summary: folded in, they read as things the user said and the
         // summary then carries them forward as established context.
-        let toCompact = Array(thread.messages.prefix(thread.messages.count - keepLastN)).filter { !$0.isNotice }
-        let keep = Array(thread.messages.suffix(keepLastN))
+        let folded = Array(thread.messages.prefix(thread.messages.count - keepLastN))
+        let toCompact = folded.filter { !$0.isNotice }
         guard let routing = chatBackgroundRouting() else {
             WakeLog.shared.log("compact: skipped - no model route")
             return false
@@ -846,13 +854,29 @@ final class AppState: ObservableObject {
             WakeLog.shared.log("compact: summarizer returned nil (network/api)")
             return false
         }
-        await MainActor.run {
-            _ = ChatThreadStore.shared.replaceMessages(id: threadId, messages: keep, summary: newSummary)
-            self.chat = keep
-            self.activeThreadSummary = newSummary
+        // THE THREAD AS IT IS NOW, NOT AS IT WAS (D144). The summary took 43 s
+        // on a local model on 2026-11-02, and writing back the list chosen
+        // before it erased the four turns sent meanwhile, on disk and on screen.
+        // A thread that no longer holds what was folded (cleared meanwhile) is
+        // left alone, and the visible chat changes only if it still shows it.
+        let kept: [ChatMessage]? = await MainActor.run {
+            guard let latest = ChatThreadStore.shared.load(id: threadId)?.messages else { return nil }
+            let foldedIDs = Set(folded.map(\.id))
+            guard latest.contains(where: { foldedIDs.contains($0.id) }) else { return nil }
+            let kept = ChatCompactor.kept(afterSummary: latest, folded: folded)
+            _ = ChatThreadStore.shared.replaceMessages(id: threadId, messages: kept, summary: newSummary)
+            if self.activeThreadId == threadId {
+                self.chat = ChatCompactor.kept(afterSummary: self.chat, folded: folded)
+                self.activeThreadSummary = newSummary
+            }
             self.threads = ChatThreadStore.shared.list()
+            return kept
         }
-        WakeLog.shared.log("compact: folded \(toCompact.count) → kept \(keep.count) (summary=\(newSummary.count)c)")
+        guard let kept else {
+            WakeLog.shared.log("compact: the thread changed while summarizing, nothing written")
+            return false
+        }
+        WakeLog.shared.log("compact: folded \(toCompact.count) → kept \(kept.count) (summary=\(newSummary.count)c)")
         return true
     }
 

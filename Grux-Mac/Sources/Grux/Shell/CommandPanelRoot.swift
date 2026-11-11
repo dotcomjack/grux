@@ -61,6 +61,9 @@ final class PanelModel: ObservableObject {
 
     private let stateProvider: (@MainActor () -> RelevanceState)?
     private let slowInputs: @MainActor (Date) -> RelevanceState.SlowInputs
+    /// Fires when the local model check answers; Now re-reads whether chat
+    /// needs a model then, not a minute later on the timer (D172).
+    private let modelChecks: AnyPublisher<Void, Never>
     /// The calendar and setup gaps last read; see `refreshNow(includingSlow:)`.
     private var slow: RelevanceState.SlowInputs?
     private let refreshInterval: TimeInterval
@@ -96,6 +99,7 @@ final class PanelModel: ObservableObject {
     /// it without a clock or a window.
     init(stateProvider: (@MainActor () -> RelevanceState)? = nil,
          slowInputs: @escaping @MainActor (Date) -> RelevanceState.SlowInputs = { RelevanceState.SlowInputs.live(now: $0) },
+         modelChecks: AnyPublisher<Void, Never>? = nil,
          refreshInterval: TimeInterval = 1,
          jobExists: @escaping @MainActor (String) -> Bool = { id in
              AgentService.shared.jobs.contains { $0.id == id }
@@ -117,6 +121,8 @@ final class PanelModel: ObservableObject {
          paneMinimum: @escaping @MainActor (LaunchRootView.Tab) -> CGFloat = { PaneMinimum.width(for: $0) }) {
         self.stateProvider = stateProvider
         self.slowInputs = slowInputs
+        self.modelChecks = modelChecks
+            ?? ModelRegistry.shared.$localStatus.dropFirst().map { _ in () }.eraseToAnyPublisher()
         self.refreshInterval = refreshInterval
         self.jobExists = jobExists
         self.signIn = signIn
@@ -367,12 +373,22 @@ final class PanelModel: ObservableObject {
         sizeWindow(GruxLayout.onboardingIdealWidth, GruxLayout.onboardingMinWidth)
     }
 
+    /// The local model check answering re-reads the slow inputs at once (D172).
+    func observeModelChecks() {
+        // Delivered on the next turn of the main queue, after the status is stored.
+        modelChecks
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] in self?.refreshNow(force: true, includingSlow: true) }
+            .store(in: &observers)
+    }
+
     /// Refresh when any input to Now changes: approvals, mail, agent jobs,
-    /// work orders, tasks, workflow runs, proposals, the Claude sign-in and an old hook left
-    /// for the person. Calendar, setup gaps
+    /// work orders, tasks, workflow runs, proposals, the Claude sign-in, an old hook left
+    /// for the person and the local model check answering. Calendar, setup gaps
     /// and brands have no publisher worth trusting, so a 60 s timer covers them.
     func startObserving() {
         guard observers.isEmpty else { return }
+        observeModelChecks()
         let changes: [AnyPublisher<Void, Never>] = [
             ApprovalQueue.shared.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
             MailStore.shared.$messages.dropFirst().map { _ in () }.eraseToAnyPublisher(),

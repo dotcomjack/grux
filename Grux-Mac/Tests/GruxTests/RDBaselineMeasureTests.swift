@@ -131,6 +131,24 @@ final class RDBaselineMeasureTests: XCTestCase {
                        "Measuring: running the full test suite on your checkout. This can take a while.")
     }
 
+    /// D107 (sense pass 9): a Mac with no known failures read "with at most 0
+    /// known failures and 12 skips". Zero reads as none, on every count.
+    func testZeroReadsAsNone() {
+        func bar(_ f: Int, _ s: Int) -> String {
+            var b = RDTestBaseline(failures: f, skips: s)
+            b.measuredExecuted = 4145
+            b.measuredAt = Date(timeIntervalSince1970: 0)
+            return RDBaselineStore.line(b, measuring: false)
+        }
+        XCTAssertTrue(bar(0, 12).hasPrefix("Upgrades must pass the full test suite with no known failures and at most 12 skips, measured"), bar(0, 12))
+        XCTAssertTrue(bar(0, 0).hasPrefix("Upgrades must pass the full test suite with no known failures and no skips, measured"), bar(0, 0))
+        XCTAssertTrue(bar(2, 0).hasPrefix("Upgrades must pass the full test suite with at most 2 known failures and no skips, measured"), bar(2, 0))
+        XCTAssertTrue(bar(1, 1).hasPrefix("Upgrades must pass the full test suite with at most 1 known failure and 1 skip, measured"), bar(1, 1))
+        for (f, s) in [(0, 0), (0, 1), (1, 0), (2, 6)] {
+            XCTAssertFalse(bar(f, s).contains("at most 0"), bar(f, s))
+        }
+    }
+
     // A runner that holds its one call until released, to observe the in-flight state.
     final class HeldRunner: RDProcessRunning, @unchecked Sendable {
         private let lock = NSLock()

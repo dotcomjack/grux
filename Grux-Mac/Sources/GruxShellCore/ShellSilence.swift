@@ -12,7 +12,35 @@ public enum ShellSilence {
     /// default reads the sentinel itself, so a door used before (or without) that wiring
     /// is still silent.
     nonisolated(unsafe) public static var isSilent: () -> Bool = {
-        FileManager.default.fileExists(atPath: NSHomeDirectory() + "/.grux/SILENT")
+        sentinelNames.contains { FileManager.default.fileExists(atPath: NSHomeDirectory() + "/.grux/" + $0) }
+    }
+
+    /// The files under `~/.grux` that each silence Grux on their own: SILENT, and
+    /// HEADLESS, because a run nobody watches is a run nobody may hear (operator note 15).
+    public static let sentinelNames = ["SILENT", "HEADLESS"]
+
+    /// Which of `sentinelNames` silence Grux right now. Grux points it at its own `.grux`
+    /// at launch; the default reads the person's home, as `isSilent` does.
+    nonisolated(unsafe) public static var silencedBy: () -> [String] = {
+        sentinelNames.filter { FileManager.default.fileExists(atPath: NSHomeDirectory() + "/.grux/" + $0) }
+    }
+
+    /// The files that silenced Grux, as a refusal names them: " (~/.grux/HEADLESS)", or
+    /// nothing when no file did (a test run). A HEADLESS-only run once read "(~/.grux/SILENT)",
+    /// a file that was not there (D109).
+    public static func note(_ names: [String]) -> String {
+        names.isEmpty ? "" : " (\(paths(names)))"
+    }
+
+    /// What lifts silent mode, in one sentence, for the person reading a refusal.
+    public static func remedy(_ names: [String]) -> String {
+        guard !names.isEmpty else { return "Silent mode is off now, so the same command may run." }
+        let headless = names.contains("HEADLESS") ? "; that also ends headless mode." : "."
+        return "Remove \(paths(names)) to let Grux make sound again" + headless
+    }
+
+    private static func paths(_ names: [String]) -> String {
+        names.map { "~/.grux/" + $0 }.joined(separator: " and ")
     }
 
     /// Told about each refused command (program, full command). Grux records it in
@@ -26,14 +54,14 @@ public enum ShellSilence {
     public static func refusal(for command: String, silent: Bool? = nil) -> String? {
         guard let program = SoundingCommand.program(in: command), silent ?? isSilent() else { return nil }
         onRefused(program, command)
-        return "\(refusalPrefix) (~/.grux/SILENT) and `\(program)` would make sound"
+        return "\(refusalPrefix)\(note(silencedBy())) and `\(program)` would make sound"
     }
 
     /// The same question for AppleScript source run in-process (a macro's AppleScript step).
     public static func refusal(forAppleScript source: String, silent: Bool? = nil) -> String? {
         guard SoundingCommand.appleScriptSounds(source), silent ?? isSilent() else { return nil }
         onRefused("applescript", source)
-        return "\(refusalPrefix) (~/.grux/SILENT) and this AppleScript would make sound"
+        return "\(refusalPrefix)\(note(silencedBy())) and this AppleScript would make sound"
     }
 }
 

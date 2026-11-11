@@ -86,7 +86,7 @@ extension GruxControlTools {
                 + "imap.example.com",
             bundles: "One account in the mail store. Never the password, which this "
                 + "cannot take.",
-            reads: "Mailbox, the briefing and email triage."),
+            reads: "Mail, the briefing and email triage."),
         AddNoun(
             noun: "project",
             shape: "<path>",
@@ -611,12 +611,23 @@ extension GruxControlTools {
         store.saveNow()
         SetupStatusFile.write()
 
-        let hasPassword = existing.map { !store.password(for: $0).isEmpty } ?? false
-        let note = hasPassword
-            ? "That account already has a password in the login keychain, so it syncs."
-            : "Nothing asked you for a password and nothing here can take one. Open Grux, "
-                + "go to Mailbox, and add it there: it goes straight to the login keychain. "
-                + "Until then this account is listed and will not sync."
+        // Wave 75 round 3: a Keychain that would not answer is not "no password".
+        let read = existing.map { store.passwordRead(for: $0) } ?? .missing
+        let hasPassword: Bool
+        if case .found = read { hasPassword = true } else { hasPassword = false }
+        let note: String
+        switch read {
+        case .found:
+            note = "That account already has a password in the login keychain, so it syncs."
+        case .unreadable:
+            note = "Grux could not read the login keychain (it may be locked), so it cannot tell whether this "
+                + "account has a password. If it has none, open Grux, go to Mail, and add the account again "
+                + "with it: the same address updates this one."
+        case .missing:
+            note = "Nothing asked you for a password and nothing here can take one. Open Grux, "
+                + "go to Mail, and add the account there with it: the same address updates this one, and the "
+                + "password goes straight to the login keychain. Until then this account is listed and will not sync."
+        }
 
         let touched: [[String: Any]] = [
             addRow("Mail accounts",

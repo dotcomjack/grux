@@ -1,5 +1,6 @@
 import Foundation
 import GruxMCPCore
+import GruxShellCore
 
 // MARK: - grux_model
 
@@ -197,7 +198,9 @@ extension GruxControlTools {
             switch VoiceEngineLogic.effectiveTTS(
                 useElevenLabs: cfg.useElevenLabs,
                 hasKey: !AppState.shared.elevenLabsKey.isEmpty,
-                offline: AppState.shared.offlineMode) {
+                offline: AppState.shared.offlineMode,
+                wouldAskForMic: AudioOutput.outputWouldAskForMic,
+                silencedBy: AudioOutput.silencedBy) {
             case .elevenLabs:
                 return cfg.speakRepliesAloud
                     ? nil
@@ -209,6 +212,9 @@ extension GruxControlTools {
                 }
                 return "Replies are spoken by the system voice (\(reason)), so nothing is "
                      + "calling this."
+            case .silenced(let files):
+                return "Grux is silenced\(ShellSilence.note(files)), so it speaks nothing aloud "
+                     + "and nothing calls this."
             }
         default:
             return nil

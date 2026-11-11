@@ -18,7 +18,9 @@ enum ChatTriggers {
     static let status = "fire-chat-status"
     /// Contents: the open pane's width in points.
     static let paneWidth = "fire-pane-width"
-    static let names = [showEarlier, scroll, latest, status, paneWidth]
+    /// Contents: "new" (what New chat does) or a thread id (what picking it does).
+    static let thread = "fire-chat-thread"
+    static let names = [showEarlier, scroll, latest, status, paneWidth, thread]
 
     static let statusFile = "chat-status.json"
 
@@ -71,6 +73,7 @@ enum ChatTriggers {
             else { acted = false }
         case paneWidth:
             if let width = points(contents), width > 0 { setPaneWidth(CGFloat(width)) } else { acted = false }
+        case thread: acted = openThread(contents)
         default: break
         }
         WakeLog.shared.log("\(name): \(acted ? "done" : "nothing to act on") \(contents)")
@@ -88,8 +91,22 @@ enum ChatTriggers {
         }
     }
 
+    /// "new" starts a thread as New chat does; a known thread id opens it as
+    /// picking it does. Anything else changes nothing.
+    static func openThread(_ contents: String) -> Bool {
+        let state = AppState.shared
+        if contents.lowercased() == "new" {
+            state.newThread()
+            return true
+        }
+        guard let id = UUID(uuidString: contents), ChatThreadStore.shared.load(id: id) != nil else { return false }
+        state.switchThread(id)
+        return state.activeThreadId == id
+    }
+
     static func writeStatus(to url: URL) {
         var status = ChatView.status()
+        status["activeThreadId"] = AppState.shared.activeThreadId?.uuidString ?? NSNull()
         status["writtenAt"] = ISO8601DateFormatter().string(from: Date())
         guard let data = try? JSONSerialization.data(withJSONObject: status, options: [.prettyPrinted, .sortedKeys])
         else { return }

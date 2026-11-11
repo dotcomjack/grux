@@ -157,9 +157,9 @@ final class BuiltInMicButtonTests: XCTestCase {
         }
         XCTAssertTrue(notAsked.contains("Allow listening"), notAsked)
         XCTAssertFalse(notAsked.contains("System Settings"), "nothing is off in System Settings before macOS has asked: \(notAsked)")
-        XCTAssertTrue(denied.contains("Privacy and Security, Microphone"), denied)
+        XCTAssertTrue(denied.contains("Privacy & Security, Microphone"), denied)
         XCTAssertTrue(denied.contains("Refresh"), denied)
-        XCTAssertFalse(restricted.contains("Privacy and Security"), "a restricted Mac has no switch there to turn on: \(restricted)")
+        XCTAssertFalse(restricted.contains("Privacy & Security"), "a restricted Mac has no switch there to turn on: \(restricted)")
         XCTAssertTrue(allowed.contains("No microphone is connected"), allowed)
         XCTAssertTrue(allowed.contains("Refresh"), allowed)
         XCTAssertEqual(Set([notAsked, denied, restricted, allowed]).count, 4, "each answer gets its own line")

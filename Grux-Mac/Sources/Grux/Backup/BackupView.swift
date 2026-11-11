@@ -8,6 +8,10 @@ import AppKit
 // memory export/import (MemoryPortability) and CommandsV2 user-command
 // export/import seams.
 struct BackupView: View {
+    /// Plain words for the file to pick (D166 item 13: "grux-backup-*.zip" and
+    /// "validates its manifest").
+    static let restoreLine = "Pick a backup Grux made: its name starts with grux-backup and ends in .zip. Grux checks that it is a Grux backup it can read, sets your current data aside as a safety copy, then swaps the backup in. Nothing is deleted."
+    static let autoBackupLine = "Off by default. When on, Grux checks every 30 minutes and makes a fresh backup if the last one is a day old or older."
     @ObservedObject private var scheduler = BackupScheduler.shared
 
     @State private var restoreCandidate: URL?
@@ -57,14 +61,14 @@ struct BackupView: View {
                         Button("Change...") { pickDestination() }
                             .buttonStyle(.borderless).font(.caption)
                     }
-                    Text("Off by default. When on, Grux checks every 30 minutes and writes a fresh archive if the last one is over 24h old.")
+                    Text(Self.autoBackupLine)
                         .font(.caption).foregroundStyle(.secondary)
                 }
 
 
                 // MARK: Restore
                 Section("Restore") {
-                    Text("Pick a grux-backup-*.zip. Grux validates its manifest, sets your current data aside as a safety copy, then swaps the backup in. Nothing is deleted.")
+                    Text(Self.restoreLine)
                         .font(.caption).foregroundStyle(.secondary)
                     HStack(spacing: 10) {
                         Button("Choose backup...") { pickRestoreArchive() }

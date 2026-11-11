@@ -323,7 +323,7 @@ struct Shell: ParsableCommand {
         frame.open(.prove)
 
         // REFUSED. The kinds want different things from the reader, so they are never
-        // printed as one: a silent-mode refusal is settled until ~/.grux/SILENT goes, an
+        // printed as one: a silent-mode refusal is settled until the silencing file goes, an
         // allowlist refusal until somebody changes a setting, and a containment refusal is
         // answered by a different command.
         if reply["blocked"] as? Bool == true {
@@ -333,8 +333,8 @@ struct Shell: ParsableCommand {
                 print("")
                 print(r.style.ink(.dim, r.prose(reason, indent: 2)))
                 print("")
-                print(r.prose("Nothing ran and nothing changed. Remove ~/.grux/SILENT to let "
-                              + "Grux make sound again.", indent: 2))
+                print(r.prose("Nothing ran and nothing changed. "
+                              + ShellSilence.remedy(ShellSilence.silencedBy()), indent: 2))
                 leave(.waitingOnYou)
             }
             if (reply["blocked_kind"] as? String) == "headless" {

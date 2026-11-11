@@ -29,6 +29,13 @@ struct PermissionsSection: View {
 
     private var permissions: [SetupRequirement] { CapabilityRequest.onboardingOrder }
 
+    /// A second line under a row whose macOS switch also grants a permission
+    /// the panel does not list (D192 item 5), or nil.
+    static func alsoCovers(_ req: SetupRequirement) -> String? {
+        guard req == .permScreenRecording else { return nil }
+        return "The same switch is \(SetupRequirement.permSystemAudio.label), so Meetings can hear the other side of a call."
+    }
+
     var body: some View {
         Section("Permissions") {
             Text("What Grux can ask macOS for, and what stays off if you say no. None of these are required.")
@@ -89,6 +96,12 @@ struct PermissionsSection: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if let also = Self.alsoCovers(req) {
+                Text(also)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(.vertical, 2)
         // Rebuilds the row when a grant lands, so the tick appears without a

@@ -453,7 +453,7 @@ final class HomeBriefingModelTests: XCTestCase {
         )
         // Leads with the top task, names the proposal count, stays forward.
         XCTAssertTrue(n.hasPrefix("First up: Ship auth · Northwind."))
-        XCTAssertTrue(n.contains("2 proposals waiting on you."))
+        XCTAssertTrue(n.contains("2 self-upgrade proposals waiting for your review."))
         XCTAssertTrue(n.hasSuffix("Let's get after it."))
         assertNoDashes(n)
     }

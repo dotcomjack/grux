@@ -34,6 +34,16 @@ final class SettingsDeepLinkTests: XCTestCase {
         }
     }
 
+    /// D170 item 16: "Hand setup to your agent" sits low on General, with a
+    /// search entry and a scroll anchor but no tag, the first-run row's shape.
+    func test_handSetupToYourAgentIsAddressable() {
+        for tag in ["handoff", "hand-off", "agent-setup"] {
+            let loc = SettingsTabAliases.resolve(tag)
+            XCTAssertEqual(loc.pane, .general, tag)
+            XCTAssertEqual(loc.anchor, "general.handoff", tag)
+        }
+    }
+
     /// Tags are typed by a person, so casing and stray whitespace must not
     /// decide whether the deep link works.
     func testTagResolutionIsForgivingAboutCaseAndWhitespace() {

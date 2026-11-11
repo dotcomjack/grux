@@ -218,7 +218,8 @@ final class TerminalSessionsOnboardingTests: XCTestCase {
     /// `CapabilitySetupCard` deliberately gives `step.` requirements no button:
     /// "a step is completed by the feature itself, so it gets no button at all
     /// and the sentence explains what will happen." That is right for
-    /// `step.first_frame_reviewed`, which you complete by using the feature.
+    /// `step.speech_model_downloaded`, which opening Meetings completes (the
+    /// first capture has its own Review button since D157 item 3).
     ///
     /// It is wrong for a CONSENT step. Consent is completed in Settings, the
     /// remediation sentence says so in as many words, and with no button the

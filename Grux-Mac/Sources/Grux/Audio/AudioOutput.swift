@@ -21,6 +21,10 @@ import GruxAgentCore
 /// sound appends one JSON line `{ts, kind, source, text}` to `~/.grux/silenced.jsonl`,
 /// which is the record of what Grux would have said.
 ///
+/// HEADLESS IS SILENT TOO. `~/.grux/HEADLESS` (`WindowFacade`) silences the same way:
+/// a run nobody watches is a run nobody may hear. A MacBook proof with HEADLESS and no
+/// SILENT once read a reply aloud through the system voice (operator note 15).
+///
 /// The backends behind this door (SpeechEngine, Speaker, MusicTool, MusicKitPlayer,
 /// AudioDucker) ask `permit` or `isSilent` before touching any output.
 enum AudioOutput {
@@ -45,7 +49,17 @@ enum AudioOutput {
     static var isSilent: Bool {
         if Persistence.isUnderTest && !soundAllowedUnderTest { return true }
         return FileManager.default.fileExists(atPath: sentinelURL.path)
+            || FileManager.default.fileExists(atPath: WindowFacade.sentinelURL.path)
     }
+
+    /// The files silencing Grux now (SILENT, HEADLESS), and how a refusal names them, so a
+    /// HEADLESS-only run never sends a person to remove a SILENT that is not there (D109).
+    static var silencedBy: [String] {
+        [sentinelURL, WindowFacade.sentinelURL]
+            .filter { FileManager.default.fileExists(atPath: $0.path) }
+            .map(\.lastPathComponent)
+    }
+    static var silentNote: String { ShellSilence.note(silencedBy) }
 
     /// True when the sound may play. In silent mode records it and returns false.
     @discardableResult
@@ -197,6 +211,7 @@ enum AudioOutput {
     /// and on the first shell command, whichever is first.
     static let wireShellDoors: Void = {
         ShellSilence.isSilent = { AudioOutput.isSilent }
+        ShellSilence.silencedBy = { AudioOutput.silencedBy }
         SwarmWorker.isSilent = { AudioOutput.isSilent }
         SwarmWorker.isHeadless = { ForeignAppScript.refusal() != nil }
         ShellSilence.onRefused = { program, command in AudioOutput.record(.shell, source: program, text: command) }

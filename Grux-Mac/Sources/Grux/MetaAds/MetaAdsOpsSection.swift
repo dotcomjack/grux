@@ -341,7 +341,7 @@ struct MetaAdsOpsSection: View {
                 }
                 .buttonStyle(.borderless)
                 .controlSize(.small)
-                .help("Dismiss. Re-tapping the control retries the command.")
+                .help("Dismiss. Clicking the control again retries the command.")
             }
         }
         .padding(10)

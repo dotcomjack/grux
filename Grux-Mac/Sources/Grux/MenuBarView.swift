@@ -172,7 +172,7 @@ struct MenuBarView: View {
                 // nothing until there is a decision, so it adds no chrome to
                 // a fresh install.
                 if let decision = DecisionUsageSummary.datedLastLine(ledger.last) {
-                    Text(decision)
+                    Text(DecisionUsageSummary.menuBarLine(decision))
                         .font(.caption2.monospaced())
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
@@ -212,7 +212,7 @@ struct MenuBarView: View {
 
     private var ambientStatusLine: String {
         if state.micMuted {
-            return "Muted - tap the orb or flip the switch to resume."
+            return "Muted - click the orb or flip the switch to resume."
         }
         return ambient.isEnabled ? ambient.status : "Off - enable to capture spoken memory, actions, and coach nudges."
     }
@@ -317,7 +317,7 @@ struct MenuBarView: View {
             return "error: \(err)"
         }
         if meeting.autoCaptureOffered, let offer = meeting.pendingOffer {
-            return "Tap Start to record \(offer.name)."
+            return "Click Start to record \(offer.name)."
         }
         return "Off - ⌘⇧M to record calls, meetings, FaceTime locally."
     }
@@ -575,7 +575,7 @@ struct MenuBarView: View {
             Spacer()
             if !state.screenPermissionGranted {
                 Button { _ = ScreenCapturer.shared.requestPermission() } label: {
-                    Label("Grant screen access", systemImage: "lock.shield")
+                    Label("Grant Screen Recording", systemImage: "lock.shield")
                         .foregroundStyle(.orange)
                 }.buttonStyle(.borderless)
             }

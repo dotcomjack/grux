@@ -117,14 +117,34 @@ enum KeychainStore {
     private static let testLock = NSLock()
     nonisolated(unsafe) private static var testItems: [String: String] = [:]
 
+    /// Posted after every `set` and `delete`, with the key's raw value in
+    /// `userInfo[changedKey]` (not the object, which NotificationCenter filters
+    /// by identity, so an observer naming a key would miss), so a screen showing whether a credential is stored can follow a
+    /// write made anywhere else (wave 40: Settings' web-first warning stayed up
+    /// after the key was saved in its Credentials row).
+    static let didChange = Notification.Name("KeychainStore.didChange")
+    static let changedKey = "key"
+
+    private static func announce(_ key: Key) {
+        NotificationCenter.default.post(name: didChange, object: nil, userInfo: [changedKey: key.rawValue])
+    }
+
     @discardableResult
     static func set(_ key: Key, _ value: String) -> Bool {
         invalidate(key)
+        defer { invalidate(key); announce(key) }
+        return write(key, value)
+    }
+
+    private static func write(_ key: Key, _ value: String) -> Bool {
         if isUnderTest {
             testLock.lock(); defer { testLock.unlock() }
-            testItems[key.rawValue] = value
+            testItems[key.rawValue] = value.isEmpty ? nil : value
             return true
         }
+        // An empty value is no key: the item goes, so `exists` (attributes only)
+        // cannot read a removed key as saved (wave 68 round 1).
+        if value.isEmpty { return remove(key) }
         guard let data = value.data(using: .utf8) else {
             NSLog("[KeychainStore] set \(key.rawValue) → utf8 encode failed")
             return false
@@ -188,23 +208,23 @@ enum KeychainStore {
     // stale relative to this process. `nil` is a real cached answer meaning "asked and it
     // was not there", which matters because a missing key is the common case on a fresh
     // install and re-asking for it is the same expensive round trip.
-    private static let cacheLock = NSLock()
-    nonisolated(unsafe) private static var cache: [String: String] = [:]
+    //
+    // Every write path invalidates before and after it writes, and a read stores only
+    // under the generation it began at (`KeychainReadCache`), so a read that overlaps a
+    // write never caches the value the write replaced.
+    private static let readCache = KeychainReadCache()
 
     private static func cached(_ key: Key) -> String? {
-        cacheLock.lock(); defer { cacheLock.unlock() }
-        return cache[key.rawValue]
+        readCache.value(key.rawValue)
     }
 
-    private static func store(_ key: Key, _ value: String) {
-        cacheLock.lock(); defer { cacheLock.unlock() }
-        cache[key.rawValue] = value
+    private static func store(_ key: Key, _ value: String, readAt generation: UInt64) {
+        readCache.store(key.rawValue, value, readAt: generation)
     }
 
     /// Drop a cached read. Called by every write path so the cache cannot outlive the truth.
     static func invalidate(_ key: Key) {
-        cacheLock.lock(); defer { cacheLock.unlock() }
-        cache.removeValue(forKey: key.rawValue)
+        readCache.invalidate(key.rawValue)
     }
 
 
@@ -350,6 +370,7 @@ enum KeychainStore {
             return testItems[key.rawValue] ?? ""
         }
         if let hit = cached(key) { return hit }
+        let generation = readCache.begin(key.rawValue)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -361,15 +382,15 @@ enum KeychainStore {
         let status = copyMatching(query, &item)
         switch status {
         case errSecSuccess:
-            guard let data = item as? Data else { store(key, ""); return "" }
+            guard let data = item as? Data else { store(key, "", readAt: generation); return "" }
             let value = String(data: data, encoding: .utf8) ?? ""
-            store(key, value)
+            store(key, value, readAt: generation)
             return value
         case _ where readOutcome(status: status, headless: WindowFacade.isHeadless) == .notSet:
             if status == errSecInteractionNotAllowed {
                 WakeLog.shared.log("keychain: \(key.rawValue) needs a Keychain dialog and this Mac is headless, so it reads as not set")
             }
-            store(key, "")
+            store(key, "", readAt: generation)
             return ""
         default:
             // Deliberately NOT cached. A transient failure must not pin an empty value for
@@ -398,6 +419,11 @@ enum KeychainStore {
     @discardableResult
     static func delete(_ key: Key) -> Bool {
         invalidate(key)
+        defer { invalidate(key); announce(key) }
+        return remove(key)
+    }
+
+    private static func remove(_ key: Key) -> Bool {
         if isUnderTest {
             testLock.lock(); defer { testLock.unlock() }
             testItems[key.rawValue] = nil
@@ -421,7 +447,8 @@ enum KeychainStore {
     static func exists(_ key: Key) -> Bool {
         if isUnderTest {
             testLock.lock(); defer { testLock.unlock() }
-            return !(testItems[key.rawValue] ?? "").isEmpty
+            // As the real Keychain answers: the item is there or it is not.
+            return testItems[key.rawValue] != nil
         }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,

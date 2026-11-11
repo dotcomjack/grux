@@ -17,6 +17,22 @@ extension Notification.Name {
 /// Grux finishes (the post-speech wake-window keeps the conversation open).
 @MainActor
 final class SpeechEngine: NSObject, ObservableObject {
+    /// Whether a reply is read in the ElevenLabs voice rather than the Mac's own:
+    /// chosen, a key stored, and offline mode off. `speak`, `speakStreaming` and
+    /// every answer that says what needs the internet read this one rule.
+    nonisolated static func usesElevenLabs(choice: Bool, hasKey: Bool, offline: Bool) -> Bool {
+        choice && hasKey && !offline
+    }
+
+    /// The whole rule both speak paths play by, and every readout of it: ElevenLabs only
+    /// once the microphone question has been answered, because this engine plays in
+    /// process and before that would raise the prompt (`AudioOutput.outputWouldAskForMic`).
+    /// The Voice pane and the chat chip read this too, so neither says ElevenLabs while
+    /// the macOS voice speaks (wave 70).
+    nonisolated static func speaksWithElevenLabs(choice: Bool, hasKey: Bool, offline: Bool, wouldAskForMic: Bool) -> Bool {
+        usesElevenLabs(choice: choice, hasKey: hasKey, offline: offline) && !wouldAskForMic
+    }
+
     static let shared = SpeechEngine()
 
     @Published private(set) var isSpeaking = false
@@ -134,8 +150,8 @@ final class SpeechEngine: NSObject, ObservableObject {
         // network feature. The existing system-voice fallback below handles it.
         // Before the microphone question the system voice too: this engine plays in
         // process, which would raise the prompt (`AudioOutput.outputWouldAskForMic`).
-        let useEL = state.config.useElevenLabs && !state.elevenLabsKey.isEmpty && !state.offlineMode
-            && !AudioOutput.outputWouldAskForMic
+        let useEL = Self.speaksWithElevenLabs(choice: state.config.useElevenLabs, hasKey: !state.elevenLabsKey.isEmpty,
+                                              offline: state.offlineMode, wouldAskForMic: AudioOutput.outputWouldAskForMic)
 
         stop(reason: "new speak()")
         sessionId = UUID()
@@ -262,8 +278,9 @@ final class SpeechEngine: NSObject, ObservableObject {
         let cfg = AppState.shared.config
         // Offline mode forces the on-device system-voice path (same guard as
         // speak()) so streamed replies never reach for cloud TTS. Same microphone rule too.
-        let useEL = cfg.useElevenLabs && !AppState.shared.elevenLabsKey.isEmpty && !AppState.shared.offlineMode
-            && !AudioOutput.outputWouldAskForMic
+        let useEL = Self.speaksWithElevenLabs(choice: cfg.useElevenLabs, hasKey: !AppState.shared.elevenLabsKey.isEmpty,
+                                              offline: AppState.shared.offlineMode,
+                                              wouldAskForMic: AudioOutput.outputWouldAskForMic)
         if !useEL {
             // System TTS doesn't support append-style streaming well. Each
             // AVSpeechUtterance is queued independently, so fall back to
@@ -399,6 +416,16 @@ final class SpeechEngine: NSObject, ObservableObject {
         } catch {
             WakeLog.shared.log("eleven stream error: \(error.localizedDescription)")
         }
+    }
+
+    /// The person asked for quiet (the mute button, a quiet ask): stop
+    /// everything now. `stop` alone tears down ElevenLabs and streaming but
+    /// leaves the system voice reading, and is also called between chunks,
+    /// so the system voice is stopped only here (wave 62 round 3).
+    func silenceNow(reason: String) {
+        stop(reason: reason)
+        Speaker.shared.stop()
+        cancelPendingPoliteSpeak()
     }
 
     func stop(reason: String = "user") {

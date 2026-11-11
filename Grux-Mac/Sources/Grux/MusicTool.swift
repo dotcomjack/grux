@@ -29,7 +29,7 @@ enum MusicTool {
         guard !songTrim.isEmpty else { return "error: empty song name" }
         let wanted = artistTrim.isEmpty ? songTrim : "\(songTrim) by \(artistTrim)"
         guard AudioOutput.permit(.music, source: "MusicTool.play", text: wanted) else {
-            return "error: silent mode is on (~/.grux/SILENT), so Grux will not play '\(wanted)'"
+            return "error: silent mode is on\(AudioOutput.silentNote), so Grux will not play '\(wanted)'"
         }
         // PRIMARY: MusicKit ApplicationMusicPlayer queues the EXACT track and
         // plays it in the app's own session, so there is no Music.app focus
@@ -277,7 +277,7 @@ enum MusicTool {
         case "ok":
             return "ok: playing \(label)"
         case "stalled", "notplaying":
-            return "partial: started \(label) but the audio isn't advancing. It may be cloud-unavailable; tap Play in Music."
+            return "partial: started \(label) but the audio isn't advancing. It may be cloud-unavailable; click Play in Music."
         case "wrongtrack":
             return "partial: Music is on a different track than \(label); the owned item may be cloud-unavailable."
         default:
@@ -580,7 +580,7 @@ enum MusicTool {
         // no system dialog pops mid voice-command) and bail honestly if denied
         // rather than pressing into the void and then claiming "now playing".
         if !accessibilityGranted() {
-            return "partial: opened '\(hit.trackName)' by \(hit.artistName)\(albumTail) in Apple Music, but Grux needs Accessibility access to press Play. Grant Grux under System Settings > Privacy & Security > Accessibility, then ask again."
+            return "partial: opened '\(hit.trackName)' by \(hit.artistName)\(albumTail) in Apple Music, but Grux needs Accessibility access to press Play. Turn on Grux AI under System Settings > Privacy & Security > Accessibility, then ask again."
         }
 
         let pressed = pressMusicPlayButton()
@@ -651,15 +651,15 @@ enum MusicTool {
             // playing" while silence plays. The usual cause is a missing
             // Accessibility grant, so the AX Play-press never lands.
             if curState == "playing" {
-                return "partial: opened '\(playedName)' by \(playedArtist) in Apple Music but audio isn't advancing (pos \(p1)→\(p2)). Tap Play, or grant Grux Accessibility in System Settings > Privacy & Security > Accessibility."
+                return "partial: opened '\(playedName)' by \(playedArtist) in Apple Music but audio isn't advancing (pos \(p1)→\(p2)). Click Play, or turn on Grux AI in System Settings > Privacy & Security > Accessibility."
             }
             let hint = pressed ? "pressed Play but Music stayed \(curState)" : "couldn't auto-press the Play button"
-            return "partial: opened '\(playedName)' by \(playedArtist)\(albumTail) in Apple Music - \(hint). Tap Play, or grant Grux Accessibility (System Settings > Privacy & Security > Accessibility)."
+            return "partial: opened '\(playedName)' by \(playedArtist)\(albumTail) in Apple Music - \(hint). Click Play, or turn on Grux AI in System Settings > Privacy & Security > Accessibility."
         }
 
         // Verify script itself failed.
         let hint = pressed ? "pressed Play but Music didn't start" : "couldn't auto-press the Play button"
-        return "partial: opened '\(hit.trackName)' by \(hit.artistName)\(albumTail) in Apple Music - \(hint). Tap Play, or grant Grux Accessibility (System Settings > Privacy & Security > Accessibility)."
+        return "partial: opened '\(hit.trackName)' by \(hit.artistName)\(albumTail) in Apple Music - \(hint). Click Play, or turn on Grux AI in System Settings > Privacy & Security > Accessibility."
     }
 
     private static func trackMatches(_ current: String, _ target: String) -> Bool {
@@ -912,7 +912,7 @@ enum MusicTool {
         let artistTrim = artist.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !artistTrim.isEmpty else { return "error: empty artist" }
         // Listing launches Music, and silent mode leaves Music alone.
-        guard !AudioOutput.isSilent else { return "error: silent mode is on (~/.grux/SILENT), so Grux will not open Music" }
+        guard !AudioOutput.isSilent else { return "error: silent mode is on\(AudioOutput.silentNote), so Grux will not open Music" }
         if let why = ForeignAppScript.refuse("MusicTool.listLibraryTracks") { return "error: \(why)" }
 
         let clampedLimit = max(1, min(50, limit))
@@ -990,7 +990,7 @@ enum MusicTool {
         case .ok:
             return nil
         case .failed(let code, _) where code == -1743:
-            return "error: macOS blocked Grux from controlling Music. Grant it in System Settings → Privacy & Security → Automation → Grux → Music."
+            return "error: macOS blocked Grux from controlling Music. Grant it in System Settings → Privacy & Security → Automation → Grux AI → Music."
         case .failed(let code, let message):
             return "error: \(doing) (\(code.map(String.init) ?? "?")): \(message)"
         case .refused, .timedOut, .busy, .stopped, .behindLongerScript:

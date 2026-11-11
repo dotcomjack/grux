@@ -243,4 +243,29 @@ final class WindowFacadeHeadlessTests: XCTestCase {
         XCTAssertEqual(left.count, 200)
         XCTAssertEqual(left.first, "20260927-000000-005-x.png", "the oldest went first")
     }
+    // MARK: - Below the fold (D116 item 7)
+
+    /// The panel is 592 points tall, so a line under a long prompt was never in
+    /// any snapshot: the sense passes could not see below the fold. The snapshot
+    /// draws the content of every scroll view that runs past its window as well.
+    func testSnapshotFindsTheScrollViewWhoseContentRunsPastTheWindow() {
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 200))
+        let tall = NSScrollView(frame: root.bounds)
+        tall.documentView = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 900))
+        let short = NSScrollView(frame: NSRect(x: 0, y: 0, width: 320, height: 100))
+        short.documentView = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 100))
+        let nested = NSView(frame: root.bounds)
+        nested.addSubview(tall)
+        root.addSubview(nested)
+        root.addSubview(short)
+        let found = HeadlessWorkspace.overflowingScrollViews(in: root)
+        XCTAssertEqual(found.count, 1, "a content taller than its scroll view was not found, or one that fits was")
+        XCTAssertTrue(found.first === tall)
+        // One point over is over; equal fits.
+        short.documentView?.setFrameSize(NSSize(width: 320, height: 101))
+        XCTAssertEqual(HeadlessWorkspace.overflowingScrollViews(in: root).count, 2)
+        short.documentView?.setFrameSize(NSSize(width: 320, height: 100))
+        XCTAssertEqual(HeadlessWorkspace.overflowingScrollViews(in: root).count, 1)
+    }
 }
+

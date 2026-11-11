@@ -1,6 +1,8 @@
 import XCTest
 import AppKit
 import UserNotifications
+import GruxShellCore
+import GruxAgentCore
 @testable import Grux
 
 /// `~/.grux/SILENT` makes every sound a no-op and leaves a line saying what it was.
@@ -15,12 +17,14 @@ final class AudioOutputSilentModeTests: XCTestCase {
         super.setUp()
         try? FileManager.default.removeItem(at: AudioOutput.sentinelURL)
         try? FileManager.default.removeItem(at: AudioOutput.logURL)
+        try? FileManager.default.removeItem(at: WindowFacade.sentinelURL)
     }
 
     override func tearDown() {
         AudioOutput.soundAllowedUnderTest = false
         try? FileManager.default.removeItem(at: AudioOutput.sentinelURL)
         try? FileManager.default.removeItem(at: AudioOutput.logURL)
+        try? FileManager.default.removeItem(at: WindowFacade.sentinelURL)
         super.tearDown()
     }
 
@@ -75,6 +79,130 @@ final class AudioOutputSilentModeTests: XCTestCase {
         XCTAssertNil(AudioOutput.notificationSound(source: "test", text: "t", wanted: false))
         XCTAssertTrue(AudioOutput.foregroundPresentation(for: sounding("t"), source: "test").contains(.sound))
         XCTAssertEqual(try logged().count, 0)
+    }
+
+    /// Operator note 15: a MacBook run with `~/.grux/HEADLESS` and no SILENT file spoke a
+    /// reply through the system voice ("system-tts -> The capital of France is Paris").
+    /// A run nobody watches is a run nobody may hear, so HEADLESS alone silences every
+    /// sound and records it like SILENT does. Only the pure `permit` is asked before the
+    /// assertion that the door is shut, so a regression fails without reaching a speaker.
+    func test_headlessAlone_silencesSpeechAndRecordsIt() async throws {
+        AudioOutput.soundAllowedUnderTest = true
+        XCTAssertTrue(WindowFacade.sentinelURL.path.hasPrefix(Persistence.gruxDir.path))
+        XCTAssertFalse(WindowFacade.sentinelURL.path.hasPrefix(NSHomeDirectory() + "/.grux"),
+                       "the suite must never write the operator's own HEADLESS")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: AudioOutput.sentinelURL.path))
+        try Data().write(to: WindowFacade.sentinelURL)
+
+        XCTAssertTrue(AudioOutput.isSilent, "HEADLESS alone must silence Grux")
+        XCTAssertFalse(AudioOutput.permit(.speech, source: "unit.headless", text: "The capital of France is Paris."))
+        XCTAssertNil(AudioOutput.notificationSound(source: "unit.headless", text: "banner"))
+        XCTAssertTrue(ShellSilence.refusal(for: "say hello", silent: AudioOutput.isSilent) != nil)
+
+        // A chat reply read aloud goes through SpeechEngine; only once the door is shut.
+        guard AudioOutput.isSilent else { return XCTFail("not silent, the speech path was not called") }
+        let stopped = expectation(forNotification: .gruxSpeechDidStop, object: nil)
+        SpeechEngine.shared.speak("A reply read aloud.")
+        await fulfillment(of: [stopped], timeout: 2)
+        XCTAssertFalse(SpeechEngine.shared.isSpeaking)
+        XCTAssertFalse(SpeechEngine.shared.isBuffering, "a headless reply must not start the engine")
+
+        // The shell refusal writes its own line once the shell doors are wired at launch,
+        // which another test in the run may already have done; it is not this door's line.
+        let lines = try logged().filter { $0["kind"] != "shell" }
+        XCTAssertEqual(lines.map { $0["text"] ?? "" },
+                       ["The capital of France is Paris.", "banner", "A reply read aloud."])
+        XCTAssertEqual(lines.map { $0["kind"] ?? "" }, ["speech", "notification", "speech"])
+
+        try FileManager.default.removeItem(at: WindowFacade.sentinelURL)
+        XCTAssertFalse(AudioOutput.isSilent, "removing HEADLESS must lift it without a relaunch")
+    }
+
+    /// D109's P3: with HEADLESS alone silencing Grux, every refusal named `~/.grux/SILENT`,
+    /// a file that is not there, so a person removing it changed nothing. Each refusal now
+    /// names the file that silenced it. Every entry below refuses before any output.
+    func test_headlessAlone_everyRefusalNamesHeadlessNotSilent() async throws {
+        try Data().write(to: WindowFacade.sentinelURL)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: AudioOutput.sentinelURL.path))
+        XCTAssertTrue(AudioOutput.isSilent)
+
+        let refusals = [
+            await MusicTool.play(song: "Some Song"),
+            await MusicTool.listLibraryTracks(artist: "Some Artist"),
+            await MusicKitPlayer.probe(testStoreID: "1"),
+            await BrowserTool.playOnYouTube("some video"),
+            AudioOutput.shellRefusal(for: "say hello") ?? "",
+            AudioOutput.appleScriptRefusal(for: "tell application \"Music\" to play") ?? "",
+        ]
+        for refusal in refusals {
+            XCTAssertTrue(refusal.contains("(~/.grux/HEADLESS)"), refusal)
+            XCTAssertFalse(refusal.contains("SILENT"), refusal)
+        }
+
+        try Data().write(to: AudioOutput.sentinelURL)
+        let both = await MusicTool.play(song: "Some Song")
+        XCTAssertTrue(both.contains("(~/.grux/SILENT and ~/.grux/HEADLESS)"), both)
+        try FileManager.default.removeItem(at: WindowFacade.sentinelURL)
+        let silentOnly = AudioOutput.shellRefusal(for: "say hello") ?? ""
+        XCTAssertTrue(silentOnly.contains("(~/.grux/SILENT)"), silentOnly)
+        XCTAssertFalse(silentOnly.contains("HEADLESS"), silentOnly)
+    }
+
+    /// The class guard: a refusal string never hard-codes which file silenced Grux, so a
+    /// third sentinel or a HEADLESS-only run cannot be misnamed again. Any spelling of the
+    /// SILENT path in source text counts (wave 30: "(~/.grux/SILENT or ~/.grux/HEADLESS)",
+    /// "rm ~/.grux/SILENT", a line inside a multi-line literal with no quote on it), not
+    /// only the two phrasings the first version matched; a comment line is not text a
+    /// person reads.
+    func test_noSourceHardCodesTheSilencingFile() throws {
+        let sources = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources")
+        var offenders: [String] = []
+        let files = FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil)
+        while let url = files?.nextObject() as? URL {
+            guard url.pathExtension == "swift" else { continue }
+            let text = try String(contentsOf: url, encoding: .utf8)
+            for (n, line) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
+                let code = line.trimmingCharacters(in: .whitespaces)
+                guard !code.hasPrefix("//"), Self.namesTheSilentFile(code) else { continue }
+                offenders.append("\(url.lastPathComponent):\(n + 1)")
+            }
+        }
+        XCTAssertEqual(offenders, [], "name the file through ShellSilence.note or ShellSilence.remedy")
+    }
+
+    static func namesTheSilentFile(_ code: String) -> Bool {
+        code.contains(".grux/SILENT")
+    }
+
+    /// The shapes the first guard let through, each one ordinary code.
+    func test_theGuardCatchesEverySpellingOfTheSilentPath() {
+        for line in [
+            #"return "error: silent mode is on (~/.grux/SILENT or ~/.grux/HEADLESS), so Grux will not play '\(q)'""#,
+            #"print("rm ~/.grux/SILENT to hear Grux again")"#,
+            #"~/.grux/SILENT is on, so nothing plays."#,
+            #"let s = "$HOME/.grux/SILENT""#,
+            #"return "(~/.grux/SILENT)""#,
+            #"Remove ~/.grux/SILENT to let Grux make sound again."#,
+        ] {
+            XCTAssertTrue(Self.namesTheSilentFile(line), line)
+        }
+        for line in [
+            #"static let sentinelURL = gruxDir.appendingPathComponent("SILENT")"#,
+            #"let names = ["SILENT", "HEADLESS"]"#,
+            #"return "(~/.grux/HEADLESS), so Grux will not script another app""#,
+        ] {
+            XCTAssertFalse(Self.namesTheSilentFile(line), line)
+        }
+    }
+
+    /// The shell doors and agent sandboxes read the sentinels themselves until Grux wires
+    /// them at launch; HEADLESS counts there too.
+    func test_shellAndSandboxDefaults_countHeadless() {
+        let both = ShellSilence.sentinelNames
+        XCTAssertEqual(both, ["SILENT", "HEADLESS"])
+        XCTAssertEqual(SwarmWorker.silencingSentinelNames, both)
     }
 
     func test_theSentinelIsReadLive() throws {

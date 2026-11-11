@@ -75,7 +75,7 @@ struct SocialOpsSection: View {
                             .foregroundStyle(.orange)
                     }
                     .buttonStyle(.plain)
-                    .help("Dismiss. Re-tapping the control retries the command.")
+                    .help("Dismiss. Clicking the control again retries the command.")
                 }
             }
             // Same honesty rule as PRDigestSection: the stale banner carries
@@ -320,7 +320,7 @@ struct SocialOpsSection: View {
                 .foregroundStyle(isArmed ? AnyShapeStyle(.white) : AnyShapeStyle(statusColor(rec.status)))
         }
         .buttonStyle(.plain)
-        .help(isArmed ? "Tap again to confirm" : "Tap to arm")
+        .help(isArmed ? "Click again to confirm" : "Click to arm")
     }
 
     // Only the actions that apply to this cell's state.
@@ -346,7 +346,7 @@ struct SocialOpsSection: View {
 
     private func armedLabel(_ a: SocialOpAction, _ rec: SocialHealthRecord) -> String {
         switch a {
-        case .mute: return rec.muted ? "Tap again to unmute" : "Tap again to mute"
+        case .mute: return rec.muted ? "Click again to unmute" : "Click again to mute"
         case .reauth: return "Confirm reauth"
         case .retry: return "Confirm retry"
         case .approve: return "Confirm approve"
@@ -424,8 +424,8 @@ struct SocialOpsSection: View {
         guard let rec else { return "\(brand) \(platform.rawValue): no data" }
         var parts = ["\(brand) \(platform.rawValue): \(rec.status.rawValue)"]
         if !rec.lastError.isEmpty { parts.append(rec.lastError) }
-        if rec.muted { parts.append("muted, tap to unmute") }
-        else { parts.append("tap for controls") }
+        if rec.muted { parts.append("muted, click to unmute") }
+        else { parts.append("click for controls") }
         return parts.joined(separator: " | ")
     }
 }

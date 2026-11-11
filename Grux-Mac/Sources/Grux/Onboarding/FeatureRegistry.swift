@@ -186,7 +186,7 @@ enum FeatureRegistry {
                    optional: [.endpointRegistry],
                    steps: [],
                    optionalSteps: []),
-        FeatureRow(id: "tasks", label: "Task Stack", tier: .core,
+        FeatureRow(id: "tasks", label: "Tasks", tier: .core,
                    requires: [],
                    optional: [],
                    steps: [],
@@ -196,7 +196,7 @@ enum FeatureRegistry {
                    optional: [],
                    steps: [.stepAgentCliInstalled, .stepTerminalSessionsExplained],
                    optionalSteps: []),
-        FeatureRow(id: "mailbox", label: "Mailbox", tier: .core,
+        FeatureRow(id: "mailbox", label: "Mail", tier: .core,
                    requires: [.endpointImap],
                    optional: [.endpointMicrosoftGraph],
                    steps: [],
@@ -236,11 +236,15 @@ enum FeatureRegistry {
                    optional: [.keyAnthropic, .endpointOllama],
                    steps: [],
                    optionalSteps: []),
+        // CR-40, the CR-33 and CR-38 rule again. Deep research resolves its model
+        // calls through `ModelRegistry.resolvedRouting`, so a local model serves
+        // it; requiring the key outright told a local user to buy one (D100).
         FeatureRow(id: "research", label: "Research", tier: .core,
-                   requires: [.keyBrave, .keyAnthropic],
+                   requires: [.keyBrave, .keyAnthropic, .endpointOllama],
                    optional: [],
                    steps: [],
-                   optionalSteps: []),
+                   optionalSteps: [],
+                   anyOf: [CapabilityGroup(capabilities: [.keyAnthropic, .endpointOllama], min: 1)]),
         FeatureRow(id: "skills", label: "Skills", tier: .core,
                    requires: [],
                    optional: [],
@@ -349,6 +353,30 @@ enum FeatureRegistry {
                    optional: [],
                    steps: [],
                    optionalSteps: []),
+    ]
+
+    /// A feature's own sentence for one item on its setup card, where the
+    /// contract's sentence speaks for a different feature (CR-40, D96).
+    ///
+    /// The Anthropic key's contract sentence ended "Chat also runs on a local
+    /// model with no key", which is right on Chat's card only. On Focus log it
+    /// offered a stand-in the vision call cannot use and never said why the key
+    /// is needed. `SetupCardSaysWhyTests` reads every card line and refuses one
+    /// that names another feature, so a new row inherits the rule.
+    static let cardLines: [String: [SetupRequirement: String]] = [
+        "focus": [.keyAnthropic: "Focus log checks your screen with Claude and never sends it to a local model. Add your Anthropic API key in Settings."],
+        "research": [.keyAnthropic: "Add your Anthropic API key in Settings so Research can plan and write with Claude. Get one at console.anthropic.com."],
+        "design.studio": [.keyAnthropic: "Add your Anthropic API key in Settings so Design Studio can work with Claude. Get one at console.anthropic.com."],
+        "compare": [.keyAnthropic: "Compare runs Claude beside your local models, so it needs your Anthropic API key. Add it in Settings."],
+    ]
+
+    /// A card's line for an item whatever feature the card stands for, read before
+    /// the contract's sentence. D212 item 4: the mail server line said "in Mail", and
+    /// on the Mail card that sent the person where they stood (and on Compose and
+    /// Jax HQ it names another feature); every card's Set it up opens the form, so the
+    /// card says that. `grux next` keeps the contract's line, which says where.
+    static let cardLinesEverywhere: [SetupRequirement: String] = [
+        .endpointImap: "Add your mail account: its address, its server and an app password from your provider. Set it up opens the form.",
     ]
 
     static func row(id: String) -> FeatureRow? {
@@ -523,23 +551,53 @@ enum FeatureRegistry {
     /// than naming a window they cannot open.
     static let homes: [String: String] = [
         "approvals": "the tray at the foot of the rail, which appears whenever something is waiting",
-        "mailbox.compose": "inside the Mailbox tab",
+        "mailbox.compose": "inside Mail",
         "integrations.webhooks": "a section inside the Integrations tab",
         "phone": "a section in Settings",
     ]
 
-    static func systemPromptBlock() -> String {
+    static func systemPromptBlock(signInExpired: Bool) -> String {
+        systemPromptBlock(signInExpired: signInExpired, state: { state(of: $0) }, unmet: { unmetBlocking(of: $0) },
+                          enableCommand: enableCommand(bundlePath: Bundle.main.bundlePath))
+    }
+
+    /// The command that turns a feature on, as a person can type it on this Mac. A disk
+    /// image install puts no `grux` on PATH (W31 round 4: "command not found" on this
+    /// Mini); the CLI always ships inside the bundle as `Contents/MacOS/grux-cli`
+    /// (build.sh), so the line names that path, quoted when it holds a space.
+    nonisolated static func enableCommand(bundlePath: String) -> String {
+        let cli = bundlePath + "/Contents/MacOS/grux-cli"
+        let plain = cli.allSatisfy { $0.isLetter || $0.isNumber || "/._-+".contains($0) }
+        let quoted = plain ? cli : "'" + cli.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        return quoted + " enable <id>"
+    }
+
+    static func systemPromptBlock(signInExpired: Bool, state: (FeatureRow) -> FeatureState,
+                                  unmet: (FeatureRow) -> [SetupRequirement],
+                                  enableCommand: String = enableCommand(bundlePath: Bundle.main.bundlePath)) -> String {
         var ready: [String] = []
         var pending: [String] = []
+        var off: [String] = []
         for row in rows {
             var name = row.label + (row.tier == .labs ? " (labs)" : "")
             if let home = homes[row.id] { name += " (\(home))" }
-            if state(of: row) == .ready {
-                ready.append(name)
+            let rowState = state(row)
+            // A feature the person did not pick needs nothing; it is off. It read
+            // "needs " with nothing after it (W31 round 2). Listed with its id, the
+            // only thing `grux enable` accepts (W31 round 3).
+            if rowState == .notChosen { off.append("\(name) [\(row.id)]"); continue }
+            // An expired Claude sign-in is one more thing Agents needs, by the setup
+            // card's own rule, so this list never offers what first run calls blocked.
+            let missing = unmet(row)
+            let signIn = CapabilitySetupCard.listsAgentSignIn(blocking: row.blocking, missing: missing,
+                                                              signInExpired: signInExpired)
+            let needs = missing.map(\.label) + (signIn ? ["a Claude sign-in"] : [])
+            if !needs.isEmpty {
+                pending.append("\(name): needs \(needs.joined(separator: ", "))")
+            } else if rowState == .unavailable {
+                pending.append("\(name): cannot run on this Mac")
             } else {
-                let missing = unmetBlocking(of: row)
-                    .map(\.label).joined(separator: ", ")
-                pending.append("\(name): needs \(missing)")
+                ready.append(name)
             }
         }
         var out = ["WHAT_YOU_CAN_DO (the real surfaces in this build, generated from the feature registry, not a guess):"]
@@ -549,6 +607,10 @@ enum FeatureRegistry {
             out.append("")
             out.append("ONE STEP AWAY (\(pending.count), name the missing piece if the user asks for one of these):")
             for line in pending { out.append("- " + line) }
+        }
+        if !off.isEmpty {
+            out.append("")
+            out.append("TURNED OFF (\(off.count), the user did not pick these; `\(enableCommand)` in Terminal turns one on, with the id in brackets): " + off.joined(separator: ", "))
         }
         out.append("")
         out.append("When the user asks what you can do, answer from THIS list and nothing else. Never claim a surface that is not named here. Pick the few that fit what they are actually trying to get done rather than reciting the list.")

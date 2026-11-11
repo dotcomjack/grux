@@ -9,7 +9,7 @@ import Foundation
 // targetAddress below), then fall back to any Gmail-hosted account. If none is
 // configured, we surface needsAccount rather than guessing credentials. The
 // IMAP app password lives in ImapPasswordVault, set once when the user adds
-// the account in Mailbox, Accounts.
+// the account in Mail, Accounts.
 //
 // Gmail Sent folder is "[Gmail]/Sent Mail" on most accounts; we discover the
 // real name via LIST and the \Sent special-use attribute fallback, so localized
@@ -55,27 +55,61 @@ actor GmailSentIngester: CorpusIngester {
 
     func probe() async -> CorpusPermission {
         let account = await resolveAccount()
-        guard let account else { return .needsAccount }
-        let pw = await MainActor.run { EmailAccountStore.shared.password(for: account) }
-        return pw.isEmpty ? .needsAccount : .ready
+        guard let account else { return Self.permission(hasAccount: false, password: .missing) }
+        let read = await MainActor.run { EmailAccountStore.shared.passwordRead(for: account) }
+        return Self.permission(hasAccount: true, password: read)
+    }
+
+    /// No account and an account with no password are two things to do, and the
+    /// second is listed in Mail already (wave 75 round 1). A Keychain that would
+    /// not answer is neither (rounds 2 and 3): the password may be there, so it
+    /// is its own state and names the Keychain.
+    static func permission(hasAccount: Bool, password: ImapPasswordVault.PasswordRead) -> CorpusPermission {
+        guard hasAccount else { return .needsAccount }
+        switch password {
+        case .found: return .ready
+        case .missing: return .needsPassword
+        case .unreadable: return .needsKeychain
+        }
+    }
+
+    /// Opens the note of a read Gmail refused the password for, which Jax Command
+    /// reads to keep naming the fix after a probe that only sees a stored password.
+    static let refusedPrefix = "Gmail refused the password: "
+    static func refusedLogin(_ note: String) -> Bool { note.hasPrefix(refusedPrefix) }
+
+    /// What a read that failed while connecting or logging in reports: a failed
+    /// read of an account that is set up, never a missing account (wave 66 round
+    /// 2). Only the server refusing the login is a password to fix (round 3); a
+    /// network down or a timeout is not.
+    static func readFailure(_ error: Error, duringLogin: Bool) -> CorpusRunResult {
+        let refused: Bool
+        if duringLogin, case IMAPClient.IMAPError.loginFailed = error { refused = true } else { refused = false }
+        return CorpusRunResult(indexed: 0, pushedToRAG: 0, skipped: 0, permission: .unknown,
+                               note: (refused ? refusedPrefix : "Gmail could not be read: ") + error.localizedDescription)
     }
 
     func ingest() async -> CorpusRunResult {
         guard let account = await resolveAccount() else {
             return .blocked(.needsAccount)
         }
-        let password = await MainActor.run { EmailAccountStore.shared.password(for: account) }
-        guard !password.isEmpty else { return .blocked(.needsAccount) }
+        let read = await MainActor.run { EmailAccountStore.shared.passwordRead(for: account) }
+        guard case .found(let password) = read else {
+            return .blocked(Self.permission(hasAccount: true, password: read))
+        }
 
         let client = IMAPClient(host: account.imapHost, port: UInt16(account.imapPort), useTLS: account.useTLS)
         defer { Task { await client.close() } }
 
         do {
             try await client.connect()
+        } catch {
+            return Self.readFailure(error, duringLogin: false)
+        }
+        do {
             try await client.login(username: account.username, password: password)
         } catch {
-            return CorpusRunResult(indexed: 0, pushedToRAG: 0, skipped: 0, permission: .needsAccount,
-                                   note: "Gmail login failed: \(error.localizedDescription)")
+            return Self.readFailure(error, duringLogin: true)
         }
 
         guard let sentMailbox = await discoverSentMailbox(client: client) else {
@@ -130,7 +164,9 @@ actor GmailSentIngester: CorpusIngester {
                                    note: "Indexed \(indexed) sent emails (\(skipped) already seen)")
         } catch {
             await client.logout()
-            return CorpusRunResult(indexed: 0, pushedToRAG: 0, skipped: 0, permission: .ready,
+            // Not .ready: a read that failed partway is not one that found nothing
+            // (wave 63). The card shows this note as the row's reason.
+            return CorpusRunResult(indexed: 0, pushedToRAG: 0, skipped: 0, permission: .unknown,
                                    note: "Sent sync error: \(error.localizedDescription)")
         }
     }

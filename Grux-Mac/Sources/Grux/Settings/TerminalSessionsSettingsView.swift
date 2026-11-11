@@ -7,9 +7,10 @@ import GruxShellCore
 /// which is the half of the house rule that onboarding alone cannot satisfy.
 ///
 /// WHY THIS SHOWS THE RESOLVED BINARY. "Grux drives your agent CLI" is not a
-/// fact a user can check. A path is. `AccountSwitcher.resolveClaudeBinary()` is
-/// the same resolution the spawner uses, so what is printed here is what will
-/// actually run, and a wrong or missing CLI stops being a silent failure.
+/// fact a user can check. `AccountSwitcher.locateClaudeBinary()` is the same
+/// resolution the spawner uses, so the row names what will actually run, with
+/// its full path in the hover (the path itself carried the Mac's user name,
+/// D166 item 13), and a missing CLI reads "Not found", never a silent failure.
 ///
 /// WHY IT SHOWS ENVIRONMENT CREDENTIALS. `AccountSwitcher` strips twenty
 /// credential variables before spawning so a session authenticates as the
@@ -77,16 +78,57 @@ struct TerminalSessionsSettingsView: View {
         return mode == ShellTrustCeiling.conservativeDefault ? "\(name) (default)" : name
     }
 
+    /// The cap is applied to each agent job as `AgentService.plannedJob` plans
+    /// it, so two jobs running together can each start this many. "At once"
+    /// read as a cap across every job (D187 item 4).
+    static let concurrencyLabel = "Most sessions per agent job"
+    static let concurrencyCaption = "A job that asks for more gets this instead. A job that asks for fewer keeps its own number. Two jobs running at the same time can each start this many."
+
     /// One line per mode, in the words of what it stops rather than what it is
     /// called. "Guarded" is not a thing a stranger can weigh; "asks before a
-    /// command reaches the network" is.
-    private static func trustExplanation(_ mode: GruxShellCore.ShellMode) -> String {
+    /// push" is. Each line says what `ShellSafety.evaluate` does in that mode
+    /// (`SessionsPaneCaptionTruthTests`): no mode runs everything (a session
+    /// is kept in its folder), Guarded does not ask before a plain download,
+    /// and nothing checks that a person is at the keyboard (D187 item 4).
+    /// Strict judges only the program a command starts with (W64-FIX P2-3),
+    /// against the gate's own list, printed as it is (`ShellSafety.strictAllowedPrograms`, round 5).
+    /// W64-FIX rounds 2 to 5: the gate knows a push, publish or deploy from a
+    /// list (`ShellSafety.publishPushOrDeploy`); no list is complete, and one it
+    /// misses is never asked about (Strict refuses or runs it, Guarded and Trust
+    /// run it). It names no tool, so it claims nothing about any one.
+    static let trustLimit = "Grux recognizes a push, publish or deploy from a list of common commands. One it does not recognize, such as one inside a script or behind another tool it does not know, is not asked about in any mode."
+    static func trustExplanation(_ mode: GruxShellCore.ShellMode) -> String {
         switch mode {
-        case .strict:  return "runs only an allowlist of development tools, and refuses anything else."
-        case .guarded: return "runs anything, and asks first before a command reaches the network."
-        case .trust:   return "runs anything without asking. Only while you are at the keyboard."
+        case .strict:  return "refuses a command that does not start with one of these programs: "
+            + ShellSafety.strictAllowedPrograms.joined(separator: ", ")
+            + ". It asks first before a push, publish or deploy it recognizes, or sudo."
+        case .guarded: return "runs other commands too, and asks first before a push, publish or deploy it recognizes, or sudo."
+        case .trust:   return "runs other commands too, and a push, publish, deploy or sudo without asking."
         }
     }
+
+    /// What the pane says about the CLI's sign-in, from the stored verdict of
+    /// the last agent run (`ClaudeSignInState`). The path alone read as ready
+    /// while the sidebar said "Claude sign-in expired" (D115 item 4). Grux only
+    /// learns the sign-in from a run, so the good case says no more than that.
+    /// nil with no CLI: the pane already says to install one.
+    static func signInLine(binaryFound: Bool, expired: Bool) -> String? {
+        guard binaryFound else { return nil }
+        return expired
+            ? "Expired. The last agent run found Claude's sign-in expired, so sessions cannot start until you sign in."
+            : "No agent run has found a problem with it."
+    }
+
+    /// The agent CLI's name in the Sessions row. The full path carried the
+    /// Mac's user name and node version (D166 item 13); it stays in the hover.
+    static func agentCLIName(_ path: String?) -> String {
+        guard let path else { return "Not found" }
+        let name = (path as NSString).lastPathComponent
+        return name == "claude" ? "Claude Code" : name
+    }
+
+    /// Observed so the line clears the moment a sign-in lands.
+    @ObservedObject private var claudeSignIn = ClaudeSignInState.shared
 
     /// nil means there is genuinely none. See AccountSwitcher.locateClaudeBinary: the
     /// old `resolveClaudeBinary().isEmpty` test could never be true, so this pane showed
@@ -124,9 +166,19 @@ struct TerminalSessionsSettingsView: View {
             .id("sessions.overview")
             Section("What will run") {
                 LabeledContent("Agent CLI") {
-                    Text(resolvedBinary ?? "not found")
-                        .font(.system(.body, design: .monospaced))
+                    Text(Self.agentCLIName(resolvedBinary))
+                        .help(resolvedBinary ?? "")
                         .textSelection(.enabled)
+                }
+                if let line = Self.signInLine(binaryFound: resolvedBinary != nil, expired: claudeSignIn.expired) {
+                    LabeledContent("Sign-in") {
+                        Text(line)
+                            .foregroundStyle(claudeSignIn.expired ? GruxTheme.warnAmber : .secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if claudeSignIn.expired {
+                        Button(CapabilitySetupCard.agentSignInButton) { ClaudeSignInState.shared.startSignIn() }
+                    }
                 }
                 if resolvedBinary == nil {
                     Text("Grux could not find an agent CLI on this Mac, so session features stay unavailable until one is installed.")
@@ -190,7 +242,7 @@ struct TerminalSessionsSettingsView: View {
                 // pinned to `.full`, which is a fact about the hardware and
                 // does not move while the app is open.
                 Stepper(value: $maxParallel, in: 1...SessionConcurrency.structuralCeiling) {
-                    LabeledContent("Most sessions at once", value: "\(maxParallel)")
+                    LabeledContent(Self.concurrencyLabel, value: "\(maxParallel)")
                 }
                 // Guarded rather than unconditional, because `onAppear` seeds
                 // the mirror and SwiftUI fires this for that assignment too.
@@ -213,7 +265,7 @@ struct TerminalSessionsSettingsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                Text("A task that asks for more gets this instead. A task that asks for fewer keeps its own number. The limit is per swarm, not across all of them.")
+                Text(Self.concurrencyCaption)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -256,6 +308,9 @@ struct TerminalSessionsSettingsView: View {
                             .fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
+                    Text(Self.trustLimit)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)

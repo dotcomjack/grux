@@ -16,7 +16,7 @@ enum EmailTool {
         [
             ClaudeTool(
                 name: "list_inbox",
-                description: "List the user's synced email inbox (multi-account IMAP). Returns sender, subject, date, unread state, account, and a snippet per message, newest first. Use when they ask 'any new email', 'what's in my inbox', 'did X write back', 'unread mail'. Read-only and instant (reads the local synced store; the IMAP sync engine refreshes it on a timer and via the Mailbox tab).",
+                description: "List the user's synced email inbox (multi-account IMAP). Returns sender, subject, date, unread state, account, and a snippet per message, newest first. Use when they ask 'any new email', 'what's in my inbox', 'did X write back', 'unread mail'. Read-only and instant (reads the local synced store; the IMAP sync engine refreshes it on a timer and via the Mail pane).",
                 inputSchema: [
                     "type": "object",
                     "properties": [
@@ -29,7 +29,7 @@ enum EmailTool {
             ),
             ClaudeTool(
                 name: "compose_email",
-                description: "Compose and SEND an email as the user (or one of their brands) via the verified Resend sender of a configured account. This routes through the assistant decision gate: an external send is queued for their one-tap approval in Jax HQ (the gate applies the assistant-for-business / user-for-personal disclosure), so it does not always go out instantly. Still only call it when they actually want an email sent and the recipient, subject, and body are settled. If anything is uncertain, read the draft back to them first. Plain text only. Never use em dashes or en dashes; write dollar amounts as $N.",
+                description: "Compose and SEND an email as the user (or one of their brands) via the verified Resend sender of a configured account. This routes through the assistant decision gate: an external send is queued for their one-click approval in Jax HQ (the gate applies the assistant-for-business / user-for-personal disclosure), so it does not always go out instantly. Still only call it when they actually want an email sent and the recipient, subject, and body are settled. If anything is uncertain, read the draft back to them first. Plain text only. Never use em dashes or en dashes; write dollar amounts as $N.",
                 inputSchema: [
                     "type": "object",
                     "properties": [
@@ -50,7 +50,7 @@ enum EmailTool {
     /// words the person sees (Approvals, "you"), so an echo still reads right.
     static func pendingResult(recipients: [String], fromName: String) -> String {
         "pending: your email to \(recipients.joined(separator: ", ")) is waiting for your OK in Approvals. "
-            + "It would go out as \(fromName). Nothing is sent until you tap it."
+            + "It would go out as \(fromName). Nothing is sent until you approve it."
     }
 
     static func dispatch(name: String, input: [String: Any]) async -> String {
@@ -72,7 +72,7 @@ enum EmailTool {
     private static func listInbox(_ input: [String: Any]) -> String {
         let accounts = EmailAccountStore.shared.accounts
         guard !accounts.isEmpty else {
-            return "(no email accounts configured yet; add one in the Mailbox tab)"
+            return "(no email accounts configured yet; add one in Mail)"
         }
 
         var accountFilter: UUID?
@@ -144,7 +144,7 @@ enum EmailTool {
         }
         guard let account else {
             if fromHint.isEmpty {
-                return "error: no email accounts configured; add one in the Mailbox tab"
+                return "error: no email accounts configured; add one in Mail"
             }
             let known = await MainActor.run { EmailAccountStore.shared.accounts.map { $0.emailAddress }.joined(separator: ", ") }
             return "error: no account matched '\(fromHint)'. Configured: \(known)"

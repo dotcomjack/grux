@@ -71,6 +71,7 @@ struct RoadmapView: View {
         return HStack(alignment: .center, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Roadmap").font(GruxType.title).foregroundStyle(GruxTheme.textPrimary)
+                    .unlessPaneTitle("Roadmap")
                 Text("What you are building, grouped by when you plan to ship it")
                     .font(.caption)
                     .foregroundStyle(.secondary)

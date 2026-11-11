@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import GruxAgentCore
 
 // Polls macOS NotificationCenter's SQLite store for the delivered-notification
 // stream so the daily recap can answer "how many times did you get yanked out
@@ -153,7 +154,7 @@ final class NotificationWatcher {
         // trigger; reading both ends drained first defuses that.
         let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
         let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
-        proc.waitUntilExit()
+        proc.waitForExitBlocking()
         guard proc.terminationStatus == 0 else {
             let err = String(data: errData, encoding: .utf8) ?? ""
             // TCC's "authorization denied" means Grux hasn't been added to
@@ -208,7 +209,7 @@ final class NotificationWatcher {
 
         One-time grant:
           1. System Settings > Privacy & Security > Full Disk Access
-          2. Toggle Grux on (or click + and pick /Applications/Grux.app)
+          2. Turn on Grux AI (or click + and pick /Applications/Grux.app)
           3. Relaunch Grux
 
         Once granted, ~/.grux/ambient/notifications-YYYY-MM-DD.ndjson will start

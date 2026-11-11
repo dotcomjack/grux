@@ -69,7 +69,7 @@ final class ToolReplyCopyTests: XCTestCase {
                        "I did not find a doc about release notes.")
         XCTAssertEqual(ToolReplyCopy.forPerson(tool: "create_note", input: ["title": "Groceries"],
                                                result: "pending: 'create_note' is waiting in the Jax HQ approval queue for the user's one-tap approval. Nothing was sent or changed."),
-                       "Your note is waiting for your OK in Approvals. Nothing is saved until you tap it.")
+                       "Your note is waiting for your OK in Approvals. Nothing is saved until you approve it.")
     }
 
     func test_resultsSayWhatHappenedInPlainWords() {

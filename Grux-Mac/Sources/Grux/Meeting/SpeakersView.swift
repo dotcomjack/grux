@@ -89,6 +89,7 @@ struct SpeakersView: View {
             HStack {
                 Text("Speakers")
                     .font(GruxType.title).foregroundStyle(GruxTheme.textPrimary)
+                    .unlessPaneTitle("Speakers")
                 Spacer()
                 Text("\(store.profiles.count)")
                     .font(.caption.monospacedDigit())
@@ -104,6 +105,25 @@ struct SpeakersView: View {
         .padding(12)
     }
 
+    /// The empty state's line. It sent a person to record a meeting while
+    /// Meetings itself still needed setting up (D115 item 7), so it says that
+    /// first, and names each missing item by the label the Meetings card lists
+    /// it under: a count alone named nothing (D208 item 7).
+    static func emptyLine(meetingsMissing: [SetupRequirement]) -> String {
+        let rest = "click a speaker chip in its transcript to give that voice a name."
+        let labels = meetingsMissing.map(\.label)
+        switch labels.count {
+        case 0: return "Record a meeting, then \(rest)"
+        case 1: return "Meetings needs one more thing before it can record: \(labels[0]). Set it up, then record a meeting and \(rest)"
+        default:
+            let list = labels.dropLast().joined(separator: ", ") + " and " + labels[labels.count - 1]
+            return "Meetings needs \(labels.count) more things before it can record: \(list). Set them up, then record a meeting and \(rest)"
+        }
+    }
+
+    /// Opens the Meetings card, which lists each missing item with its own button.
+    static let setUpMeetingsButton = "Set up Meetings"
+
     private var emptyState: some View {
         VStack(spacing: 10) {
             Spacer()
@@ -113,11 +133,16 @@ struct SpeakersView: View {
             Text("No speakers enrolled yet.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
-            Text("Record a meeting, then tap a speaker chip in its transcript to give that voice a name.")
+            let meetingsMissing = FeatureRegistry.missing(forTab: "meetings")
+            Text(Self.emptyLine(meetingsMissing: meetingsMissing))
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 24)
+            if !meetingsMissing.isEmpty {
+                Button(Self.setUpMeetingsButton) { AppState.shared.requestedTab = "meetings" }
+                    .controlSize(.small)
+            }
             Spacer()
         }
         .frame(maxWidth: .infinity)
@@ -274,13 +299,20 @@ struct SpeakersView: View {
         }
     }
 
+    /// The detail pane's line before a speaker is selected. With none enrolled
+    /// it asked to select one from an empty list (D116 item 6).
+    static func detailPlaceholderLine(profileCount: Int) -> String {
+        profileCount > 0 ? "Select a speaker to see their stats and actions."
+            : "A voice you name in a meeting shows its stats and actions here."
+    }
+
     private var placeholder: some View {
         VStack(spacing: 10) {
             Spacer()
             Image(systemName: "person.crop.circle")
                 .font(.system(size: 36))
                 .foregroundStyle(.secondary)
-            Text("Select a speaker to see their stats and actions.")
+            Text(Self.detailPlaceholderLine(profileCount: store.profiles.count))
                 .font(.callout)
                 .foregroundStyle(.secondary)
             Spacer()

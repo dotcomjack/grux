@@ -55,6 +55,7 @@ struct CommandsV2View: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text("Workflows").font(GruxType.title).foregroundStyle(GruxTheme.textPrimary)
+                        .unlessPaneTitle("Workflows")
                     LabsHeaderBadge(feature: "workflows")
                 }
                 // PLAIN WORDS. This read "Commands V2: phase-gated,

@@ -382,17 +382,60 @@ final class ThemeConfig: ObservableObject {
 
     // MARK: WCAG audit
 
+    nonisolated static let chipTextPairName = "chip text on accent"
+
+    /// Every whole-degree hue the slider reaches whose accent meets WCAG AA on
+    /// every pair. Measured, so the note below cannot outlive a palette change:
+    /// the comment it replaced said white chip text reaches 4.5:1 at no hue, and
+    /// hue 240 does (D104).
+    nonisolated static let huesMeetingAA: [Int] = (0..<360).filter { hue in
+        runWCAGAudit(palette: .derived(accentHue: Double(hue))).meetsAA
+    }
+
+    /// The slider's label. A hue that is not a whole degree shows its decimal,
+    /// rounded down: AA holds near hue 240 only from about 239.95 to 240.16, so
+    /// "Hue 240°" at 240.5 sat over "Below WCAG AA" and a note naming hue 240
+    /// as passing (wave 33 round 1).
+    nonisolated static func hueLabel(_ hue: Double) -> String {
+        if hue == hue.rounded() { return "Hue \(Int(hue))°" }
+        return "Hue " + String(format: "%.1f", (hue * 10).rounded(.down) / 10) + "°"
+    }
+
+    /// The hue in `hues` nearest the draft around the wheel.
+    nonisolated static func nearestHueMeetingAA(to draftHue: Double, in hues: [Int] = huesMeetingAA) -> Int? {
+        func distance(_ hue: Int) -> Double {
+            let d = abs(Double(hue) - draftHue).truncatingRemainder(dividingBy: 360)
+            return min(d, 360 - d)
+        }
+        return hues.min { distance($0) < distance($1) }
+    }
+
+    /// The line under the verdict when chip text is the only pair under AA. The
+    /// default accent warned with nothing to act on, beside a caption that
+    /// refuses only under 3:1 (D104, D116 item 4), so it names the nearest hue
+    /// that meets AA, or says no hue does.
+    nonisolated static func chipTextNote(for audit: ThemeWCAGAuditResult, draftHue: Double,
+                                         huesMeetingAA: [Int] = huesMeetingAA) -> String? {
+        guard audit.passes else { return nil }
+        let underAA = audit.checks.filter { !$0.meetsAA }
+        guard underAA.count == 1, underAA[0].name == chipTextPairName else { return nil }
+        guard let nearest = nearestHueMeetingAA(to: draftHue, in: huesMeetingAA) else {
+            return "No accent hue gives white chip text 4.5:1, so Grux takes it from 3:1. That is Grux's palette, not your choice."
+        }
+        return "Hue \(nearest)° meets WCAG AA on every pair, chip text included."
+    }
+
     // Floors per pair: 3:1 for the accent rims (WCAG 2.1 AA's bar for UI
     // components) and 4.5:1 for accent text. The chip label is 9 pt, so AA
-    // holds it to 4.5:1, which white text on this accent reaches at no hue;
-    // Grux refuses it only under 3:1 and the verdict line says it is below AA
-    // (D94). All pairs are checked against the canonical surfaces, which stay fixed.
+    // holds it to 4.5:1, which white text reaches only near hue 240
+    // (`huesMeetingAA`); Grux refuses it only under 3:1 and the verdict line
+    // says it is below AA (D94). All pairs are checked against the canonical surfaces, which stay fixed.
     nonisolated static func runWCAGAudit(palette: ThemePalette) -> ThemeWCAGAuditResult {
         let base = canonicalBase.wcag
         let white = WCAGColor.white
         let checks = [
             ThemeWCAGCheck(
-                name: "chip text on accent",
+                name: chipTextPairName,
                 ratio: WCAGContrastChecker.contrastRatio(white, palette.accentPrimary.wcag),
                 required: 3.0,
                 wcagAA: 4.5

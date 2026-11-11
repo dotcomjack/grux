@@ -140,9 +140,12 @@ enum FoundryDirection {
     /// needs. A status already in hand counts even before the first check
     /// has been flagged complete; a completed check with nothing in hand is
     /// signed out (the CLI errored or nobody is logged in), never "checking".
-    static func authState(checked: Bool, liveStatus: AccountSwitcher.LiveStatus?) -> FoundryAuthState {
+    /// `knownExpired` is the stored verdict Now shows as "Claude sign-in expired"
+    /// (`ClaudeSignInState`): before the first check answers, the card says the
+    /// same thing Now does instead of "Checking your sign-in" (D126).
+    static func authState(checked: Bool, liveStatus: AccountSwitcher.LiveStatus?, knownExpired: Bool = false) -> FoundryAuthState {
         if let liveStatus { return liveStatus.loggedIn ? .signedIn : .signedOut }
-        return checked ? .signedOut : .checking
+        return checked || knownExpired ? .signedOut : .checking
     }
 
     /// The gates in the order a person has to clear them. Terminal and
@@ -186,13 +189,13 @@ enum FoundryDirection {
 
 extension FoundryFormat {
 
-    /// "About $8 worth of usage, counted against your subscription". Numeral with the
+    /// "About $8 worth of usage, counted against your Claude subscription". Numeral with the
     /// symbol, never words, and never "estimated (subscription powered)", which is engine
     /// speak. Not "$8 of your subscription", which read as a price on a flat plan (D50).
     static func costLine(usd: Double) -> String {
         guard usd > 0 else { return "No measurable usage" }
         let amount = usd < 1 ? "Under $1" : "About $\(Int(usd.rounded()))"
-        return "\(amount) worth of usage, counted against your subscription"
+        return "\(amount) worth of usage, counted against your Claude subscription"
     }
 
     /// "Medium risk", "Protected area".

@@ -160,6 +160,27 @@ final class EmailAccountStore: ObservableObject {
         scheduleSave()
     }
 
+    /// What Mail's Add saves (wave 75 round 3): an address already listed is that
+    /// account with the form's settings and a new password, keeping its id (so
+    /// its cached mail and the Keychain item). Add made a second account before,
+    /// which every "add it again" step then sent people to make, while Gmail reads
+    /// kept the first, passwordless one. Adding is asking Grux to read it, so the
+    /// account is switched on (round 4): kept off, Add + test tested nothing, the
+    /// setup card stayed, and the cleared error read as a pass.
+    static func formTarget(accounts: [EmailAccount], new: EmailAccount) -> EmailAccount {
+        let wanted = new.emailAddress.lowercased()
+        guard var existing = accounts.first(where: { $0.emailAddress.lowercased() == wanted }) else { return new }
+        existing.displayName = new.displayName
+        existing.emailAddress = new.emailAddress
+        existing.imapHost = new.imapHost
+        existing.imapPort = new.imapPort
+        existing.username = new.username
+        existing.useTLS = new.useTLS
+        existing.enabled = true
+        existing.lastSyncError = nil
+        return existing
+    }
+
     func update(_ id: UUID, _ mutate: (inout EmailAccount) -> Void) {
         guard let idx = accounts.firstIndex(where: { $0.id == id }) else { return }
         mutate(&accounts[idx])
@@ -174,6 +195,10 @@ final class EmailAccountStore: ObservableObject {
 
     func password(for account: EmailAccount) -> String {
         ImapPasswordVault.get(accountId: account.id)
+    }
+
+    func passwordRead(for account: EmailAccount) -> ImapPasswordVault.PasswordRead {
+        ImapPasswordVault.read(accountId: account.id)
     }
 
     // MARK: - Persistence
@@ -253,8 +278,28 @@ enum ImapPasswordVault {
         }
     }
 
-    // Empty string = missing, mirroring KeychainStore.get's contract.
-    static func get(accountId: UUID) -> String {
+    /// What a read found (wave 75 round 2): a password that is not there and a
+    /// Keychain that would not answer (locked, or headless with interaction off)
+    /// are different things to tell a person, and only the first means "add it".
+    enum PasswordRead: Equatable {
+        case found(String)
+        case missing
+        case unreadable(OSStatus)
+    }
+
+    static func classify(status: OSStatus, data: Data?) -> PasswordRead {
+        switch status {
+        case errSecSuccess:
+            guard let data, let text = String(data: data, encoding: .utf8), !text.isEmpty else { return .missing }
+            return .found(text)
+        case errSecItemNotFound:
+            return .missing
+        default:
+            return .unreadable(status)
+        }
+    }
+
+    static func read(accountId: UUID) -> PasswordRead {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -266,16 +311,15 @@ enum ImapPasswordVault {
         ]
         var item: CFTypeRef?
         let status = KeychainStore.copyMatching(query, &item)
-        switch status {
-        case errSecSuccess:
-            guard let data = item as? Data else { return "" }
-            return String(data: data, encoding: .utf8) ?? ""
-        case errSecItemNotFound:
-            return ""
-        default:
-            NSLog("[ImapPasswordVault] get -> OSStatus \(status)")
-            return ""
-        }
+        let result = classify(status: status, data: item as? Data)
+        if case .unreadable = result { NSLog("[ImapPasswordVault] get -> OSStatus \(status)") }
+        return result
+    }
+
+    // Empty string = missing or unreadable, mirroring KeychainStore.get's contract.
+    static func get(accountId: UUID) -> String {
+        if case .found(let text) = read(accountId: accountId) { return text }
+        return ""
     }
 
     @discardableResult

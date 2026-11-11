@@ -12,6 +12,11 @@ import Foundation
 /// own display name, and what this send costs. The cheaper-alternative nudge
 /// moves to the model picker, which is the place you would go to take it up.
 enum ComposerFooter {
+    /// A fixed list of Claude models, strongest first, for tests of the rank
+    /// line. The composer's menu draws `ClaudeModelCatalog.ids`, and "Can I use
+    /// a smarter model?" ranks against that same live list (`SelfAsk.reply`).
+    static let claudeChoices = ["claude-fable-5", "claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5-20251001"]
+
     /// Prices below this read as a phrase rather than as a number, because
     /// four decimal places on the face is accounting, not information.
     static let subCentThreshold = 0.01

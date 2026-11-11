@@ -47,20 +47,27 @@ final class ProcessExitWaitTests: XCTestCase {
     }
 
     /// The class guard: no code in GruxAgentCore (the workers, the bridge,
-    /// the CLI probes, the command executor) waits in a run loop.
-    func test_noAgentCoreCodeWaitsInARunLoop() throws {
+    /// the CLI probes, the command executor) or the app module (D65: Backup,
+    /// Ollama, Self-Upgrade's verify and install, Design Studio, Meetings, the
+    /// Jax reviews) waits in a run loop.
+    func test_noAgentCoreOrAppCodeWaitsInARunLoop() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent()
-        let dir = root.appendingPathComponent("Sources/GruxAgentCore")
-        let files = try XCTUnwrap(FileManager.default.enumerator(at: dir, includingPropertiesForKeys: nil))
         var offenders: [String] = []
-        for case let url as URL in files where url.pathExtension == "swift" {
-            let src = try String(contentsOf: url, encoding: .utf8)
-            for (i, line) in src.components(separatedBy: "\n").enumerated()
-            where line.contains("waitUntilExit()") && !line.trimmingCharacters(in: .whitespaces).hasPrefix("//") {
-                offenders.append("\(url.lastPathComponent):\(i + 1)")
+        var scanned = 0
+        for module in ["Sources/GruxAgentCore", "Sources/Grux"] {
+            let dir = root.appendingPathComponent(module)
+            let files = try XCTUnwrap(FileManager.default.enumerator(at: dir, includingPropertiesForKeys: nil))
+            for case let url as URL in files where url.pathExtension == "swift" {
+                scanned += 1
+                let src = try String(contentsOf: url, encoding: .utf8)
+                for (i, line) in src.components(separatedBy: "\n").enumerated()
+                where line.contains("waitUntilExit()") && !line.trimmingCharacters(in: .whitespaces).hasPrefix("//") {
+                    offenders.append("\(module)/\(url.lastPathComponent):\(i + 1)")
+                }
             }
         }
+        XCTAssertGreaterThan(scanned, 500, "the guard read too few files to mean anything")
         XCTAssertEqual(offenders, [], "these wait for a child in a run loop, which can miss its exit")
     }
 }

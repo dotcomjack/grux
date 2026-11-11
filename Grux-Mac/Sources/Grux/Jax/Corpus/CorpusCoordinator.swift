@@ -28,6 +28,10 @@ final class CorpusCoordinator: ObservableObject {
         var totalIndexed: Int      // cumulative items indexed across all runs
         var lastRunIndexed: Int
         var isRunning: Bool
+        /// The verdict of the last read itself, kept apart from `permission`, which a
+        /// later probe overwrites; while the two agree the read's `lastNote` is the
+        /// reason the card shows (wave 63). Nil in a status saved before this existed.
+        var lastRunPermission: CorpusPermission? = nil
 
         var id: String { source.rawValue }
         var displayName: String { source.displayName }
@@ -159,13 +163,8 @@ final class CorpusCoordinator: ObservableObject {
     }
 
     private func apply(_ result: CorpusRunResult, to source: CorpusSource) {
-        guard var s = statuses[source] else { return }
-        s.permission = result.permission
-        s.lastRunAt = Date()
-        s.lastNote = result.note
-        s.lastRunIndexed = result.indexed
-        s.totalIndexed += result.indexed
-        statuses[source] = s
+        guard let s = statuses[source] else { return }
+        statuses[source] = Self.applying(result, to: s, at: Date())
         saveStatus()
     }
 
@@ -173,7 +172,25 @@ final class CorpusCoordinator: ObservableObject {
 
     private func loadStatus() {
         let loaded = Persistence.load([SourceStatus].self, from: Persistence.jaxCorpusStatusURL, fallback: [])
-        for s in loaded { statuses[s.source] = s }
+        for s in Self.restored(loaded) { statuses[s.source] = s }
+    }
+
+    /// A status after a read: what the read found and said, and its own verdict.
+    nonisolated static func applying(_ result: CorpusRunResult, to s: SourceStatus, at: Date) -> SourceStatus {
+        var s = s
+        s.permission = result.permission
+        s.lastRunPermission = result.permission
+        s.lastRunAt = at
+        s.lastNote = result.note
+        s.lastRunIndexed = result.indexed
+        s.totalIndexed += result.indexed
+        return s
+    }
+
+    /// Nothing reads at launch. Every save writes every row, so a status saved while
+    /// one source was reading would otherwise come back reading for good (wave 63).
+    nonisolated static func restored(_ loaded: [SourceStatus]) -> [SourceStatus] {
+        loaded.map { var s = $0; s.isRunning = false; return s }
     }
 
     private func saveStatus() {

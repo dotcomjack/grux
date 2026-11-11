@@ -135,7 +135,7 @@ struct HomeView: View {
     private var jaxBriefingCard: some View {
         if let brief = briefingEngine.latest {
             BriefingCard(
-                title: brief.displayTitle,
+                title: brief.cardTitle(now: Date()),
                 icon: "sparkle",
                 accent: GruxTheme.accentPrimaryLight
             ) {
@@ -320,7 +320,7 @@ struct HomeView: View {
     }
 
     private var watchingCard: some View {
-        BriefingCard(title: "Watching", icon: "eye", accent: GruxTheme.accentCo) {
+        BriefingCard(title: model.today.watchingTitle, icon: "eye", accent: GruxTheme.accentCo) {
             if !model.today.watching.isEmpty {
                 VStack(alignment: .leading, spacing: GruxSpacing.s) {
                     ForEach(model.today.watching) { item in

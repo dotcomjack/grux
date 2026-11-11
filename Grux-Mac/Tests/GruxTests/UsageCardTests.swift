@@ -43,7 +43,7 @@ final class UsageCardTests: XCTestCase {
             "Answered: All on this Mac",
             "Spent today: Nothing",
             "Spent this month: Nothing",
-            "Last decision: open my calendar, 7 ms",
+            "Last decision about: open my calendar, 7 ms",
         ])
         let all = text(card).joined(separator: " ").lowercased()
         for alarm in ["error", "fail", "not connected", "missing", "no key", "unavailable", "$0.00"] {
@@ -66,7 +66,7 @@ final class UsageCardTests: XCTestCase {
             "Answered: 2 on Jev, 1 on this Mac",
             "Spent today: Under $0.01",
             "Spent this month: $0.08",
-            "Last decision: open my calendar, 520 ms",
+            "Last decision about: open my calendar, 520 ms",
         ])
     }
 
@@ -169,13 +169,13 @@ final class UsageCardTests: XCTestCase {
     func test_aLastDecisionFromAnotherDaySaysWhichDay() {
         let card = UsageCardContent.build(from: [row(144, .local, at: at(9, 18, 9))], now: at(9, 21, 15), calendar: utc)
         XCTAssertEqual(text(card).first, "Decisions today: None yet")
-        XCTAssertEqual(text(card).last, "Last decision: open my calendar, 144 ms, Sep 18")
+        XCTAssertEqual(text(card).last, "Last decision about: open my calendar, 144 ms, Sep 18")
     }
 
     /// Off by one in time: earlier the same day is today, and says no day.
     func test_aLastDecisionEarlierTodaySaysNoDay() {
         let card = UsageCardContent.build(from: [row(9, .local, at: at(9, 21, 0, 1))], now: at(9, 21, 23, 59), calendar: utc)
-        XCTAssertEqual(text(card).last, "Last decision: open my calendar, 9 ms")
+        XCTAssertEqual(text(card).last, "Last decision about: open my calendar, 9 ms")
     }
 
     /// "An action is waiting for the person's approval., 144 ms": the risk

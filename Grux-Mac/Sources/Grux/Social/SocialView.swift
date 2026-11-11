@@ -29,18 +29,26 @@ struct SocialView: View {
         return url
     }
 
+    /// The line beside the title says what the tab is today: with no
+    /// dashboard set it read "Your posting dashboard, embedded" above a body
+    /// saying there is none (D88).
+    static func subtitle(hasDashboard: Bool) -> String {
+        hasDashboard ? "Your posting dashboard, embedded" : "No dashboard set yet"
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack {
                 Text("Social")
                     .font(GruxType.title)
+                    .unlessPaneTitle("Social")
                     .foregroundStyle(GruxTheme.textPrimary)
                 LabsHeaderBadge(feature: "social")
                 // Says what the tab DOES, for someone who has never seen it.
                 // "Threads orchestrator tuning" named one operator's own
                 // posting pipeline: three words, none of which tell a stranger
                 // that this tab embeds a dashboard they point at themselves.
-                Text("Your posting dashboard, embedded")
+                Text(Self.subtitle(hasDashboard: dashboardURL != nil))
                     .font(GruxType.caption)
                     .foregroundStyle(GruxTheme.textTertiary)
                 Spacer()

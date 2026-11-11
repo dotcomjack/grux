@@ -23,6 +23,28 @@ import XCTest
 /// survives, which is the distinction that makes this checkable at all.
 final class AssistantNamingTests: XCTestCase {
 
+    /// D192 item 1, sense pass 26: Feature Review's header read "Grux explains his
+    /// work", giving the app a gender. The app is "it" on every surface a person
+    /// reads, including the exported review page.
+    /// Wave 66 round 1 P3: a line of the export page's HTML (a multi-line string,
+    /// so no quote on the line) read "Every feature Grux built, in his own words";
+    /// the scan reads every line that is not a comment, and words with a comma.
+    func testNoScreenCallsTheAppHeOrHis() throws {
+        let root = #filePath.components(separatedBy: "/Tests/")[0] + "/Sources/Grux"
+        let gendered = try NSRegularExpression(pattern: "\\bGrux ([\\w,']+ ){0,4}(his|him|he)\\b")
+        var hits: [String] = []
+        let files = FileManager.default.enumerator(atPath: root)?.compactMap { $0 as? String } ?? []
+        for rel in files where rel.hasSuffix(".swift") {
+            let text = try String(contentsOfFile: root + "/" + rel, encoding: .utf8)
+            for line in text.split(separator: "\n") where !line.trimmingCharacters(in: .whitespaces).hasPrefix("//") {
+                let l = String(line)
+                if gendered.firstMatch(in: l, range: NSRange(l.startIndex..., in: l)) != nil { hits.append("\(rel): \(l)") }
+                if l.contains("explains his work") { hits.append("\(rel): \(l)") }
+            }
+        }
+        XCTAssertEqual(hits, [], hits.joined(separator: "\n"))
+    }
+
     /// Files whose "Jax" is legitimately hardcoded, each for a stated reason.
     /// A path is only ever added here with one.
     private static let exemptFiles: [String: String] = [

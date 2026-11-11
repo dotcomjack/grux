@@ -70,7 +70,7 @@ final class FirstRunChatTests: XCTestCase {
     /// hundreds of words and never once said what Grux can DO, so the likeliest
     /// opening question had nothing behind it but the persona header.
     func testTheCapabilityBlockNamesRealSurfacesAndNotInventedOnes() {
-        let block = FeatureRegistry.systemPromptBlock()
+        let block = FeatureRegistry.systemPromptBlock(signInExpired: false)
 
         // Same escape hatch the render tests use. Asserting on the shape of this
         // block is necessary and not sufficient: somebody has to be able to READ
@@ -86,13 +86,14 @@ final class FirstRunChatTests: XCTestCase {
         XCTAssertTrue(block.contains("WHAT_YOU_CAN_DO"),
                       "the block needs a stable header the prompt can be reasoned about by")
 
-        // POSITIVE CONTROL. Chat, Approvals and Task Stack have no blocking
+        // POSITIVE CONTROL. Chat, Approvals and Tasks have no blocking
         // requirements in the registry, so they are ready on ANY machine
         // including a bare CI runner. If the generator silently produced an
         // empty list, this fails, which is the point: a block that lists nothing
         // is worse than no block, because the model then believes it can do
         // nothing.
-        XCTAssertTrue(block.contains("Task Stack"),
+        let workingLine = block.components(separatedBy: "\n").first { $0.hasPrefix("WORKING RIGHT NOW") } ?? ""
+        XCTAssertTrue(workingLine.contains("Tasks"),
                       "a feature with zero blocking requirements must always be listed as ready")
         XCTAssertTrue(block.contains("WORKING RIGHT NOW"))
 
@@ -159,7 +160,7 @@ final class FirstRunChatTests: XCTestCase {
     /// have unsanded edges before they rely on one, and the sidebar badge exists
     /// for that reason; the prompt should not quietly drop the distinction.
     func testLabsFeaturesStayLabelledInThePrompt() {
-        let block = FeatureRegistry.systemPromptBlock()
+        let block = FeatureRegistry.systemPromptBlock(signInExpired: false)
         let labs = FeatureRegistry.rows.filter { $0.tier == .labs }
         XCTAssertFalse(labs.isEmpty, "the registry should carry labs rows; this test is vacuous otherwise")
         XCTAssertTrue(block.contains("(labs)"),
@@ -169,7 +170,7 @@ final class FirstRunChatTests: XCTestCase {
     /// The instruction is the half that makes the data useful. Without it the
     /// model has a list and no reason to prefer it over its own imagination.
     func testTheBlockTellsTheModelToAnswerFromItAndNotInvent() {
-        let block = FeatureRegistry.systemPromptBlock()
+        let block = FeatureRegistry.systemPromptBlock(signInExpired: false)
         XCTAssertTrue(block.contains("Never claim a surface that is not named here"),
                       "a capability list with no instruction attached is a list the model may ignore")
     }

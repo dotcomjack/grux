@@ -22,7 +22,18 @@ struct CapabilityGate<Content: View>: View {
     /// saying the same thing (audit 2026-10-13, item 5). There the card stands
     /// alone.
     var showsFeatureBehind: Bool = true
+    /// True where only PART of the pane needs the missing capability. Jax HQ
+    /// dimmed its whole page behind the mail card, so a "Save your note"
+    /// approval that has nothing to do with mail could not be approved there
+    /// (D200 item 1, `jaxHQ-1.png`). In this mode the gate dims nothing itself:
+    /// the pane draws the card where `CapabilitySetupSlot` sits and dims only
+    /// the parts it marks `.needsGatedCapability()`.
+    var keepsUnneededPartsLive: Bool = false
     @ViewBuilder var content: () -> Content
+
+    /// Redraws the gate when a setup step is answered (D138: a consent answered
+    /// on the card left the card up, since nothing watches UserDefaults).
+    @ObservedObject private var setupRevision = SetupRevision.shared
 
     // No @EnvironmentObject here either. There was one, it was never read, and
     // an unused environment dependency is not free: it imposes an injection
@@ -35,11 +46,21 @@ struct CapabilityGate<Content: View>: View {
         // clears the card without a relaunch.
         let needsSetup = Self.showsSetupCard(forTab: tabKey)
 
+        if Self.leavesDimmingToParts(needsSetup: needsSetup, keepsUnneededPartsLive: keepsUnneededPartsLive) {
+            content()
+                .environment(\.capabilitySetupPendingTab, tabKey)
+        } else {
+            wholePaneGate(needsSetup: needsSetup)
+        }
+    }
+
+    @ViewBuilder
+    private func wholePaneGate(needsSetup: Bool) -> some View {
         ZStack(alignment: .top) {
             if !needsSetup || showsFeatureBehind {
                 content()
                     .disabled(needsSetup)
-                    .opacity(needsSetup ? 0.28 : 1)
+                    .opacity(needsSetup ? CapabilityGateDimming.opacity : 1)
                     .allowsHitTesting(!needsSetup)
                     .accessibilityHidden(needsSetup)
             } else {
@@ -53,18 +74,74 @@ struct CapabilityGate<Content: View>: View {
                 // version stretched the card to fill and its background hid the
                 // very thing the dimming exists to show.
                 CapabilitySetupCard(featureKey: tabKey)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(GruxTheme.base.opacity(0.97))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .stroke(GruxTheme.textTertiary.opacity(0.22), lineWidth: 1)
-                            )
-                    )
+                    .capabilitySetupCardFrame()
                     .padding(GruxSpacing.l)
                     .transition(.opacity)
             }
         }
+    }
+}
+
+/// The opacity a dimmed part of a gated pane draws at, shared by both modes.
+enum CapabilityGateDimming {
+    static let opacity: Double = 0.28
+}
+
+private struct CapabilitySetupPendingTabKey: EnvironmentKey {
+    static let defaultValue: String? = nil
+}
+
+extension EnvironmentValues {
+    /// The tab whose setup card is up, set only by a gate in
+    /// `keepsUnneededPartsLive` mode. Nil everywhere else.
+    var capabilitySetupPendingTab: String? {
+        get { self[CapabilitySetupPendingTabKey.self] }
+        set { self[CapabilitySetupPendingTabKey.self] = newValue }
+    }
+}
+
+/// Where a `keepsUnneededPartsLive` pane draws its setup card. Draws nothing
+/// when the capability is there or outside such a gate.
+struct CapabilitySetupSlot: View {
+    @Environment(\.capabilitySetupPendingTab) private var pendingTab
+
+    var body: some View {
+        if let pendingTab {
+            CapabilitySetupCard(featureKey: pendingTab)
+                .capabilitySetupCardFrame()
+        }
+    }
+}
+
+private struct NeedsGatedCapability: ViewModifier {
+    @Environment(\.capabilitySetupPendingTab) private var pendingTab
+
+    func body(content: Content) -> some View {
+        let dimmed = CapabilityGate<EmptyView>.dimsPart(pendingTab: pendingTab)
+        content
+            .disabled(dimmed)
+            .opacity(dimmed ? CapabilityGateDimming.opacity : 1)
+            .allowsHitTesting(!dimmed)
+            .accessibilityHidden(dimmed)
+    }
+}
+
+extension View {
+    /// Marks a part of a `keepsUnneededPartsLive` pane that does need the
+    /// missing capability: it dims and stops taking input while the card is up.
+    func needsGatedCapability() -> some View {
+        modifier(NeedsGatedCapability())
+    }
+
+    fileprivate func capabilitySetupCardFrame() -> some View {
+        background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(GruxTheme.base.opacity(0.97))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(GruxTheme.textTertiary.opacity(0.22), lineWidth: 1)
+                )
+        )
     }
 }
 
@@ -80,12 +157,25 @@ extension CapabilityGate {
     static func showsSetupCard(forTab tabKey: String) -> Bool {
         !FeatureRegistry.missing(forTab: tabKey).isEmpty
     }
+
+    /// Whether the gate hands the dimming to the pane's own marked parts
+    /// instead of dimming the whole pane.
+    static func leavesDimmingToParts(needsSetup: Bool, keepsUnneededPartsLive: Bool) -> Bool {
+        needsSetup && keepsUnneededPartsLive
+    }
+
+    /// Whether a part marked `.needsGatedCapability()` dims: only while a
+    /// parts-mode gate has its card up.
+    static func dimsPart(pendingTab: String?) -> Bool {
+        pendingTab != nil
+    }
 }
 
 extension View {
     /// Gates this feature on its registry row. No-op for a tab with no row, so
     /// adopting a tab that needs nothing is harmless.
-    func capabilityGated(_ tabKey: String, showsFeatureBehind: Bool = true) -> some View {
-        CapabilityGate(tabKey: tabKey, showsFeatureBehind: showsFeatureBehind) { self }
+    func capabilityGated(_ tabKey: String, showsFeatureBehind: Bool = true, keepsUnneededPartsLive: Bool = false) -> some View {
+        CapabilityGate(tabKey: tabKey, showsFeatureBehind: showsFeatureBehind,
+                       keepsUnneededPartsLive: keepsUnneededPartsLive) { self }
     }
 }

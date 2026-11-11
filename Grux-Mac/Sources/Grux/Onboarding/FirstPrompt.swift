@@ -37,7 +37,7 @@ enum FirstPrompt {
     static let micExplanation = "To say it instead of typing, Grux asks macOS for the microphone. It listens only "
         + "while the button is lit, and what you say becomes text on this Mac. This is not listening; that "
         + "comes later in setup, and you choose."
-    static let micRefused = "The microphone is off for Grux in System Settings. Type instead, or turn it on there."
+    static let micRefused = "The microphone is off for Grux AI in System Settings, Privacy & Security, Microphone. Type instead, or turn it on there."
 
     /// For somebody who would rather pick from a list than describe it: the
     /// three levels, which were the front door before this.

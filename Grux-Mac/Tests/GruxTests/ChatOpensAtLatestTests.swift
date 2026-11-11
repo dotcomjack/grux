@@ -673,7 +673,7 @@ final class ChatOpensAtLatestTests: XCTestCase {
         let triggers = try String(contentsOf: root.appendingPathComponent("Sources/Grux/Triggers/AppTriggers.swift"), encoding: .utf8)
         XCTAssertTrue(triggers.contains("ChatTriggers.register(in: dir)"), "the chat triggers are never registered")
         XCTAssertEqual(ChatTriggers.names, ["fire-chat-show-earlier", "fire-chat-scroll", "fire-chat-latest",
-                                            "fire-chat-status", "fire-pane-width"], "a trigger file name changed")
+                                            "fire-chat-status", "fire-pane-width", "fire-chat-thread"], "a trigger file name changed")
     }
 
     /// Review of 66ea148, P3: "nan" scrolled to the top (max(0, NaN) is 0),

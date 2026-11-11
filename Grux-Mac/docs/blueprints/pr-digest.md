@@ -109,7 +109,7 @@ The feature renders `needs-setup` with a setup card showing these exact strings.
 
 - GitHub token: "Connect GitHub in Settings so Grux can read your repositories. A classic token with repo scope is enough."
 - Repository list: "Tell Grux which repositories to watch in Settings. Nothing is watched until you do."
-- Anthropic API key: "Add your Anthropic API key in Settings to use Claude. Get one at console.anthropic.com. Chat also runs on a local model with no key."
+- Anthropic API key: "Add your Anthropic API key in Settings to use Claude. Get one at console.anthropic.com. Many features run on a local model with no key."
 - Notifications: "Allow notifications so Grux can nudge you. Open System Settings, Notifications, Grux, and turn them on."
 
 The repository list is the one most people miss, which is why its remediation says

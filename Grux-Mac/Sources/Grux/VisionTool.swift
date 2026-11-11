@@ -20,6 +20,13 @@ import Foundation
 
 @MainActor
 enum VisionTool {
+    // The path is the measured one every permission card uses (W32-P3 item 3:
+    // this named a "Screen Recording" pane macOS 15 and later does not show).
+    static var notGrantedLine: String {
+        "error: Screen Recording permission not granted. Grant it in "
+            + CapabilityRequest.settingsPath(for: .permScreenRecording) + " by ticking Grux AI."
+    }
+
     static func readScreen(question: String) async -> String {
         let state = AppState.shared
         let q = question.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -28,7 +35,7 @@ enum VisionTool {
             : q
 
         guard ScreenCapturer.shared.hasPermission() else {
-            return "error: screen recording permission not granted. Grant it in System Settings → Privacy & Security → Screen Recording → Grux."
+            return notGrantedLine
         }
         let apiKey = state.anthropicKey
         guard !apiKey.isEmpty else {

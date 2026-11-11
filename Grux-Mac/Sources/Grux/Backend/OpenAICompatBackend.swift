@@ -234,6 +234,21 @@ actor OpenAICompatBackend: ModelBackend {
     /// `cache_control`, and the blocks without it at the head of the last user
     /// message. With no cached block, no uncached one, or no user message, the
     /// whole prompt stays one system message, as on every other server.
+    /// D167: the messages for the wire and the text the reply starts with. An
+    /// Ollama server continues a trailing assistant message, so a local draft
+    /// turn's greeting (`DraftAsk.prefillMessage`) goes out as the reply's
+    /// start and is the reply's first text; any other server might answer it
+    /// as a finished turn, so it never receives it.
+    static func prefilled(_ messages: [[String: Any]], ollama: Bool) -> (messages: [[String: Any]], prefix: String?) {
+        // A greeting not at the end (a later hop) is already in the reply's text.
+        guard let last = messages.last, last[DraftAsk.prefillKey] != nil else {
+            return (DraftAsk.withoutPrefill(messages), nil)
+        }
+        let rest = DraftAsk.withoutPrefill(Array(messages.dropLast()))
+        guard ollama, let text = last["content"] as? String, !text.isEmpty else { return (rest, nil) }
+        return (rest + [["role": "assistant", "content": text]], text)
+    }
+
     static func withTurnContextAfterTools(systemBlocks: [[String: Any]],
                                           messages: [[String: Any]]) -> [[String: Any]] {
         func joined(_ blocks: [[String: Any]]) -> String {
@@ -828,7 +843,9 @@ actor OpenAICompatBackend: ModelBackend {
                     // except on Ollama, where the per-turn block rides in the
                     // user's message so the tools after the system text stay cached.
                     var oaMessages: [[String: Any]] = []
-                    if await speaksOllama() {
+                    let ollama = await speaksOllama()
+                    let (messages, replyStart) = Self.prefilled(messages, ollama: ollama)
+                    if ollama {
                         oaMessages = Self.withTurnContextAfterTools(systemBlocks: systemBlocks,
                                                                     messages: Self.openAIChatMessages(messages))
                     } else {
@@ -865,6 +882,12 @@ actor OpenAICompatBackend: ModelBackend {
                     // accumulate. We map these to the Claude event sequence
                     // ChatService consumes: toolUseStart -> InputDelta* -> toolUseStop.
                     var textBlockOpen = false
+                    // D167: the greeting the server continues from is the reply's start.
+                    if let replyStart {
+                        continuation.yield(.textBlockStart)
+                        continuation.yield(.textDelta(replyStart))
+                        textBlockOpen = true
+                    }
                     // Per-index tool-call accumulators.
                     struct ToolAccum { var id: String = ""; var name: String = ""; var args: String = ""; var started = false }
                     var toolAccums: [Int: ToolAccum] = [:]

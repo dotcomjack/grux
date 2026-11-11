@@ -77,6 +77,38 @@ final class EmptyStateCopyTests: XCTestCase {
                       "the absence of an optional component has to be stated as normal, or it reads as a fault")
     }
 
+    /// D179 item 7. The header pill read a red "offline · 0 projects" above
+    /// the note "nothing here is broken without it" on a Mac that never set a
+    /// registry up. Red is for a fault; a registry nobody configured is not
+    /// one. The pill says where projects come from, and is red only when a
+    /// registry the person named in projects-service.json did not answer.
+    func testTheHeaderPillIsNotAFaultWhenNoRegistryWasEverSetUp() {
+        let never = ProjectsView.sourcePillCopy(source: .empty, registryConfigured: false, fetchedAgo: "")
+        XCTAssertNotEqual(never.tone, .fault, "a registry nobody set up is not a fault")
+        XCTAssertFalse(never.label.lowercased().contains("offline"),
+                       "\"offline\" beside \"nothing here is broken\" contradicts itself")
+        XCTAssertEqual(never.label, "this Mac's folders")
+
+        let down = ProjectsView.sourcePillCopy(source: .empty, registryConfigured: true, fetchedAgo: "")
+        XCTAssertEqual(down.tone, .fault, "a registry the person set up that does not answer is a fault, and says so")
+        XCTAssertEqual(down.label, "registry not answering")
+
+        XCTAssertEqual(ProjectsView.sourcePillCopy(source: .cache, registryConfigured: true, fetchedAgo: "5 min. ago").label,
+                       "cached · 5 min. ago")
+        XCTAssertEqual(ProjectsView.sourcePillCopy(source: .macMini, registryConfigured: true, fetchedAgo: "").tone, .live)
+        XCTAssertEqual(ProjectsView.sourcePillCopy(source: .localhost, registryConfigured: false, fetchedAgo: "").tone, .live)
+    }
+
+    /// The empty state's "nothing here is broken" note is only true when no
+    /// registry was set up; with one set up and not answering, the pill says
+    /// so and the note stays away rather than contradict it.
+    func testTheNothingIsBrokenNoteOnlyShowsWhenNoRegistryWasSetUp() {
+        XCTAssertTrue(ProjectsView.registryMissing(source: .empty, registryConfigured: false))
+        XCTAssertFalse(ProjectsView.registryMissing(source: .empty, registryConfigured: true))
+        XCTAssertFalse(ProjectsView.registryMissing(source: .cache, registryConfigured: false))
+        XCTAssertFalse(ProjectsView.registryMissing(source: .localhost, registryConfigured: false))
+    }
+
     // MARK: - Task Stack
 
     /// THE BUG. `groupMode` defaults to `.project` and `projectSections`

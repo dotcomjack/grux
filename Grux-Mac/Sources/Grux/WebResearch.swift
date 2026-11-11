@@ -16,6 +16,65 @@ import Foundation
 
 @MainActor
 enum WebResearch {
+    /// What stops a search before it starts, in `research`'s order. One gate,
+    /// read by `research` and by the Settings switch, so the switch never reads
+    /// on while every search is refused (D157 item 6).
+    enum Blocker: Equatable { case offline, disabled, noSearchKey }
+    static func blocker(offline: Bool, enabled: Bool, hasSearchKey: Bool) -> Blocker? {
+        if offline { return .offline }
+        if !enabled { return .disabled }
+        if !hasSearchKey { return .noSearchKey }
+        return nil
+    }
+
+    /// Offline mode off sets the active provider to Anthropic
+    /// (`AppState.offlineMode`), so every line that says to turn it off says
+    /// that too (D210 item 3): web research alone was the promise, and chat
+    /// leaving the local model was the surprise.
+    static let offlineAlsoMovesChat = "turning it off also moves chat to Claude"
+
+    /// Whether turning offline mode off really moves chat to Claude (wave 75
+    /// round 1): with no Claude key and a local model running, the Anthropic
+    /// choice still routes local (`ModelRegistry.anthropicRoute`), and a chat
+    /// preset that pins a provider keeps chat where it pins it. With no key and
+    /// no local model chat answers nowhere either way. Only a saved key with
+    /// no pinning preset moves it.
+    static func offlineOffMovesChat(hasClaudeKey: Bool, presetProvider: String?) -> Bool {
+        presetProvider == nil && hasClaudeKey
+    }
+
+    /// The line under the Settings switch, or nil when the switch says it all.
+    static func settingsLine(_ blocker: Blocker?, chatMovesToClaude: Bool) -> String? {
+        switch blocker {
+        case .offline:
+            return "Not searching now: offline mode is on, and a search sends your question to Brave Search. "
+                + "Turn offline mode off in Settings, Models to use it"
+                + (chatMovesToClaude ? "; " + offlineAlsoMovesChat : "") + "."
+        case .noSearchKey:
+            return "Not searching yet: it needs a Brave Search key, under Credentials above."
+        case .disabled, nil:
+            return nil
+        }
+    }
+
+    /// The line under the Settings switch for the whole state (D179 item 12):
+    /// with offline mode on and no Brave key, turning offline mode off alone
+    /// would still not search, so the line names both.
+    static func settingsLine(offline: Bool, enabled: Bool, hasSearchKey: Bool, chatMovesToClaude: Bool) -> String? {
+        guard enabled, let line = settingsLine(blocker(offline: offline, enabled: enabled, hasSearchKey: hasSearchKey),
+                                               chatMovesToClaude: chatMovesToClaude)
+        else { return nil }
+        return offline && !hasSearchKey ? line + " Web search also needs a Brave Search key, under Credentials above." : line
+    }
+
+    /// After an answer `research` kept in memory, for the chat tool's result
+    /// only (D173): `ActionClaimGuard.kept` reads it as what backs "I've saved
+    /// the answer". `research` stores only a found answer, with memory on.
+    static let keptLine = "\n\nsaved: this answer is kept in memory for future recall"
+    static func markingKept(_ result: String, memoryOn: Bool) -> String {
+        guard memoryOn, !result.hasPrefix("error:"), !result.hasPrefix("No web results") else { return result }
+        return result + keptLine
+    }
 
     enum WebError: Error, LocalizedError {
         case missingBraveKey
@@ -26,7 +85,7 @@ enum WebResearch {
         var errorDescription: String? {
             switch self {
             case .missingBraveKey:
-                return "Brave Search API key not set. Add it in Settings, Data & Security, Data & Capabilities, Real-time web research."
+                return "Brave Search API key not set. Add it in Settings, Data & Security, Data & Capabilities, Credentials, Web search API key."
             case .missingAnthropicKey:
                 return "Anthropic API key not set. Add it in Settings, Models."
             case .http(let code, let body):
@@ -60,15 +119,17 @@ enum WebResearch {
         // Offline mode disables web research (it's a cloud feature). Return the
         // same error-string shape the tool layer already handles so the model
         // gets a clean tool_result and continues.
-        guard !state.offlineMode else {
-            return "error: web research unavailable in offline mode."
-        }
-        guard state.config.webResearchEnabled else {
-            return "error: web research is disabled. Turn it on in Settings, Data & Security, Data & Capabilities, Real-time web research."
-        }
         let braveKey = state.braveKey
-        guard !braveKey.isEmpty else {
-            return "error: Brave Search API key not set. Add it in Settings, Data & Security, Data & Capabilities, Real-time web research. (Brave's free plan covers ~1,000 searches/month.)"
+        switch blocker(offline: state.offlineMode, enabled: state.config.webResearchEnabled,
+                       hasSearchKey: !braveKey.isEmpty) {
+        case .offline:
+            return "error: web research unavailable in offline mode."
+        case .disabled:
+            return "error: web research is disabled. Turn it on in Settings, Data & Security, Data & Capabilities, Real-time web research."
+        case .noSearchKey:
+            return "error: Brave Search API key not set. Add it in Settings, Data & Security, Data & Capabilities, Credentials, Web search API key. (Brave's free plan covers ~1,000 searches/month.)"
+        case nil:
+            break
         }
         // ROUTED, AND THE ROUTE PICKS THE MODEL. The summarizer built its own
         // ClaudeClient and gated on AppState.anthropicKey, so web research

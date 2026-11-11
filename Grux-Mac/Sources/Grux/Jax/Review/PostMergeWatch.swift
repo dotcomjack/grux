@@ -1,4 +1,5 @@
 import Foundation
+import GruxAgentCore
 
 // PostMergeWatch: the safety net AFTER a feature reaches main. The in-app gate
 // and the merge script's test+build gates vet a feature before it lands, but no
@@ -173,7 +174,7 @@ final class PostMergeWatch: ObservableObject {
         p.arguments = ["-C", Self.liveTreeRoot, "merge-base", "--is-ancestor", sha, "HEAD"]
         p.standardOutput = Pipe(); p.standardError = Pipe()
         do { try p.run() } catch { return true }  // unknown -> assume still present (do not falsely claim reverted)
-        p.waitUntilExit()
+        p.waitForExitBlocking()
         return p.terminationStatus == 0
     }
 

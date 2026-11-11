@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import GruxAgentCore
 
 // LiveTreeTripwire: catches the autonomous-drop signature (UNTRACKED files
 // appearing under the LIVE build worktree's Sources/) and quarantines them.
@@ -141,7 +142,7 @@ final class LiveTreeTripwire {
         p.standardError = Pipe()
         do { try p.run() } catch { return [] }
         let data = out.fileHandleForReading.readDataToEndOfFile()
-        p.waitUntilExit()
+        p.waitForExitBlocking()
         guard p.terminationStatus == 0, let text = String(data: data, encoding: .utf8) else { return [] }
         var result: [String] = []
         for line in text.split(separator: "\n") {

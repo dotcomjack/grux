@@ -107,7 +107,7 @@ enum MicController {
             // heard. Measured 2026-09-21: ambient had given up, the orb still
             // read ARMED, and the tap the person tried MUTED it. Now the tell
             // reads NOT HEARING, and the tap tries the microphone again.
-            WakeLog.shared.log("mic: tapped while not hearing, trying the microphone again")
+            WakeLog.shared.log("mic: clicked while not hearing, trying the microphone again")
             AmbientListener.shared.retryNow()
         } else {
             mute(source: source)

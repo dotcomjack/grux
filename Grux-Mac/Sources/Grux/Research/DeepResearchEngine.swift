@@ -61,6 +61,34 @@ actor DeepResearchEngine {
 
     // MARK: - Pipeline
 
+    /// Why a job is refused before it searches, or nil to go ahead: the one
+    /// gate every web search reads (`WebResearch.blocker`), so offline mode
+    /// stops deep research as it stops the quick search and as Settings and
+    /// the README say (wave 66 round 1).
+    @MainActor static func refusal(offline: Bool, enabled: Bool, hasSearchKey: Bool, chatMovesToClaude: Bool) -> String? {
+        guard WebResearch.blocker(offline: offline, enabled: enabled, hasSearchKey: hasSearchKey) != nil else { return nil }
+        // Every blocker that applies is named (wave 66 round 2): "turn offline mode
+        // off" alone, with no Brave key, sent the person to a second refusal.
+        var lines: [String] = []
+        if offline {
+            let only = enabled && hasSearchKey
+            lines.append("Not searching: offline mode is on, and deep research sends your question to Brave Search. "
+                + "Turn offline mode off in Settings, Models" + (only ? " to use it" : "")
+                + (chatMovesToClaude ? "; " + WebResearch.offlineAlsoMovesChat : "") + ".")
+        }
+        if !enabled {
+            lines.append(offline
+                ? "Real-time web research also has to be on, in Settings, Data & Security, Data & Capabilities."
+                : "Web research is disabled. Turn it on in Settings, Data & Security, Data & Capabilities, Real-time web research.")
+        }
+        if !hasSearchKey {
+            lines.append(offline || !enabled
+                ? "Deep research also needs a Brave Search API key, in Settings, Data & Security, Data & Capabilities, Credentials, Web search API key."
+                : "Brave Search API key not set. Add it in Settings, Data & Security, Data & Capabilities, Credentials, Web search API key.")
+        }
+        return lines.joined(separator: " ")
+    }
+
     private func execute(jobId: UUID, question: String) async {
         // ROUTED, AND THE ROUTE PICKS THE MODEL. The engine held its own
         // ClaudeClient and sent AppState.anthropicKey at all three model calls,
@@ -80,23 +108,16 @@ actor DeepResearchEngine {
         // whole job, then the Sendable trio is threaded into plan/gather/
         // synthesis. It is never read inside the per-angle task group.
         //
-        // NO OFFLINE GATE. There was one, refusing the job whenever
-        // AppState.offlineMode was on, with "Deep research is a cloud feature".
-        // That switch is labelled "Offline mode (local model)" and "Route chat to
-        // a local model" in Settings, and AppState records flipping it as a
-        // PROVIDER CHOICE, so what it states is which model serves a turn, not
-        // whether this Mac has a network. Read as a network fact it refused two
-        // users who were online and correctly configured: the one who had pressed
-        // Use on a hosted custom endpoint while the switch happened to be on, and
-        // the local user this file was routed for in the first place. The cloud
-        // thing deep research actually needs is the WEB, and the two gates below
-        // are the consent for it: webResearchEnabled and a Brave key. The model
-        // half is answered by the route, and resolvedProvider always names a
-        // route that can serve a turn (a local choice with nothing discovered
-        // resolves to Anthropic), so there is nothing left here to refuse.
-        // WebResearch.research() still gates its own one-shot summary on the
-        // switch; these two no longer mirror each other, deliberately, and that
-        // one is the next thing to look at.
+        // THE OFFLINE GATE, BACK (wave 66 round 1). An earlier cut dropped it,
+        // reading the switch as a provider choice ("Offline mode (local model)")
+        // rather than a network fact, so a person online with the switch on was
+        // refused. But Settings says "Not searching now: offline mode is on, and
+        // a search sends your question to Brave Search", the README says offline
+        // mode turns web search off, and the quick search refuses there; with
+        // no gate here, deep research alone sent three to six queries to Brave
+        // with the switch on. The person who chose offline mode is told why, in
+        // the same words, and turning it off is one switch. `refusal` reads the
+        // one gate, `WebResearch.blocker`.
         //
         // TWO MODELS, ONE ROUTE, and the tier is restored deliberately. Six cheap
         // gather calls and one expensive synthesis was the whole cost posture of
@@ -107,22 +128,21 @@ actor DeepResearchEngine {
         // cannot serve it, so the synthesis override holds on the Anthropic route
         // and falls back to the routed model everywhere else. A preference that
         // is honoured only where it can be honoured costs nothing.
-        let (routing, synthRouting, braveKey, enabled) = await MainActor.run {
+        let (routing, synthRouting, braveKey, enabled, offline) = await MainActor.run {
             (ModelRegistry.shared.resolvedRouting(provider: nil, modelOverride: nil),
              ModelRegistry.shared.resolvedRouting(provider: nil, modelOverride: Self.synthesisModel),
              AppState.shared.braveKey,
-             AppState.shared.config.webResearchEnabled)
+             AppState.shared.config.webResearchEnabled,
+             AppState.shared.offlineMode)
         }
         let backend = routing.backend
         let modelKey = routing.apiKey
         let modelId = routing.modelId
         let synthModelId = synthRouting.modelId
-        guard enabled else {
-            await fail(jobId, "Web research is disabled. Turn it on in Settings, Data & Security, Data & Capabilities, Real-time web research.")
-            return
-        }
-        guard !braveKey.isEmpty else {
-            await fail(jobId, "Brave Search API key not set. Add it in Settings, Data & Security, Data & Capabilities, Real-time web research.")
+        if let refused = await MainActor.run(body: { Self.refusal(offline: offline, enabled: enabled, hasSearchKey: !braveKey.isEmpty,
+            chatMovesToClaude: WebResearch.offlineOffMovesChat(hasClaudeKey: KeychainStore.exists(.anthropicApiKey),
+                                                               presetProvider: PresetStore.shared.activeChatApplication()?.providerOverride)) }) {
+            await fail(jobId, refused)
             return
         }
         guard !modelKey.isEmpty else {

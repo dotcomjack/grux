@@ -76,7 +76,7 @@ struct ReplyRulesSheet: View {
     // MARK: Muted senders
 
     private var mutedSection: some View {
-        section("Muted senders", hint: "Senders and domains that never get a draft. Add from a draft card or a Mailbox message.") {
+        section("Muted senders", hint: "Senders and domains that never get a draft. Add from a draft card or a message in Mail.") {
             if suppression.emails.isEmpty && suppression.domains.isEmpty {
                 Text("None muted yet.")
                     .font(GruxTheme.Font.caption)

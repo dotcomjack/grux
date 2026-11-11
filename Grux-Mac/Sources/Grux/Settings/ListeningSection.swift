@@ -19,8 +19,13 @@ struct ListeningSection: View {
         body: "A notification each time Grux does something you asked for out loud, with how long it took to decide. The first one is preceded by a short explanation, once. Turn this off and Grux still acts; it just stops announcing it, and the menu bar, the HUD and the rail in Chat keep the record.")
 
     static let micCopy = Copy(
-        title: "Listen on this Mac's microphone",
-        body: "Headphones, a phone over Continuity and an AirPlay speaker drop to call quality while anything holds their microphone open, so listening stays on the Mac's own. A microphone you plug in is used as normal, and the input goes back to your choice when listening stops. Turn this off to listen on whatever the system input is.")
+        title: "When listening, keep off wireless headphone and phone microphones",
+        body: "Headphones, a phone over Continuity and an AirPlay speaker drop to call quality while anything holds their microphone open, so listening moves to this Mac's built-in microphone, or to the microphone you chose for Grux, and stays where it is when there is neither. A microphone you plug in is used as normal, and the input goes back to your choice when listening stops. Turn this off to listen on whatever the system input is.")
+
+    /// The note while listening waits for its yes. The amber row under it
+    /// already says it needs your OK, so this says only what that row does
+    /// not (D135 item 5), and names the dialog's own button (W39-FIX P3 10).
+    static let closedNote = "The microphone stays closed until you choose \(ListeningTell.allowTitle), then \(MicConsent.confirmTitle) in the box that opens."
 
     @ObservedObject private var state = AppState.shared
     @ObservedObject private var ambient = AmbientState.shared
@@ -91,10 +96,11 @@ struct ListeningSection: View {
 
     /// The line under the mode: what listening costs while it runs, or, while
     /// the mode waits for its yes, that the microphone is still closed (D29:
-    /// this said the microphone was open before anyone had agreed).
+    /// this said the microphone was open before anyone had agreed; D135
+    /// item 5: it then repeated the status row under it).
     static func costNote(mode: ListeningMode, awaitingConsent: Bool) -> String? {
         guard mode != .off else { return nil }
-        return awaitingConsent ? TodayModel.sayItLine(.waiting) : MicConsent.runningNote
+        return awaitingConsent ? closedNote : MicConsent.runningNote
     }
 
     private var isLive: Bool {

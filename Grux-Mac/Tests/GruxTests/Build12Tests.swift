@@ -111,7 +111,11 @@ final class SpeakingOpensNoInputTests: XCTestCase {
         XCTAssertTrue(speaker.contains("if AudioOutput.outputWouldAskForMic {\n            playDetached(utt)"))
         XCTAssertTrue(speaker.contains("stopDetached = AudioOutput.playDetached(url, volume)"))
         let engine = try macSource("Sources/Grux/SpeechEngine.swift")
-        XCTAssertEqual(engine.components(separatedBy: "&& !AudioOutput.outputWouldAskForMic").count - 1, 2,
+        // Wave 70: the rule moved into `SpeechEngine.speaksWithElevenLabs`, which both speak
+        // paths ask with the live microphone question.
+        XCTAssertEqual(engine.components(separatedBy: "wouldAskForMic: AudioOutput.outputWouldAskForMic").count - 1, 2,
+                       "a cloud voice plays in Grux before the microphone question")
+        XCTAssertFalse(SpeechEngine.speaksWithElevenLabs(choice: true, hasKey: true, offline: false, wouldAskForMic: true),
                        "a cloud voice plays in Grux before the microphone question")
     }
 

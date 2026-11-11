@@ -30,7 +30,7 @@ final class AgentJobFailureInChatTests: XCTestCase {
         let text = try XCTUnwrap(line(job))
         XCTAssertTrue(text.contains("Reply with the single word hi"), text)
         XCTAssertTrue(text.contains("Claude's sign-in on this Mac has expired"), text)
-        XCTAssertTrue(text.contains("Sign in again"), text)
+        XCTAssertTrue(text.contains("Sign in (Claude sign-in, at the top of Now)"), text)
         for word in jargon { XCTAssertFalse(text.contains(word), "\(word) in: \(text)") }
     }
 
@@ -50,7 +50,7 @@ final class AgentJobFailureInChatTests: XCTestCase {
         XCTAssertTrue(job.failedOnSignIn)
         let text = try XCTUnwrap(line(job))
         XCTAssertTrue(text.contains("Claude's sign-in on this Mac has expired"), text)
-        XCTAssertTrue(text.contains("Sign in again"), text)
+        XCTAssertTrue(text.contains("Sign in (Claude sign-in, at the top of Now)"), text)
     }
 
     func test_anyOtherFailureNamesTheJobAndTheWayOn() throws {

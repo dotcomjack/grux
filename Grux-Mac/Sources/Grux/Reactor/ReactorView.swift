@@ -38,7 +38,7 @@ struct ReactorView: View {
         let done = state.completedTasks.count
         let taskTotal = active + done
         let taskFrac = taskTotal == 0 ? 0 : Double(done) / Double(taskTotal)
-        let tasks = ReactorRing(label: "TASKS", fraction: taskFrac, readout: "\(done)/\(taskTotal)",
+        let tasks = ReactorRing(label: "TASKS", fraction: taskFrac, readout: Self.taskRingReadout(done: done, total: taskTotal),
                                 tint: GruxTheme.successMint, dashed: false, dim: taskTotal == 0)
 
         // MAIL: unread pressure (cyan, dims to nothing at inbox zero).
@@ -146,20 +146,29 @@ struct ReactorView: View {
     /// The Mailbox card's number and line. With no mailbox set up there is
     /// no count to show, and zero unread from nothing is not an empty inbox
     /// (D30: this read "0 / Inbox zero" while Now said "Set up Mailbox").
+    /// Where there is no number the card says a word: two dots over "Not set up"
+    /// read as a count still loading (D115 item 5).
     static func mailboxReadout(hasAccount: Bool, unread: Int, newest: String) -> (value: String, sub: String) {
-        guard hasAccount else { return ("··", "Not set up") }
+        guard hasAccount else { return ("Off", "Not set up") }
         if unread == 0 { return ("0", "Inbox zero") }
         return ("\(unread)", newest.isEmpty ? "unread" : "from \(newest)")
     }
 
     static func mailRingReadout(hasAccount: Bool, unread: Int) -> String {
-        hasAccount ? "\(unread)" : "··"
+        hasAccount ? "\(unread)" : "off"
     }
+
+    /// The task ring says what it counts: "TASKS 2/5" did not (D115 item 5).
+    static func taskRingReadout(done: Int, total: Int) -> String {
+        total == 0 ? "none" : "\(done) of \(total) done"
+    }
+
+    static let calendarDeniedReadout = (value: "No access", sub: "Grant calendar access")
 
     private var calendarPanel: some View {
         if calendarDenied {
             return ReactorPanel(icon: "calendar", title: "CALENDAR",
-                                value: "··", sub: "Grant calendar access",
+                                value: Self.calendarDeniedReadout.value, sub: Self.calendarDeniedReadout.sub,
                                 tint: GruxTheme.warnAmber, dim: true)
         }
         let readout = Self.calendarReadout(events: upcomingEvents, now: Date())
@@ -201,17 +210,13 @@ struct ReactorView: View {
             day.setLocalizedDateFormatFromTemplate(daysOut < 7 ? "EEE" : "MMMd")
             return (day.string(from: next.start), next.title, next)
         }
-        let f = RelativeDateTimeFormatter()
-        f.unitsStyle = .abbreviated
-        f.calendar = calendar
-        f.locale = calendar.locale ?? .current
-        return (f.localizedString(for: next.start, relativeTo: now), next.title, next)
+        return (RelativeStamp.string(for: next.start, relativeTo: now, calendar: calendar), next.title, next)
     }
 
     /// The Meta Ads card's number and line. No snapshot is no spend (D51: this read "$0.00"
     /// and "offline" for a service that was not set up).
     static func metaAdsReadout(spendCents: Int?, mode: String?, attention: Int, notSetUp: Bool) -> (value: String, sub: String) {
-        guard let spendCents else { return ("··", notSetUp ? "Not set up" : "offline") }
+        guard let spendCents else { return notSetUp ? ("Off", "Not set up") : ("Offline", "No numbers yet") }
         return (cents(spendCents), "\(mode ?? "") · \(attention) need you")
     }
 
@@ -273,7 +278,7 @@ struct ReactorView: View {
         .contentShape(Circle())
         .onTapGesture { MicController.toggle(source: "reactor") }
         .gruxHoverable(lift: 1.04, rimOnHover: 0, fillOnHover: 0)
-        .help(state.micMuted ? "Mic muted, tap to resume" : "Tap the core to mute")
+        .help(state.micMuted ? "Mic muted, click to resume" : "Click the core to mute")
     }
 
     // Phase 5 toggle. On by default (the neon is the point); off falls back to the

@@ -1,4 +1,5 @@
 import Foundation
+import GruxAgentCore
 
 // Listens to the ambient transcript for moments where the user verbally describes
 // a concrete software problem ("this is broken", "always fails", "annoying",
@@ -558,7 +559,7 @@ final class IssueExtractor {
                     }
                 }
                 drain.wait()
-                proc.waitUntilExit()
+                proc.waitForExitBlocking()
                 let out = String(data: outData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 let err = String(data: errData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 if proc.terminationStatus == 0 {

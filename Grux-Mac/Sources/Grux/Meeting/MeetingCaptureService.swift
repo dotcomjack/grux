@@ -24,6 +24,33 @@ final class MeetingCaptureService: ObservableObject {
     @Published private(set) var isCapturing: Bool = false
     @Published private(set) var isInitializing: Bool = false
     @Published private(set) var activeMeeting: MeetingRecord?
+    /// True from `stop()` until the record is finalized: the summary runs and
+    /// `finalize` saves after capture ends, so the meeting is still live.
+    @Published private(set) var isFinishing: Bool = false
+    /// The meeting being recorded or finished, nil once it is saved. `stop()`
+    /// keeps the finished one in `activeMeeting`, which alone read the meeting
+    /// just recorded as live and refused its delete until relaunch (W69-FIX).
+    var liveMeetingId: UUID? {
+        Self.liveMeetingId(active: activeMeeting?.id, capturing: isCapturing, finishing: isFinishing)
+    }
+    /// Whether a delete of `deleted` lets go of the held meeting: only the
+    /// finished one, never the one being recorded or finished.
+    nonisolated static func forgets(activeId: UUID?, deleted: UUID, capturing: Bool, finishing: Bool) -> Bool {
+        activeId == deleted && liveMeetingId(active: activeId, capturing: capturing, finishing: finishing) == nil
+    }
+    /// A deleted meeting held as finished came back in Meetings (refresh adds
+    /// `activeMeeting`) and Generate summary saved it again (W69-FIX round 2).
+    func forgetFinished(id: UUID) {
+        if Self.forgets(activeId: activeMeeting?.id, deleted: id, capturing: isCapturing, finishing: isFinishing) {
+            activeMeeting = nil
+        }
+    }
+    /// Start during the last meeting's summary began a second recording that
+    /// the first `stop()` then overwrote as `activeMeeting` (W69-FIX round 2).
+    nonisolated static let stillFinishing = "Grux is still finishing the last meeting's notes. Start again in a moment."
+    nonisolated static func liveMeetingId(active: UUID?, capturing: Bool, finishing: Bool) -> UUID? {
+        capturing || finishing ? active : nil
+    }
     @Published private(set) var elapsedSeconds: Int = 0
     @Published private(set) var liveUtterances: [MeetingUtterance] = []  // ring-buffered preview
     @Published private(set) var lastError: String?
@@ -153,6 +180,10 @@ final class MeetingCaptureService: ObservableObject {
         // spoken or typed request, the CLI. That is an ask for the microphone.
         MicController.userWantsMicrophone()
         guard !isCapturing, !isInitializing else { return activeMeeting }
+        guard !isFinishing else {
+            lastError = Self.stillFinishing
+            return nil
+        }
         guard isSystemAudioSupported else {
             lastError = "System audio capture requires macOS 14.0 or later."
             return nil
@@ -217,7 +248,7 @@ final class MeetingCaptureService: ObservableObject {
         // "start meeting" (e.g. MeetingAppDetector auto-offer on cold boot)
         // can't slip past the TCC warm-up and silently fail on .notDetermined.
         guard await MicController.ensureAuthorized() else {
-            lastError = "Microphone denied. Open System Settings, Privacy & Security, Microphone and enable Grux."
+            lastError = "Microphone denied. Open System Settings, Privacy & Security, Microphone and turn on Grux AI."
             AmbientListener.shared.resumeFromMeeting()
             return nil
         }
@@ -301,6 +332,8 @@ final class MeetingCaptureService: ObservableObject {
 
     func stop(summarize: Bool = true) async {
         guard isCapturing else { return }
+        isFinishing = true
+        defer { isFinishing = false }
         isCapturing = false
         stopTimers()
 

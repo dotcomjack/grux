@@ -268,18 +268,12 @@ struct BrandsPostingSection: View {
         return f
     }()
 
-    private static let relativeFormatter: RelativeDateTimeFormatter = {
-        let f = RelativeDateTimeFormatter()
-        f.unitsStyle = .abbreviated
-        return f
-    }()
-
     // Parse an ISO8601 timestamp (with or without fractional seconds) into a
     // relative string like "5m ago". Returns nil when the string does not parse,
     // so the caller can fall back to a neutral label.
     private static func relative(_ iso: String) -> String? {
         let date = isoFormatter.date(from: iso) ?? isoFormatterNoFraction.date(from: iso)
         guard let date else { return nil }
-        return relativeFormatter.localizedString(for: date, relativeTo: Date())
+        return RelativeStamp.string(for: date)
     }
 }

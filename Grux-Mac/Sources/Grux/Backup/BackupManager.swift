@@ -1,4 +1,5 @@
 import Foundation
+import GruxAgentCore
 
 // Items 32 + 33: whole-app backup + restore.
 //
@@ -408,7 +409,7 @@ actor BackupManager {
         proc.standardError = pipe
         try proc.run()
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        proc.waitUntilExit()
+        proc.waitForExitBlocking()
         return ProcessResult(status: proc.terminationStatus, outputData: data)
     }
 }

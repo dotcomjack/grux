@@ -41,6 +41,69 @@ enum ChatTitleHygiene {
         return trimmed(fallback.prefix(1).uppercased() + fallback.dropFirst())
     }
 
+    /// The generated title when it is fit AND shares a word with what the
+    /// person wrote; otherwise the person's first fit line that is not only a
+    /// greeting (their first fit line when every line is one); otherwise the
+    /// neutral default.
+    ///
+    /// Sense pass 31 (2026-11-09, grux-local:2b) measured "weather and task
+    /// assistant" over a person who asked "What can you do?" and "whats your
+    /// name" over one who asked "Who are you?": the model named Grux's reply,
+    /// or guessed. A title is a label for what the person asked, so it must be
+    /// built from their words.
+    static func clean(generated: String, userLines: [String]) -> String {
+        if isFitToShow(generated), isGrounded(generated, in: userLines) { return trimmed(generated) }
+        let fit = userLines
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && isFitToShow($0) }
+        guard let line = fit.first(where: { !isOnlyGreeting($0) }) ?? fit.first else { return neutralDefault }
+        return trimmed(line.prefix(1).uppercased() + line.dropFirst())
+    }
+
+    /// Small words say nothing about what a chat is about, so they neither
+    /// count for a title nor against it.
+    private static let smallWords: Set<String> = [
+        "a", "an", "the", "and", "or", "but", "of", "to", "for", "in", "on", "at", "by", "with", "about",
+        "from", "into", "my", "your", "you", "me", "i", "im", "we", "our", "us", "it", "its", "is", "are",
+        "was", "be", "this", "that", "what", "whats", "how", "why", "who", "whos", "when", "where", "which",
+        "can", "could", "would", "should", "do", "does", "did", "will", "please", "tell", "some", "any",
+        "chat", "question", "questions", "hi", "hello", "hey", "there", "thanks", "thank",
+    ]
+
+    private static let greetingWords: Set<String> = [
+        "hi", "hello", "hey", "hiya", "yo", "there", "good", "morning", "afternoon", "evening",
+        "thanks", "thank", "you", "ok", "okay", "cool", "great",
+    ]
+
+    static func words(_ s: String) -> [String] {
+        s.lowercased()
+            .replacingOccurrences(of: "'", with: "")
+            .replacingOccurrences(of: "\u{2019}", with: "")
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+    }
+
+    /// Two words match when they are the same, or when both have at least
+    /// four letters and share their first four ("trip" and "trips", "plan"
+    /// and "planning"). A three-letter word matches only itself, so "api"
+    /// never matches "apiary".
+    private static func sameWord(_ a: String, _ b: String) -> Bool {
+        if a == b { return true }
+        guard a.count >= 4, b.count >= 4 else { return false }
+        return a.prefix(4) == b.prefix(4)
+    }
+
+    static func isGrounded(_ title: String, in userLines: [String]) -> Bool {
+        let titleWords = words(title).filter { !smallWords.contains($0) }
+        guard !titleWords.isEmpty else { return false }
+        let said = userLines.flatMap(words)
+        return titleWords.contains { t in said.contains { sameWord(t, $0) } }
+    }
+
+    private static func isOnlyGreeting(_ line: String) -> Bool {
+        words(line).allSatisfy { greetingWords.contains($0) }
+    }
+
     private static func trimmed(_ s: String) -> String {
         let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
         guard t.count > maxLength else { return t }

@@ -57,7 +57,7 @@ enum AgentTools {
                         ],
                         "budget_usd": [
                             "type": "number",
-                            "description": "Hard cost ceiling across all workers. Default 5.0. Use 0.50 for tiny content tasks, 5.0 for substantial work, 25.0 for full iOS apps."
+                            "description": "Planned usage across all workers in dollars, shown in the Agents tab. It is not a cap: workers run on the person's Claude sign-in and nothing stops them at this figure, so describe it to the person only as planned usage. Default 5.0. Use 0.50 for tiny content tasks, 5.0 for substantial work, 25.0 for full iOS apps."
                         ],
                         "max_parallel": [
                             "type": "integer",
@@ -144,7 +144,7 @@ enum AgentTools {
                 maxParallelWorkers: maxPar
             )
             return """
-            ok: started job_id=\(job.id) template=\(template.rawValue) workers=\(job.workers.count) budget=\(AgentsView.money(budget))
+            ok: started job_id=\(job.id) template=\(template.rawValue) workers=\(job.workers.count) planned_usage=\(AgentsView.money(budget)) (no cap)
             root_dir: \(rootDir)
             track: open the Agents tab in Grux, or call agent_status with this job_id.
             """
@@ -155,9 +155,8 @@ enum AgentTools {
             let jobs = AgentService.shared.jobs.prefix(limit)
             if jobs.isEmpty { return "(no agent jobs yet)" }
             let lines = jobs.map { j -> String in
-                let workersDone = j.workers.filter { $0.status == .done }.count
-                let workersFailed = j.workers.filter { $0.status == .failed }.count
-                return "- \(j.id.prefix(8)) [\(j.status.rawValue)] \(j.title) - \(workersDone)/\(j.workers.count) done\(workersFailed > 0 ? ", \(workersFailed) failed" : "") - \(AgentsView.money(j.spentUSD))"
+                let workers = WorkerTally(j).line
+                return "- \(j.id.prefix(8)) [\(j.status.rawValue)] \(j.title) - \(workers) - \(AgentsView.money(j.spentUSD))"
             }
             return lines.joined(separator: "\n")
 

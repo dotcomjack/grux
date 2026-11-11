@@ -41,6 +41,8 @@ struct ModelUpdateReport: Equatable {
     let localServerRunning: Bool
     /// Model tags already pulled on this machine.
     let installedTags: [String]
+    /// The local model chat sends to, when chat routes local.
+    var chatModel: String? = nil
 
     // MARK: - Derived copy
 
@@ -71,22 +73,51 @@ struct ModelUpdateReport: Equatable {
     /// state belong where the state is, not in the view.
     var localServerSummary: String {
         if localServerRunning {
-            return "Ollama is running, \(installedTags.count) model(s) installed."
+            switch installedTags.count {
+            case 0:  return "Ollama is running, with no models installed yet."
+            default: return "Ollama is running, \(Cookbook.installedCountPhrase(installedTags))."
+            }
         }
         return hasCloudModel
             ? "Ollama is not running. Grux can still use your cloud model."
             : "Ollama is not running, and no cloud key is set."
     }
 
-    /// What this machine can do locally, in one sentence.
+    /// The model chat uses, when it is a local one installed here. The screen
+    /// headlined the catalog's pick while chat ran another (D135 item 1).
+    var chatSummary: String? {
+        guard !routesToCloud, localServerRunning,
+              let id = chatModel?.trimmingCharacters(in: .whitespacesAndNewlines), !id.isEmpty,
+              // Exact or as the ":latest" Ollama serves a bare name as (`OllamaManager.isInstalled`).
+              installedTags.contains(where: { [id.lowercased(), id.lowercased() + ":latest"].contains($0.lowercased()) })
+        else { return nil }
+        return "\(Cookbook.personName(for: id)), on this Mac."
+    }
+
+    /// The catalog model that fits this Mac best, whether it is here yet, and how
+    /// many more fit. It read "Grux Local 4B runs here (great fit), and 7 more."
+    /// under "7 models installed", which counts as 8 installed models and claims
+    /// "runs here" of a model never pulled (D138 item 5). Downloaded is said only
+    /// when a running server lists it, as `chatSummary` reads it.
     var capabilitySummary: String {
         guard let headline, let headlineFit else {
             return "No local model in the catalog fits in this machine's memory budget."
         }
-        let count = runnable.count
-        let others = count == 1 ? "" : ", and \(count - 1) more"
-        return "\(headline.displayName) \(headline.parameterLabel) runs here"
-            + " (\(headlineFit.label.lowercased()))\(others)."
+        let id = headline.id.lowercased()
+        let state: String
+        if !localServerRunning {
+            state = ""
+        } else if installedTags.contains(where: { [id, id + ":latest"].contains($0.lowercased()) }) {
+            state = ", downloaded"
+        } else {
+            state = ", not downloaded yet"
+        }
+        let more = runnable.count - 1
+        let others = more <= 0 ? ""
+            : more == 1 ? " 1 more model in the catalog also fits."
+            : " \(more) more models in the catalog also fit."
+        return "\(headline.displayName) \(headline.parameterLabel) fits this Mac best"
+            + " (\(headlineFit.label.lowercased()))\(state).\(others)"
     }
 
     /// The honest warning, matched to what is actually true on this machine.
@@ -138,6 +169,22 @@ struct ModelUpdateReport: Equatable {
             return "With no cloud key, a local model is what Grux will use. It works, and it "
                 + "is meaningfully weaker than a frontier model at code and long reasoning, "
                 + "so expect shorter and simpler answers until you add a key."
+        case (false, .none) where chatSummary != nil:
+            // CHAT RUNS ON A MODEL THE PERSON INSTALLED, though nothing in the
+            // catalog fits. This read "no local model this machine can run, so
+            // Grux cannot think yet" right under "Chat uses: mistral:7b, on this
+            // Mac." (W38-FIX P3 3).
+            return "Grux is routed to a local model already on this Mac. Nothing in the catalog "
+                + "fits this machine's memory well, so expect slower and simpler answers"
+                + (hasCloudModel
+                    ? ". Your key is still on file: Settings, then Models, switches back whenever you want."
+                    : ", and add a key in Settings, then Models, for anything hard.")
+        case (false, .none) where hasCloudModel:
+            // Routed away from a key that IS on file: it opened "There is no
+            // cloud key" under "Cloud model: Configured".
+            return "Chat is not routed to your cloud model, and your key is still on file. No local "
+                + "model this machine can run is in use, so Settings, then Models, switches back "
+                + "to the key."
         case (false, .none):
             return "There is no cloud key and no local model this machine can run, so Grux "
                 + "cannot think yet. Adding a key is the one thing that changes that."
@@ -164,7 +211,8 @@ struct ModelUpdateReport: Equatable {
                       hasCloudModel: Bool,
                       routesToCloud: Bool? = nil,
                       localServerRunning: Bool,
-                      installedTags: [String]) -> ModelUpdateReport {
+                      installedTags: [String],
+                      chatModel: String? = nil) -> ModelUpdateReport {
         let runnable = Cookbook.recommended(for: profile)
         let headline = runnable.first
         return ModelUpdateReport(
@@ -178,6 +226,7 @@ struct ModelUpdateReport: Equatable {
             // for rather than silently changing meaning.
             routesToCloud: routesToCloud ?? hasCloudModel,
             localServerRunning: localServerRunning,
-            installedTags: installedTags)
+            installedTags: installedTags,
+            chatModel: chatModel)
     }
 }

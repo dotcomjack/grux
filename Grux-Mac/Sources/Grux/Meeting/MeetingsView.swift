@@ -21,6 +21,7 @@ struct MeetingsView: View {
     @State private var unsortedCount: Int = 0
     @State private var creatingFolder: Bool = false
     @State private var classifyingMeeting: UUID?
+    @State private var deletingMeeting: MeetingIndexEntry?
 
     // Speakers lives beside this surface, in the Meetings row's switch
     // (LaunchRootView.meetingsSurfaces), not inside it: one mechanism for every
@@ -88,6 +89,16 @@ struct MeetingsView: View {
                 }
                 .listStyle(.inset)
                 .onChange(of: selection) { _, newId in loadSelection(newId) }
+                .confirmationDialog(
+                    MeetingDeleteCopy.title,
+                    isPresented: Binding(get: { deletingMeeting != nil }, set: { if !$0 { deletingMeeting = nil } }),
+                    presenting: deletingMeeting
+                ) { entry in
+                    Button("Delete", role: .destructive) { deleteEntry(entry) }
+                    Button("Cancel", role: .cancel) {}
+                } message: { _ in
+                    Text(MeetingDeleteCopy.message)
+                }
             }
         }
         .background(Color.black.opacity(0.05))
@@ -134,6 +145,20 @@ struct MeetingsView: View {
             }
             .disabled(classifyingMeeting != nil)
         }
+        Divider()
+        // D198: the meeting being recorded cannot be deleted under itself.
+        Button(MeetingDeleteCopy.menuItem, role: .destructive) {
+            deletingMeeting = entry
+        }
+        .disabled(entry.id == service.liveMeetingId)
+    }
+
+    private func deleteEntry(_ entry: MeetingIndexEntry) {
+        let result = MeetingStore.shared.delete(id: entry.id, activeMeetingId: service.liveMeetingId)
+        if result != nil { service.forgetFinished(id: entry.id) }
+        if result != nil, selection == entry.id { selection = nil }
+        refresh()
+        showToast(MeetingDeleteCopy.done(result))
     }
 
     private func classifyEntry(_ entry: MeetingIndexEntry) {
@@ -163,6 +188,7 @@ struct MeetingsView: View {
             HStack {
                 Text("Meetings")
                     .font(GruxType.title).foregroundStyle(GruxTheme.textPrimary)
+                    .unlessPaneTitle("Meetings")
                 Spacer()
                 if service.isCapturing {
                     liveBadge
@@ -286,7 +312,7 @@ struct MeetingsView: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
             if query.isEmpty {
-                Text("Start a call and tap ⌘⇧M, or click Start above.")
+                Text("Start a call and press ⌘⇧M, or click Start above.")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                     .multilineTextAlignment(.center)

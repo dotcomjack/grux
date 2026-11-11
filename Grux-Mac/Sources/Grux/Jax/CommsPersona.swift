@@ -128,6 +128,19 @@ struct CommsRoster: Codable, Equatable {
 
     // The shipped default: nothing configured.
     static let empty = CommsRoster()
+
+    // The name business mail is signed with: the assistant the person named,
+    // or "Assistant" until they name one. The send path (CommsIdentity.business)
+    // and every surface that says who mail goes out as read this one value.
+    var businessName: String {
+        let name = assistantName.trimmingCharacters(in: .whitespaces)
+        return name.isEmpty ? "Assistant" : name
+    }
+
+    // True once the person has named their assistant.
+    var namesAssistant: Bool {
+        !assistantName.trimmingCharacters(in: .whitespaces).isEmpty
+    }
 }
 
 // Loads and caches the roster. A missing, unreadable, or malformed file is not
@@ -187,9 +200,7 @@ struct CommsIdentity: Equatable {
     // From address is the brand's own verified sender when the roster has one.
     static func business(brand: CommsBrand) -> CommsIdentity {
         let roster = CommsRosterStore.current
-        let name = roster.assistantName.trimmingCharacters(in: .whitespaces).isEmpty
-            ? "Assistant"
-            : roster.assistantName.trimmingCharacters(in: .whitespaces)
+        let name = roster.businessName
         let owner = roster.personalName.trimmingCharacters(in: .whitespaces)
         return CommsIdentity(
             context: .business,

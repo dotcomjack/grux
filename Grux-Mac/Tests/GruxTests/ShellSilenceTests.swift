@@ -41,6 +41,28 @@ final class ShellSilenceTests: XCTestCase {
             .filter { $0["kind"] == "shell" }
     }
 
+    /// D109's P3: the refusal and the CLI's remedy name the file that silenced Grux.
+    func test_noteAndRemedyNameTheFilesThatSilence() {
+        XCTAssertEqual(ShellSilence.note([]), "")
+        XCTAssertEqual(ShellSilence.note(["SILENT"]), " (~/.grux/SILENT)")
+        XCTAssertEqual(ShellSilence.note(["HEADLESS"]), " (~/.grux/HEADLESS)")
+        XCTAssertEqual(ShellSilence.note(["SILENT", "HEADLESS"]), " (~/.grux/SILENT and ~/.grux/HEADLESS)")
+        XCTAssertEqual(ShellSilence.remedy(["SILENT"]), "Remove ~/.grux/SILENT to let Grux make sound again.")
+        XCTAssertEqual(ShellSilence.remedy(["HEADLESS"]),
+                       "Remove ~/.grux/HEADLESS to let Grux make sound again; that also ends headless mode.")
+        XCTAssertEqual(ShellSilence.remedy(["SILENT", "HEADLESS"]),
+                       "Remove ~/.grux/SILENT and ~/.grux/HEADLESS to let Grux make sound again; that also ends headless mode.")
+        XCTAssertEqual(ShellSilence.remedy([]), "Silent mode is off now, so the same command may run.")
+
+        let saved = ShellSilence.silencedBy
+        defer { ShellSilence.silencedBy = saved }
+        ShellSilence.silencedBy = { ["HEADLESS"] }
+        let refusal = ShellSilence.refusal(for: "say hi", silent: true) ?? ""
+        XCTAssertEqual(refusal, "refused: silent mode is on (~/.grux/HEADLESS) and `say` would make sound")
+        let script = ShellSilence.refusal(forAppleScript: "say \"hi\"", silent: true) ?? ""
+        XCTAssertEqual(script, "refused: silent mode is on (~/.grux/HEADLESS) and this AppleScript would make sound")
+    }
+
     func test_theMatcherFindsCommandsThatMakeSound() {
         let sounding: [(String, String)] = [
             ("say hello", "say"),

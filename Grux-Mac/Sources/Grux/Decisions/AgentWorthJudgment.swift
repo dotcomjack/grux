@@ -34,13 +34,14 @@ enum AgentWorthJudgment {
     static func state(title: String, goal: String, budgetUSD: Double, rationale: String,
                       signals: [String], running: [String]) -> String {
         "Grux is about to start a background agent job on its own, with nobody's approval.\n"
-            + "Job: \(title)\nGoal: \(goal)\nBudget: up to \(dollars(budgetUSD))\nWhy Grux chose it: \(rationale)\n"
+            + "Job: \(title)\nGoal: \(goal)\nPlanned usage: about \(dollars(budgetUSD)), with no cost cap\nWhy Grux chose it: \(rationale)\n"
             + "The real signals it planned from:\n" + signals.map { "- \($0)" }.joined(separator: "\n") + "\n"
             + "Agent jobs already running: \(running.isEmpty ? "none" : running.joined(separator: ", "))"
     }
 
     static func dollars(_ usd: Double) -> String {
-        usd == usd.rounded() ? "$\(Int(usd))" : String(format: "$%.2f", usd)
+        // `Int(usd)` traps from 9.2e18 up; only whole amounts that fit are made whole.
+        usd == usd.rounded() && abs(usd) < 1e15 ? "$\(Int(usd))" : String(format: "$%.2f", usd)
     }
 
     struct Verdict: Equatable {

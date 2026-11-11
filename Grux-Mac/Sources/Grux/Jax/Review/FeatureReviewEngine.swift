@@ -1,6 +1,7 @@
 import Foundation
+import GruxAgentCore
 
-// Grux Feature Review: the staging-to-main governance + "Grux explains his work"
+// Grux Feature Review: the staging-to-main governance + "Grux explains its work"
 // surface. Nothing static: for every feature, Grux GENERATES the pitch (what it
 // is, the reasoning, what it helps, why to implement) live via the model, in his
 // own voice, and you decide per feature whether it reaches main.
@@ -327,7 +328,7 @@ final class FeatureReviewEngine: ObservableObject {
         let pipe = Pipe(); p.standardOutput = pipe; p.standardError = Pipe()
         do { try p.run() } catch { return "" }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        p.waitUntilExit()
+        p.waitForExitBlocking()
         return String(data: data, encoding: .utf8) ?? ""
     }
 

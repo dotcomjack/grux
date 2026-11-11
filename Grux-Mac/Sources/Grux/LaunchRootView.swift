@@ -642,11 +642,12 @@ struct LaunchRootView: View {
             Divider()
             let shown = PanelCopy.watchingState(watching: state.watching, screenAccess: state.screenPermissionGranted)
             HStack(spacing: 6) {
+                let sampling = shown == .watching && state.focusSkip == nil
                 Circle()
-                    .fill(shown == .watching ? GruxTheme.successMint
-                          : shown == .needsScreenAccess ? GruxTheme.warnAmber : Color.secondary)
+                    .fill(sampling ? GruxTheme.successMint
+                          : shown == .paused ? Color.secondary : GruxTheme.warnAmber)
                     .frame(width: 8, height: 8)
-                Text(FocusLogView.statusTitle(shown))
+                Text(FocusLogView.statusTitle(shown, skip: state.focusSkip))
                     .font(.caption)
                 Spacer()
                 Button(state.watching ? "Pause" : "Watch") {
@@ -1195,6 +1196,7 @@ struct FocusLogView: View {
             HStack {
                 Text("Focus Log")
                     .font(GruxType.title)
+                    .unlessPaneTitle("Focus Log")
                     .foregroundStyle(GruxTheme.textPrimary)
                 Spacer()
                 Text("\(state.events.count) events")
@@ -1225,10 +1227,12 @@ struct FocusLogView: View {
     }
 
     /// The status word, from the one rule every surface asks (D3: this pane
-    /// read a green "Watching" with no screen access granted).
-    static func statusTitle(_ shown: PanelCopy.WatchingState) -> String {
+    /// read a green "Watching" with no screen access granted). The watcher's
+    /// last skip counts too: it read "Watching" above "Nothing is sampled
+    /// right now." (wave 27).
+    static func statusTitle(_ shown: PanelCopy.WatchingState, skip: FocusWatcher.Skip?) -> String {
         switch shown {
-        case .watching: return PanelCopy.watching
+        case .watching: return skip == nil ? PanelCopy.watching : PanelCopy.notSampling
         case .needsScreenAccess: return PanelCopy.needsScreenAccess
         case .paused: return PanelCopy.paused
         }
@@ -1249,7 +1253,7 @@ struct FocusLogView: View {
             // The grant alone may not be enough: name what else the last tick
             // found missing, and promise nothing past it.
             let also = skip.map { $0 == .noScreenAccess ? "" : " \($0.line)" } ?? ""
-            return "Nothing is sampled until macOS allows screen recording.\(also) When nothing stands in the way, Grux will sample your active window \(interval) during \(hours). \(how)"
+            return "Nothing is sampled until macOS allows Screen Recording.\(also) When nothing stands in the way, Grux will sample your active window \(interval) during \(hours). \(how)"
         case .paused:
             return "Paused. When watching and nothing stands in the way, Grux will sample your active window \(interval) during \(hours). \(how)"
         }
@@ -1262,7 +1266,7 @@ struct FocusLogView: View {
             // The banner above names the reason; saying it twice reads as two problems.
             if skip != nil { return "No samples yet." }
             return "No samples yet. Grux checks \(interval)."
-        case .needsScreenAccess: return "No samples. Grux needs screen recording to see your active window; Grant asks macOS."
+        case .needsScreenAccess: return "No samples. Grux needs Screen Recording to see your active window; Grant asks macOS."
         case .paused: return "Paused, so nothing is sampled."
         }
     }
@@ -1296,13 +1300,14 @@ struct FocusLogView: View {
         let modelLabel = cfg.tier.useLocalPrescreen ? "OCR prescreen, then vision" : "vision"
         let cooldownLabel = "\(cfg.focusCooldownMinutes)m"
         let shown = PanelCopy.watchingState(watching: state.watching, screenAccess: state.screenPermissionGranted)
-        let tone: Color = shown == .watching ? .green : shown == .needsScreenAccess ? .orange : .secondary
+        let sampling = shown == .watching && state.focusSkip == nil
+        let tone: Color = sampling ? .green : shown == .paused ? .secondary : .orange
 
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: shown == .needsScreenAccess ? "lock.shield" : "eye.fill")
                     .foregroundStyle(tone)
-                Text(Self.statusTitle(shown))
+                Text(Self.statusTitle(shown, skip: state.focusSkip))
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(tone)
                 Spacer()

@@ -140,6 +140,8 @@ struct DecisionUsageSummary: Equatable {
     static func lastLine(_ entry: DecisionLedgerEntry?) -> String? {
         guard let entry else { return nil }
         var said = heard(in: entry.summary)
+        // Only the tool gate's own state, never words a person said (W54-P3 item 4).
+        if renamedSurfaces.contains(entry.surface), let named = gatedToolGist(said) { said = named }
         // A row the engine clipped down to a stub ("S...") says what was decided.
         if said.replacingOccurrences(of: "...", with: "").count < 3, let gist = surfaceGists[entry.surface] {
             said = gist
@@ -148,6 +150,20 @@ struct DecisionUsageSummary: Equatable {
         if said.hasSuffix(".") && !said.hasSuffix("...") { said.removeLast() }
         return "\(said), \(entry.latencyMs) ms"
     }
+
+    /// Surfaces whose state Grux builds from a gated action's own summary,
+    /// never from a person's words, so a "Run tool 'x'" there is renamed: the
+    /// tool gate, and the risk judgment that reads the same summary (wave 55
+    /// P2-1: its row read raw again after W54-P3 item 4).
+    static let renamedSurfaces = [DecisionGate.surface, ApprovalRiskJudgment.surface]
+
+    /// What the last decision line is labelled wherever it shows.
+    static let lastDecisionLabel = "Last decision about"
+
+    /// The menu bar's last decision line, labelled the way Settings labels it:
+    /// a bare gist "Delete the meeting folder, 131 ms" read as a thing Grux
+    /// had done (W54-P3 item 5).
+    static func menuBarLine(_ dated: String) -> String { "\(lastDecisionLabel): \(dated)" }
 
     /// The last decision for a surface that sits beside today's numbers: the
     /// Usage card under "Decisions today", the menu bar under a hover that says
@@ -170,6 +186,26 @@ struct DecisionUsageSummary: Equatable {
         let sameYear = calendar.component(.year, from: date) == calendar.component(.year, from: now)
         f.dateFormat = sameYear ? "MMM d" : "MMM d, yyyy"
         return f.string(from: date)
+    }
+
+    /// The tool gate's fallback state, `Run tool 'create_note' (unclassified
+    /// side ...`, named the way Approvals names it ("Save your note"), or
+    /// "Use the fs list tool" for a tool Approvals has no words for (D166
+    /// item 2: Settings, Models showed the raw state). Nil for anything else,
+    /// a person's own words included.
+    static func gatedToolGist(_ said: String) -> String? {
+        let prefix = "Run tool '"
+        guard said.hasPrefix(prefix) else { return nil }
+        let rest = said.dropFirst(prefix.count)
+        guard let close = rest.firstIndex(of: "'") else { return nil }
+        let tool = String(rest[rest.startIndex..<close])
+        let separators: Set<Character> = ["_", "-", "."]
+        guard !tool.isEmpty, tool.allSatisfy({ $0.isLetter || $0.isNumber || separators.contains($0) }) else { return nil }
+        if let summary = ToolReplyCopy.approvalSummary(tool: tool, input: [:]) {
+            return summary.hasSuffix(".") ? String(summary.dropLast()) : summary
+        }
+        let words = tool.split(whereSeparator: { separators.contains($0) }).joined(separator: " ")
+        return words.isEmpty ? nil : "Use the \(words) tool"
     }
 
     /// What a decision was, by surface, for a row whose own words were lost.

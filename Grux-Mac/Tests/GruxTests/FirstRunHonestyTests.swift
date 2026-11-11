@@ -149,7 +149,15 @@ final class FirstRunHonestyTests: XCTestCase {
 
     func test_theHowItWorksScreenRendersTheWayfinding() throws {
         let steps = try source("Onboarding/OnboardingSteps.swift")
-        XCTAssertTrue(steps.contains("ForEach(Self.wayfinding"), "the wayfinding copy exists and is not on screen")
+        // D166 item 4: the screen draws `parts`, and `parts` carries every wayfinding entry.
+        XCTAssertTrue(steps.contains("ForEach(Array(Self.parts"), "the screen does not draw its parts")
+        let drawn = HowItWorksStep.parts.compactMap { part -> String? in
+            if case .point(let p) = part { return p.title }
+            return nil
+        }
+        for w in HowItWorksStep.wayfinding {
+            XCTAssertTrue(drawn.contains(w.title), "\(w.title): the wayfinding copy exists and is not on screen")
+        }
     }
 
     // MARK: - The first question (Task F1, the model the view will read)

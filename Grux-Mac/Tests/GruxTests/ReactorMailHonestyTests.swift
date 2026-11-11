@@ -7,9 +7,9 @@ import XCTest
 final class ReactorMailHonestyTests: XCTestCase {
     func test_noMailboxIsNotInboxZero() {
         let none = ReactorView.mailboxReadout(hasAccount: false, unread: 0, newest: "")
-        XCTAssertEqual(none.value, "··")
+        XCTAssertEqual(none.value, "Off")
         XCTAssertEqual(none.sub, "Not set up")
-        XCTAssertEqual(ReactorView.mailRingReadout(hasAccount: false, unread: 0), "··")
+        XCTAssertEqual(ReactorView.mailRingReadout(hasAccount: false, unread: 0), "off")
 
         let zero = ReactorView.mailboxReadout(hasAccount: true, unread: 0, newest: "")
         XCTAssertEqual(zero.value, "0")
@@ -36,11 +36,11 @@ final class ReactorMailHonestyTests: XCTestCase {
     /// up and did not answer, and shows a dollar figure only from a snapshot.
     func test_noMetaAdsSnapshotIsNoSpend() {
         let absent = ReactorView.metaAdsReadout(spendCents: nil, mode: nil, attention: 0, notSetUp: true)
-        XCTAssertEqual(absent.value, "··")
+        XCTAssertEqual(absent.value, "Off")
         XCTAssertEqual(absent.sub, "Not set up")
         let down = ReactorView.metaAdsReadout(spendCents: nil, mode: nil, attention: 0, notSetUp: false)
-        XCTAssertEqual(down.value, "··")
-        XCTAssertEqual(down.sub, "offline")
+        XCTAssertEqual(down.value, "Offline")
+        XCTAssertEqual(down.sub, "No numbers yet")
         let zero = ReactorView.metaAdsReadout(spendCents: 0, mode: "OBSERVE", attention: 2, notSetUp: false)
         XCTAssertEqual(zero.value, "$0.00", "a real snapshot with no spend today is $0.00")
         XCTAssertEqual(zero.sub, "OBSERVE · 2 need you")

@@ -49,6 +49,53 @@ enum CritiqueGate {
         GateDimension(name: "copy-law", hunt: "copy-law violations the deterministic tier could not see: disclosure of the tech stack, model providers, vendors, or frameworks; medical or manufacturing claims; an invented founder or ownership entity; a private home address or private email; banned promotional offers. The em dash, en dash, spelled-out dollar, and product-fact checks already ran deterministically."),
     ]
 
+    // The words a person reads for each lens (D135 item 11). The ids above are
+    // keys the reviewer prompt and the verdict carry; the Studio line read
+    // "visual-hierarchy: ... | responsiveness: ...". An id with no entry is
+    // spelled out rather than shown as a key.
+    private static let plainNames: [String: String] = [
+        "visual-hierarchy": "Hierarchy",
+        "responsiveness": "Small screens",
+        "accessibility": "Accessibility",
+        "brand-fit": "Brand fit",
+        "copy-law": "Copy rules",
+    ]
+
+    static func plainName(_ id: String) -> String {
+        if let name = plainNames[id] { return name }
+        let words = id.replacingOccurrences(of: "-", with: " ")
+        return words.prefix(1).uppercased() + words.dropFirst()
+    }
+
+    // The line Design Studio adds under its reply. Each finding is its own
+    // sentence under its lens's name, the count is of every blocking lens, and
+    // a third or later one is counted rather than dropped.
+    static func personLine(_ verdict: QualityVerdict) -> String? {
+        switch verdict.status {
+        case .pass:
+            return "Critique: all \(verdict.dimensions.count) reviews cleared this design."
+        case .fail:
+            let blockers = verdict.blockingDimensions
+            guard !blockers.isEmpty else { return "Critique: the review did not clear this design." }
+            let count = blockers.count == 1 ? "1 thing" : "\(blockers.count) things"
+            let shown = blockers.prefix(2).map { "\(plainName($0.name)): \(sentence($0.reason))" }
+            let more = blockers.count > 2 ? " And \(blockers.count - 2) more." : ""
+            return "Critique found \(count) to fix. " + shown.joined(separator: " ") + more
+        case .error:
+            // A critique outage never blocks the artifact, but note the skip so
+            // the transcript does not imply the design was reviewed and cleared.
+            return "(critique skipped: reviewer unavailable)"
+        case .pending, .running:
+            return nil
+        }
+    }
+
+    private static func sentence(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let last = trimmed.last, !".!?".contains(last) else { return trimmed }
+        return trimmed + "."
+    }
+
     // Same cap as QualityGate: the HTML payload is clamped so a huge artifact
     // cannot blow the context or the bill.
     private static let htmlCap = 60_000

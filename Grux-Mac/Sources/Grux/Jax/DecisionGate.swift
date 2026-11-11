@@ -129,11 +129,12 @@ struct ProposedAction: Codable, Equatable, Identifiable {
 
 // The disclosure face a queued action would go out under, recorded on the
 // PendingApproval so the approval card can show the user who it would send as
-// before they tap. Mirrors the split: business => Sarah, personal => the user.
+// before they tap. Mirrors the split: business => the assistant persona the
+// person named in their roster (CommsRoster.businessName), personal => the user.
 // Distinct from the sibling CommsPersona class (the full identity builder); this
 // is just the tiny Codable token the queue persists.
 enum GatePersona: String, Codable, Equatable {
-    case sarah   // the assistant persona : business mail
+    case assistant   // the assistant persona : business mail
     case owner   // the user themselves : personal matters
     case none    // not an outbound comm, no persona applies
 
@@ -149,15 +150,17 @@ enum GatePersona: String, Codable, Equatable {
     /// showing one card with no persona.
     init(from decoder: Decoder) throws {
         switch try decoder.singleValueContainer().decode(String.self) {
-        case "sarah":          self = .sarah
+        case "assistant", "sarah": self = .assistant
         case "owner", "jack":  self = .owner
         default:               self = .none
         }
     }
 
-    var displayName: String {
+    var displayName: String { displayName(roster: CommsRosterStore.current) }
+
+    func displayName(roster: CommsRoster) -> String {
         switch self {
-        case .sarah: return "Sarah (assistant)"
+        case .assistant: return roster.namesAssistant ? "\(roster.businessName) (assistant)" : roster.businessName
         case .owner: return "you"
         case .none: return "n/a"
         }
@@ -166,9 +169,11 @@ enum GatePersona: String, Codable, Equatable {
     // The signature line an outbound message would carry. The user's own mail
     // signs with their own name (CommsPersona builds that from the configured
     // identity), so this case is the card-facing label for it, not a name.
-    var signature: String {
+    var signature: String { signature(roster: CommsRosterStore.current) }
+
+    func signature(roster: CommsRoster) -> String {
         switch self {
-        case .sarah: return "Sarah, assistant"
+        case .assistant: return roster.namesAssistant ? "\(roster.businessName), assistant" : roster.businessName
         case .owner: return "you"
         case .none: return ""
         }
@@ -177,7 +182,7 @@ enum GatePersona: String, Codable, Equatable {
     // Map the sibling CommsContext (business/personal) onto a queue persona.
     init(context: CommsContext) {
         switch context {
-        case .business: self = .sarah
+        case .business: self = .assistant
         case .personal: self = .owner
         }
     }
@@ -216,6 +221,8 @@ enum GateHold: Int, Comparable, Equatable {
 
 @MainActor
 final class DecisionGate: ObservableObject {
+    /// The surface the gate's second opinion is recorded under.
+    nonisolated static let surface = "jax.gate"
     static let shared = DecisionGate()
 
     // Last verdict, for an at-a-glance UI / activity readout. Not persisted:
@@ -250,6 +257,20 @@ final class DecisionGate: ObservableObject {
     /// D46's sentence, which claimed a change the action may not make.
     static let changesSomethingReason = "This changes something, so it waits for your OK."
     static let earlierAsksFirstReasons: Set<String> = [legacyAsksFirstReason, changesSomethingReason]
+    /// An outbound message's reason names nobody: the card's chip and signature
+    /// line say who it goes out as, read from the roster when the card draws. A
+    /// name baked in at queue time kept the owner's "Sarah" on cards queued before
+    /// D118, and "Assistant" beside a chip that named the assistant set later.
+    static let outboundReason = "Outbound message. It goes out only after your approval."
+    private static let earlierOutboundPrefix = "Outbound message. Sends as "
+    private static let earlierOutboundSuffix = " only after your approval."
+
+    /// A reason saved by an earlier build, in today's words.
+    nonisolated static func rewordedReason(_ stored: String) -> String {
+        if earlierAsksFirstReasons.contains(stored) { return asksFirstReason }
+        if stored.hasPrefix(earlierOutboundPrefix), stored.hasSuffix(earlierOutboundSuffix) { return outboundReason }
+        return stored
+    }
 
     // The decision tree. Order matters: a public post that also spends should
     // refuse on the post rule first; money is the next-hardest line; leaks
@@ -286,7 +307,7 @@ final class DecisionGate: ObservableObject {
 
         // GUARDRAIL 4: outbound comms must carry the correct disclosure and may
         // ONLY go out through the gate. Every external message queues for a tap
-        // with the resolved persona attached (business => Sarah, personal => you)
+        // with the resolved persona attached (business => the assistant, personal => you)
         // so the user sees who it would send as before approving.
         if sniffsExternalComms(action) {
             let persona = resolvedPersona(for: action)
@@ -294,7 +315,7 @@ final class DecisionGate: ObservableObject {
                 action: action,
                 urgent: true,
                 persona: persona,
-                reason: "Outbound message. Sends as \(persona.displayName) only after your approval."
+                reason: Self.outboundReason
             )
             return .queueForApproval(item)
         }
@@ -374,7 +395,7 @@ final class DecisionGate: ObservableObject {
                    threshold: Double) async -> GateVerdict {
         guard Self.hold(of: verdict) < .refuse else { return verdict }
         let result = await engine.decide(
-            surface: "jax.gate",
+            surface: Self.surface,
             state: "The action is: \(action.summary)\nIts target is: \(action.target)\n"
                 + "Details: \(action.detail.sorted { $0.key < $1.key }.map { "\($0.key) \($0.value)" }.joined(separator: ", "))",
             questions: ["rule": .choice(instructions: Self.secondOpinionInstructions,

@@ -240,7 +240,7 @@ extension DecisionEngine {
         var mayHaveBilled = false
         if !key.isEmpty {
             let provider = remoteProvider(key)
-            let asked = await askRemote(provider, surface: event.surface, state: event.combinedState,
+            let asked = await askRemote(provider, key: key, surface: event.surface, state: event.combinedState,
                                         questions: event.combinedQuestions)
             if let r = asked.result {
                 event.settle(remote: r)

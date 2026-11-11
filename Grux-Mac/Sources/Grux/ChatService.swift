@@ -252,7 +252,7 @@ final class ChatService {
                 if state.config.memoryEnabled {
                     SemanticMemory.shared.store(kind: .chatAssistant, text: gate)
                 }
-                if state.config.speakRepliesAloud && !state.voiceMuted {
+                if VoiceAsk.speaksReply(to: trimmed, speaks: state.config.speakRepliesAloud, muted: state.voiceMuted) {
                     SpeechEngine.shared.speak("New app or existing one?")
                 }
                 WakeLog.shared.log("chat: ship-ios-app gate fired (no project) - asked the user to pick")
@@ -263,7 +263,7 @@ final class ChatService {
             if state.config.memoryEnabled {
                 SemanticMemory.shared.store(kind: .chatAssistant, text: confirmation)
             }
-            if state.config.speakRepliesAloud && !state.voiceMuted {
+            if VoiceAsk.speaksReply(to: trimmed, speaks: state.config.speakRepliesAloud, muted: state.voiceMuted) {
                 SpeechEngine.shared.speak(confirmation)
             }
             return
@@ -290,7 +290,250 @@ final class ChatService {
             if state.config.memoryEnabled {
                 SemanticMemory.shared.store(kind: .chatAssistant, text: reply)
             }
-            if state.config.speakRepliesAloud && !state.voiceMuted {
+            if VoiceAsk.speaksReply(to: trimmed, speaks: state.config.speakRepliesAloud, muted: state.voiceMuted) {
+                SpeechEngine.shared.speak(reply)
+            }
+            return
+        }
+
+        // Wave 67 round 5: every exit from here to the readiness guard is Grux
+        // answering with no model (a reply, or a card whose reply lands later),
+        // so the person's message is marked, and a chat of only such asks stays
+        // fresh for "What can you do for me?". Reaching the model path disarms it.
+        var answeredByGrux = true
+        defer { if answeredByGrux { state.markAnsweredWithoutModel(userMsg.id) } }
+
+        // "What can you do?" (D145): answered from the feature registry, because
+        // a local model given the same list took 22 s and answered in tool
+        // jargon. Needs no model, so it sits above the readiness guard; not
+        // stored as a memory, since what is set up changes.
+        // Wave 58: a first-run form ("Where do I start?") counts only in a chat
+        // that has asked nothing real yet, so the earlier asks go with it.
+        if imageData == nil, CapabilityAsk.matches(trimmed, earlier: CapabilityAsk.modelAsks(Array(state.chat.dropLast())),
+                                                   name: UserIdentity.assistantName) {
+            let reply = CapabilityAsk.reply(memoryOn: state.config.memoryEnabled)
+            WakeLog.shared.log("chat: capability-ask fast-path")
+            state.appendChat(ChatMessage(role: .assistant, content: DashSanitizer.stripDashesOnly(reply)))
+            if VoiceAsk.speaksReply(to: trimmed, speaks: state.config.speakRepliesAloud, muted: state.voiceMuted) {
+                SpeechEngine.shared.speak(reply)
+            }
+            return
+        }
+
+        // "Does anything I type leave my Mac?" (D177): answered from the route
+        // chat really takes, because Grux Local 2B said nothing leaves the Mac
+        // on any route. Needs no model, so it sits above the readiness guard;
+        // not stored as a memory, since the route changes.
+        if imageData == nil, PrivacyAsk.matches(trimmed, earlier: CapabilityAsk.earlierTurns(state.chat)) {
+            let reply = PrivacyAsk.reply(state: state)
+            WakeLog.shared.log("chat: privacy-ask fast-path")
+            state.appendChat(ChatMessage(role: .assistant, content: DashSanitizer.stripDashesOnly(reply)))
+            if VoiceAsk.speaksReply(to: trimmed, speaks: state.config.speakRepliesAloud, muted: state.voiceMuted) {
+                SpeechEngine.shared.speak(reply)
+            }
+            return
+        }
+
+        // "Is my calendar private?", "Who can read my messages?" (D182): whether
+        // Grux reads that kind and where what it reads goes, from the permission
+        // and the route, because Grux Local 2B said "Your calendar is private"
+        // on a Mac where Grux reads it. Needs no model; not stored as a memory.
+        if imageData == nil, let kind = PrivacyAsk.kind(of: trimmed) {
+            let reply = PrivacyAsk.kindReply(kind, state: state)
+            WakeLog.shared.log("chat: privacy-kind-ask fast-path")
+            state.appendChat(ChatMessage(role: .assistant, content: DashSanitizer.stripDashesOnly(reply)))
+            if VoiceAsk.speaksReply(to: trimmed, speaks: state.config.speakRepliesAloud, muted: state.voiceMuted) {
+                SpeechEngine.shared.speak(reply)
+            }
+            return
+        }
+
+        // "How do I make you read your replies out loud?" (D184): answered from
+        // the switch and the session mute, because Grux Local 2B said it cannot
+        // speak. Needs no model; not stored as a memory, since the switch changes.
+        if imageData == nil, VoiceAsk.matches(trimmed) {
+            // An ask for quiet is answered on screen only, and cuts a reply
+            // still being read (wave 62).
+            let quiet = VoiceAsk.asksForQuiet(trimmed)
+            if quiet { SpeechEngine.shared.silenceNow(reason: "voice-ask asked for quiet") }
+            let reply = VoiceAsk.reply(speaks: state.config.speakRepliesAloud, muted: state.voiceMuted,
+                                       silenced: AudioOutput.isSilent, quiet: quiet)
+            WakeLog.shared.log("chat: voice-ask fast-path")
+            state.appendChat(ChatMessage(role: .assistant, content: DashSanitizer.stripDashesOnly(reply)))
+            if VoiceAsk.speaksReply(to: trimmed, speaks: state.config.speakRepliesAloud, muted: state.voiceMuted) {
+                SpeechEngine.shared.speak(reply)
+            }
+            return
+        }
+
+        // "Can I use a smarter model?", "Do you work without internet?" (D189):
+        // answered from the route, Local Models' pick for this Mac and what goes
+        // online, because Grux Local 2B answered both wrong with the facts in its
+        // prompt. Needs no model; not stored as a memory, since the route changes.
+        if imageData == nil, let kind = SelfAsk.kind(of: trimmed, earlier: CapabilityAsk.earlierTurns(state.chat),
+                                                         name: UserIdentity.assistantName) {
+            let reply = SelfAsk.reply(kind, state: state)
+            WakeLog.shared.log("chat: self-ask fast-path (\(kind))")
+            state.appendChat(ChatMessage(role: .assistant, content: DashSanitizer.stripDashesOnly(reply)))
+            if VoiceAsk.speaksReply(to: trimmed, speaks: state.config.speakRepliesAloud, muted: state.voiceMuted) {
+                SpeechEngine.shared.speak(reply)
+            }
+            return
+        }
+
+        // "Make a to-do list for the weekend" (D180 item 1): nothing is on it
+        // yet, so Grux asks what goes on it instead of a model adding a task
+        // named after the list. Needs no model; not stored as a memory.
+        if imageData == nil, ToDoListAsk.matches(trimmed) {
+            WakeLog.shared.log("chat: to-do-list-ask fast-path")
+            state.appendChat(ChatMessage(role: .assistant, content: DashSanitizer.stripDashesOnly(ToDoListAsk.reply)))
+            if VoiceAsk.speaksReply(to: trimmed, speaks: state.config.speakRepliesAloud, muted: state.voiceMuted) {
+                SpeechEngine.shared.speak(ToDoListAsk.reply)
+            }
+            return
+        }
+
+        // "What's 18% tip on $64.50?" (D155): worked out exactly, because Grux
+        // Local 2B answered "$11.21" (it is $11.61) and a person pays what Grux
+        // says. Needs no model, so it sits above the readiness guard; not
+        // stored as a memory.
+        if imageData == nil, let reply = MathAsk.reply(for: trimmed) {
+            WakeLog.shared.log("chat: math-ask fast-path")
+            state.appendChat(ChatMessage(role: .assistant, content: DashSanitizer.stripDashesOnly(reply)))
+            if VoiceAsk.speaksReply(to: trimmed, speaks: state.config.speakRepliesAloud, muted: state.voiceMuted) {
+                SpeechEngine.shared.speak(reply)
+            }
+            return
+        }
+
+        // "How many days until Christmas?" (D195): counted on the Mac's own
+        // calendar, because Grux Local 2B answered "41 days" on Nov 8 (it was
+        // 47). Needs no model; not stored as a memory.
+        if imageData == nil, let reply = DayCountAsk.reply(for: trimmed) {
+            WakeLog.shared.log("chat: day-count-ask fast-path")
+            state.appendChat(ChatMessage(role: .assistant, content: DashSanitizer.stripDashesOnly(reply)))
+            if VoiceAsk.speaksReply(to: trimmed, speaks: state.config.speakRepliesAloud, muted: state.voiceMuted) {
+                SpeechEngine.shared.speak(reply)
+            }
+            return
+        }
+
+        // "What date is next Friday?" (D202): read from the Mac's own calendar,
+        // because Grux Local 2B answered "Next Friday is Monday, November 14"
+        // on Monday, Nov 9 (it was Friday, November 13). Needs no model; not
+        // stored as a memory.
+        if imageData == nil, let reply = DateAsk.reply(for: trimmed, afterImage: DateAsk.followsImage(state.chat)) {
+            WakeLog.shared.log("chat: date-ask fast-path")
+            state.appendChat(ChatMessage(role: .assistant, content: DashSanitizer.stripDashesOnly(reply)))
+            if VoiceAsk.speaksReply(to: trimmed, speaks: state.config.speakRepliesAloud, muted: state.voiceMuted) {
+                SpeechEngine.shared.speak(reply)
+            }
+            return
+        }
+
+        // "Write a note to Joplin about the recipe" (D164): Grux writes to no
+        // notes app but its own, and Grux Local 2B refused every such ask, so
+        // the note's words are written out here to paste in, or Grux says how
+        // to send them (never by reading the next message as the note).
+        // Needs no model; not stored as a memory.
+        if imageData == nil, let reply = ForeignNoteAsk.reply(for: trimmed) {
+            WakeLog.shared.log("chat: note-elsewhere fast-path")
+            state.appendChat(ChatMessage(role: .assistant, content: DashSanitizer.stripDashesOnly(reply)))
+            if VoiceAsk.speaksReply(to: trimmed, speaks: state.config.speakRepliesAloud, muted: state.voiceMuted) {
+                SpeechEngine.shared.speak(reply)
+            }
+            return
+        }
+
+        // "What time is it in Tokyo?" (D156): answered from the Mac's own time
+        // zones, because Grux Local 2B said it had no access to time zones and
+        // pointed at a weather app. Only a place the Mac does not know is looked
+        // up, by name, on the weather ask's geocoder. Needs no model.
+        if imageData == nil, let ask = TimeAsk.match(trimmed) {
+            let reply = await TimeAsk.answer(ask, fetch: WeatherAsk.fetch)
+            WakeLog.shared.log("chat: time-ask fast-path -> " + (ask.place == nil ? "here" : "a place named"))
+            state.appendChat(ChatMessage(role: .assistant, content: DashSanitizer.stripDashesOnly(reply)))
+            if VoiceAsk.speaksReply(to: trimmed, speaks: state.config.speakRepliesAloud, muted: state.voiceMuted) {
+                SpeechEngine.shared.speak(reply)
+            }
+            return
+        }
+
+        // "What is on my calendar tomorrow?" (D136): answered from the calendar,
+        // read here, because a local model offered `list_events` called none
+        // and answered from its memories of earlier turns ("a lunch with Sarah
+        // at 1pm Friday" while the calendar held Election Day). Needs no model,
+        // so it sits above the readiness guard like the upgrade-yourself ask.
+        // Not stored as a memory: what the calendar holds changes, and a memory
+        // of it would be read back later as if still true (D137).
+        if imageData == nil, let window = CalendarAsk.window(for: trimmed) {
+            let found = CalendarAsk.events(window.start, window.end)
+            let reply = CalendarAsk.reply(events: found, window: window)
+            WakeLog.shared.log("chat: calendar-ask fast-path -> \(window.label), "
+                + (found.map { "\($0.count) event(s)" } ?? "no calendar access"))
+            state.appendChat(ChatMessage(role: .assistant, content: DashSanitizer.stripDashesOnly(reply)))
+            if VoiceAsk.speaksReply(to: trimmed, speaks: state.config.speakRepliesAloud, muted: state.voiceMuted) {
+                SpeechEngine.shared.speak(reply)
+            }
+            return
+        }
+
+        // "When is my dentist appointment?" (D206): answered by searching the
+        // names on the calendar, because Grux Local 2B, offered `list_events`
+        // (one date range), said it had no access to the person's schedule.
+        // Not stored as a memory, for the calendar ask's reason.
+        if imageData == nil, let search = CalendarSearchAsk.match(trimmed) {
+            let reply = CalendarSearchAsk.answer(search)
+            WakeLog.shared.log("chat: calendar-search fast-path -> " + (search.terms.isEmpty ? "by kind" : "by name"))
+            state.appendChat(ChatMessage(role: .assistant, content: DashSanitizer.stripDashesOnly(reply)))
+            if VoiceAsk.speaksReply(to: trimmed, speaks: state.config.speakRepliesAloud, muted: state.voiceMuted) {
+                SpeechEngine.shared.speak(reply)
+            }
+            return
+        }
+
+        // "What's the weather like where I am today?" (D141): answered from
+        // Open-Meteo, which needs no key, because the model had no way to know
+        // and said so. Also the city typed straight after Grux asked which one.
+        // Needs no model, so it sits above the readiness guard like the
+        // calendar ask, and is not stored as a memory for the same reason.
+        if imageData == nil {
+            let earlier = state.chat.dropLast()
+            let previous = earlier.last.flatMap { $0.role == .assistant ? $0.content : nil }
+            let previousAsk = earlier.dropLast().last.flatMap { $0.role == .user ? $0.content : nil }
+            let ask = WeatherAsk.match(trimmed)
+                ?? WeatherAsk.followUp(trimmed, previousReply: previous, previousAsk: previousAsk)
+                ?? WeatherAsk.dayFollowUp(trimmed, previousReply: previous, remembered: state.config.weatherPlace)
+            if let ask {
+                let out = await WeatherAsk.answer(ask, remembered: state.config.weatherPlace,
+                                                  fahrenheit: WeatherAsk.usesFahrenheit,
+                                                  fetch: WeatherAsk.fetch)
+                if let place = out.remember {
+                    state.config.weatherPlace = place
+                    state.saveConfig()
+                }
+                WakeLog.shared.log("chat: weather-ask fast-path -> "
+                    + (ask.nearby ? "a spot near the saved city" : ask.place == nil ? "no place named" : "a place named")
+                    + (out.remember != nil ? ", remembered" : ""))
+                state.appendChat(ChatMessage(role: .assistant, content: DashSanitizer.stripDashesOnly(out.reply)))
+                if VoiceAsk.speaksReply(to: trimmed, speaks: state.config.speakRepliesAloud, muted: state.voiceMuted) {
+                    SpeechEngine.shared.speak(out.reply)
+                }
+                return
+            }
+        }
+
+        // "Actually never mind" (D170 item 6): Grux Local 2B took 9.5 s to
+        // answer "I hear you. What's up?". Answered at once, with what still
+        // waits in Approvals. Below the weather ask, which reads "never mind"
+        // after its own question as no city. Not stored as a memory. Inside a
+        // card's undo window it is an undo (W57-FIX 2).
+        if imageData == nil, NeverMindAsk.matches(trimmed),
+           let reply = NeverMindAsk.reply(for: trimmed, waiting: ApprovalQueue.shared.pending.map(\.summary),
+                                          cancelled: PIMConfirmationController.shared.cancelPending()) {
+            WakeLog.shared.log("chat: never-mind fast-path")
+            state.appendChat(ChatMessage(role: .assistant, content: DashSanitizer.stripDashesOnly(reply)))
+            if VoiceAsk.speaksReply(to: trimmed, speaks: state.config.speakRepliesAloud, muted: state.voiceMuted) {
                 SpeechEngine.shared.speak(reply)
             }
             return
@@ -352,6 +595,7 @@ final class ChatService {
         // was about to be refused for having no usable model spent an API
         // call first, measured at 1.98 seconds per refused turn. Refusing
         // before spending is the whole point.
+        answeredByGrux = false
         let readiness = ChatReadiness.current()
         if !readiness.canSend {
             WakeLog.shared.log("chat: refused before send, \(readiness)")
@@ -360,10 +604,30 @@ final class ChatService {
             return
         }
 
+        // "hey" (D211): Grux Local 2B took 8.5 s to answer "Hey. How's your
+        // Monday off starting?", a day off nobody mentioned. A greeting alone is
+        // answered at once and says nothing about the person. Below the
+        // readiness guard, so with no model the guard says what to set up and
+        // the reply never invites an ask that cannot be sent. Not stored as a
+        // memory.
+        if imageData == nil,
+           let reply = GreetingAsk.reply(for: trimmed, earlier: CapabilityAsk.earlierTurns(state.chat),
+                                         name: UserIdentity.assistantName) {
+            answeredByGrux = true
+            WakeLog.shared.log("chat: greeting fast-path")
+            state.appendChat(ChatMessage(role: .assistant, content: DashSanitizer.stripDashesOnly(reply)))
+            if VoiceAsk.speaksReply(to: trimmed, speaks: state.config.speakRepliesAloud, muted: state.voiceMuted) {
+                SpeechEngine.shared.speak(reply)
+            }
+            return
+        }
+
         // Confidence / clarify gate: never guess on TRUE confusion (Jarvis rule).
         // Runs after the deterministic V2/PIM short-circuits, before any model
         // call or tool dispatch. Heuristic-only by default (no API spend); flip
         // ConfidenceGate.modelPathEnabled = true to add the nuance path.
+        // The gate's verdict rides on this turn's one Cognition Map card.
+        var gateVerdict: ConfidenceVerdict?
         if imageData == nil, !trimmed.isEmpty {
             let priorTurns = state.chat.dropLast() // exclude the just-appended user msg
             let lastPrior = priorTurns.last?.content ?? ""
@@ -383,9 +647,11 @@ final class ChatService {
             )
             // Feed the honest confidence signal to the Cognition Map trace. Real
             // numbers only (the computed score, the verdict, the reason): no
-            // invented data.
-            CognitionTrace.shared.note(
-                confidence: verdict,
+            // invented data. A verdict that stops the turn to ask is its own
+            // card; one that goes ahead rides on the completed turn's card.
+            gateVerdict = verdict
+            CognitionTrace.shared.noteGate(
+                verdict,
                 trigger: trimmed,
                 mode: AutonomyController.shared.mode.rawValue
             )
@@ -395,7 +661,7 @@ final class ChatService {
                 if state.config.memoryEnabled {
                     SemanticMemory.shared.store(kind: .chatAssistant, text: q)
                 }
-                if state.config.speakRepliesAloud && !state.voiceMuted {
+                if VoiceAsk.speaksReply(to: trimmed, speaks: state.config.speakRepliesAloud, muted: state.voiceMuted) {
                     SpeechEngine.shared.speak(q)
                 }
                 return
@@ -434,7 +700,11 @@ final class ChatService {
         // skip every code path that would trigger ElevenLabs or system TTS -
         // text bubbles still render normally. The global
         // config.speakRepliesAloud is the persistent default.
-        let speakAloud = state.config.speakRepliesAloud && !state.voiceMuted
+        // A message about quieting Grux is never answered aloud (wave 62).
+        // Read again at every speech site: a mute clicked while the reply is
+        // still coming keeps the rest of it quiet.
+        func speakAloud() -> Bool { VoiceAsk.speaksReply(to: userText, speaks: state.config.speakRepliesAloud,
+                                                         muted: state.voiceMuted) }
         // A local reply is checked for made-up actions once it is whole
         // (ActionClaimGuard), so its sentences are not streamed to speech
         // first: the person would hear the claim the check then removes.
@@ -446,7 +716,7 @@ final class ChatService {
         var streamSpeechActive = false
         var pendingForSpeech = ""
         func flushPendingSentences(force: Bool = false) {
-            guard speakAloud, !holdSpeechForClaimCheck else { return }
+            guard speakAloud(), !holdSpeechForClaimCheck else { return }
             // Find complete sentences at the head of `pendingForSpeech`.
             while true {
                 let range = NSRange(pendingForSpeech.startIndex..<pendingForSpeech.endIndex, in: pendingForSpeech)
@@ -499,6 +769,10 @@ final class ChatService {
             // Each result as the model saw it, so a reply that only echoes one
             // reaches the person translated (D-replycopy).
             var toolResultsThisTurn: [(tool: String, input: [String: Any], result: String)] = []
+            var askedWithoutStart = false
+            // D193: a later hop's repeat of a call already waiting makes no new card;
+            // D209: nor is a write that already succeeded done again.
+            var repeats = RepeatedPendingCalls()
             hopLoop: while hops < maxToolHops {
                 hops += 1
 
@@ -513,7 +787,7 @@ final class ChatService {
                     apiKey: apiKey,
                     model: modelId,
                     systemBlocks: systemBlocks,
-                    messages: messages,
+                    messages: Self.wireMessages(messages, for: backend),
                     tools: tools,
                     maxTokens: Self.chatMaxTokens,
                     temperature: presetApp?.temperatureOverride ?? Self.chatTemperature,
@@ -555,6 +829,18 @@ final class ChatService {
                     }
                 }
 
+                // D180 item 2: a draft or list turn whose continuation came back
+                // empty would answer "Hi [Name]," alone; ask once more without
+                // the start and let the model answer in its own words.
+                if toolUses.isEmpty, !askedWithoutStart, Self.onlyPrefilledStart(hopText, messages: messages) {
+                    askedWithoutStart = true
+                    WakeLog.shared.log("chat: the reply came back as only its start '\(hopText.prefix(80))' -> asking again without it")
+                    if pendingForSpeech.hasSuffix(hopText) { pendingForSpeech.removeLast(hopText.count) }
+                    messages = DraftAsk.withoutPrefill(messages)
+                    hops -= 1
+                    continue hopLoop
+                }
+
                 finalTextFromAllHops += (finalTextFromAllHops.isEmpty ? "" : "\n") + hopText
 
                 // Usage snapshot - log cache hits
@@ -590,10 +876,14 @@ final class ChatService {
                 var resultBlocks: [[String: Any]] = []
                 for use in toolUses {
                     let raw: String
-                    if let refused = Self.notOfferedRefusal(use.name, offered: tools) {
+                    // Asked first so every call in the hop is counted.
+                    if repeats.isRepeat(tool: use.name, input: use.input) {
+                        raw = repeats.foldedResult(tool: use.name, input: use.input)
+                    } else if let refused = Self.notOfferedRefusal(use.name, offered: tools) {
                         raw = refused
                     } else {
                         raw = await Self.dispatchTool(name: use.name, input: use.input)
+                        repeats.record(tool: use.name, input: use.input, result: raw)
                     }
                     // Item 30: screen untrusted tool output for prompt injection
                     // before it goes back to the model as a tool_result.
@@ -607,11 +897,16 @@ final class ChatService {
                     ])
                 }
                 messages.append(["role": "user", "content": resultBlocks])
+                if repeats.closeHop() {
+                    WakeLog.shared.log("chat: hop \(hops) only asked again for what already waits in Approvals or was already done -> turn ends, nothing done twice")
+                    flushPendingSentences(force: true)
+                    break hopLoop
+                }
                 // Loop for next hop - streaming resumes.
             }
 
             var finalText = finalTextFromAllHops.trimmingCharacters(in: .whitespacesAndNewlines)
-            if finalText.isEmpty { finalText = "Okay." }
+            if finalText.isEmpty { finalText = ActionClaimGuard.emptyReply(results: toolResultsThisTurn) }
 
             // POST-vet the generated reply against the real catalog. The PRE
             // ConfidenceGate above scanned only the user prompt; a reply can
@@ -632,12 +927,57 @@ final class ChatService {
                 WakeLog.shared.log("chat: reply echoed a tool result -> person's line: '\(finalText.prefix(160))'")
                 finalText = person
             }
+            // D188: a local "Rewrite this to sound friendlier: ..." came back as
+            // the person's text word for word; the text stays and that is named.
+            // Judged on the model's own reply, before any check adds a line after it.
+            if pending.provider == "local",
+               let unchanged = DraftAsk.unchangedTransform(reply: finalText, ask: userText) {
+                WakeLog.shared.log("chat: local reply to a rewrite is the pasted text word for word -> named after it")
+                finalText = unchanged
+            }
             let claimCheck = ActionClaimGuard.vet(reply: finalText, route: pending.provider,
                                                   results: toolResultsThisTurn, ask: userText,
                                                   approvals: ApprovalQueue.shared.pending.map(\.summary))
             if claimCheck.replaced {
                 WakeLog.shared.log("chat: local reply corrected (an action claimed that no result backs, or a write waiting in Approvals) -> '\(claimCheck.text)' instead of '\(finalText.prefix(160))'")
                 finalText = claimCheck.text
+            }
+            // D163: a local draft for "lunch tomorrow" said "on Tuesday" on a Wednesday.
+            // W53-FIX: the draft is left as written and the day is named after it.
+            if pending.provider == "local",
+               let days = DraftAsk.checkingDays(reply: finalText, ask: userText) {
+                WakeLog.shared.log("chat: local draft names another weekday than the day asked -> the day named after it")
+                finalText = days
+            }
+            // D178: a local bio "for my coffee cart" said "in 2024" and "on the
+            // corner of Elm and Main"; the writing stays and what it made up is named.
+            if pending.provider == "local",
+               let named = InventedFacts.check(reply: finalText, ask: userText,
+                                               grounded: InventedFacts.grounded(ask: userText, systemBlocks: systemBlocks,
+                                                                                messages: messages),
+                                               personal: InventedFacts.personal(ask: userText, messages: messages,
+                                                                                systemBlocks: systemBlocks)) {
+                WakeLog.shared.log("chat: local writing states a year or place the ask never gave -> named after it")
+                finalText = named
+            }
+            // D140: "Nothing scheduled for tonight." with no calendar read is
+            // replaced by what the calendar holds for that day.
+            let calendarCheck = CalendarClaimGuard.vet(reply: finalText, route: pending.provider,
+                                                       results: toolResultsThisTurn, ask: userText, hasImage: imageData != nil)
+            if calendarCheck.replaced {
+                WakeLog.shared.log("chat: local reply said the calendar is empty with no calendar read -> the calendar's answer '\(calendarCheck.text.prefix(160))' instead of '\(finalText.prefix(160))'")
+                finalText = calendarCheck.text
+            }
+            // A forecast the model wrote with nothing looked up ("May, France,
+            // tomorrow: overcast with a 0% chance of rain") says how to ask; a
+            // made-up "I don't have access to real-time weather" says Grux can (D153).
+            let weatherCheck = WeatherClaimGuard.vet(reply: finalText, route: pending.provider,
+                                                     results: toolResultsThisTurn, remembered: state.config.weatherPlace,
+                                                     ask: userText,
+                                                     previous: state.chat.last(where: { $0.role == .assistant })?.content ?? "")
+            if weatherCheck.replaced {
+                WakeLog.shared.log("chat: local reply gave a forecast or refused the weather with nothing looked up -> '\(weatherCheck.text.prefix(80))' instead of '\(finalText.prefix(160))'")
+                finalText = weatherCheck.text
             }
             // HARD dash guard (house zero em/en dash rule). The persona prompt asks
             // the model to avoid em/en dashes, but models slip: a live reply once
@@ -649,67 +989,30 @@ final class ChatService {
             // untouched, unlike clean() which is for prose email. TTS filters separately.
             finalText = DashSanitizer.stripDashesOnly(finalText)
             state.appendChat(ChatMessage(role: .assistant, content: finalText))
-            WakeLog.shared.log("reply received (\(finalText.count) chars), speakRepliesAloud=\(speakAloud)")
+            WakeLog.shared.log("reply received (\(finalText.count) chars), speakRepliesAloud=\(speakAloud())")
 
             // Mirror the assistant turn into semantic memory so tomorrow's
             // "what did Grux tell me about X" retrieval hits the right context.
             if state.config.memoryEnabled {
                 SemanticMemory.shared.store(kind: .chatAssistant, text: finalText)
-
-                // Cognition Map: record ONE honest decision trace for this
-                // resolved turn. heuristicsFired = the JaxProfile heuristics
-                // whose rule/domain text actually appears in this turn's user
-                // prompt (a cheap, honest attribution; empty when none match,
-                // never invented). memoriesRetrieved = the SAME HybridRetriever
-                // hits memoryBlock was built from, mapped to short snippets, so
-                // the map shows the real RELEVANT_MEMORIES. gateVerdict is nil
-                // for a plain chat turn, and confidence is OMITTED (nil): the
-                // ConfidenceGate trace recorded earlier this turn already carries
-                // the one real comprehension signal, so this completion trace
-                // does not invent a second confidence number from retrieval/
-                // heuristic counts (those measure context depth, not confidence).
-                // The Cognition Map renders this row as "n/a" and the avg-
-                // confidence rollup averages only genuine ConfidenceGate verdicts.
-                let lc = userText.lowercased()
-                let firedHeuristics: [String] = JaxProfile.shared.heuristics.compactMap { h in
-                    let rule = h.rule.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let domain = h.domain.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let domainHit = !domain.isEmpty && lc.contains(domain.lowercased())
-                    let ruleHit = !rule.isEmpty && rule.lowercased()
-                        .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
-                        .contains { $0.count >= 5 && lc.contains($0) }
-                    guard domainHit || ruleHit else { return nil }
-                    return domain.isEmpty ? rule : "[\(domain)] \(rule)"
-                }
-                let retrievedSnippets: [String] = HybridRetriever.shared
-                    .retrieve(query: userText, topK: 8,
-                              kinds: [.corpus, .chatAssistant, .ambient, .focus, .fact, .web])
-                    .map { entry in
-                        let t = entry.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                        return t.count > 90 ? String(t.prefix(90)) + "..." : t
-                    }
-                    .filter { !$0.isEmpty }
-                CognitionTrace.shared.note(
-                    kind: .prompt,
-                    trigger: userText,
-                    heuristicsFired: firedHeuristics,
-                    memoriesRetrieved: retrievedSnippets,
-                    gateVerdict: nil,
-                    confidence: nil,
-                    mode: AutonomyController.shared.mode.rawValue,
-                    outcome: String(finalText.prefix(120))
-                )
             }
 
-            if speakAloud {
-                if streamSpeechActive {
-                    // Already streamed sentence by sentence - just tell the
-                    // engine no more text is coming.
-                    SpeechEngine.shared.endStreaming()
-                } else {
-                    // Nothing was streamed (rare: empty text blocks). Fallback.
-                    SpeechEngine.shared.speak(finalText)
-                }
+            // Cognition Map: ONE card for this turn, whatever the memory
+            // setting (since D120 it is the only card a confident turn gets).
+            Self.recordTurnTrace(userText: userText,
+                                 gate: gateVerdict,
+                                 memoryEnabled: state.config.memoryEnabled,
+                                 outcome: String(finalText.prefix(120)))
+
+            if streamSpeechActive {
+                // A stream that started is always ended, even when the switch
+                // went off mid-reply: an unended stream keeps the wake word off.
+                // Already streamed sentence by sentence - just tell the engine
+                // no more text is coming.
+                SpeechEngine.shared.endStreaming()
+            } else if speakAloud() {
+                // Nothing was streamed (rare: empty text blocks). Fallback.
+                SpeechEngine.shared.speak(finalText)
             }
         } catch {
             // Classify the failure into a recoverable banner instead of a dead
@@ -725,9 +1028,22 @@ final class ChatService {
                 imageMediaType: imageMediaType
             )
             state.chatRecovery = recovery
+            // A turn the gate let go ahead still gets its one card when the
+            // reply fails, as the gate's own card used to give it.
+            if gateVerdict != nil {
+                Self.recordTurnTrace(userText: userText,
+                                     gate: gateVerdict,
+                                     memoryEnabled: false,
+                                     outcome: "Did not finish: \(recovery.message)")
+            }
             let msg = "⚠️ \(recovery.message)"
             state.appendChat(ChatMessage(role: .assistant, content: msg, isNotice: true))
             WakeLog.shared.log("reply FAILED: \(error.localizedDescription) [recovery=\(recovery.kind)]")
+            // The local model was removed while Grux ran: discovery moves chat to
+            // one this Mac has, so Retry answers (D152).
+            if case ClaudeError.http(404, let body) = error, Self.missingLocalModel(in: body) != nil {
+                Task { await ModelRegistry.shared.discoverLocal() }
+            }
             if streamSpeechActive { SpeechEngine.shared.endStreaming() }
             // SPEAKING COSTS MONEY TOO. The same failure was announced 190
             // times through ElevenLabs while the Anthropic balance was empty,
@@ -735,7 +1051,7 @@ final class ChatService {
             // rest is a second bill for the same news. shouldAnnounce() is
             // consuming and keyed on the failure kind, so a genuinely NEW
             // problem still gets through.
-            if speakAloud, ProviderHealth.shared.shouldAnnounce() {
+            if speakAloud(), ProviderHealth.shared.shouldAnnounce() {
                 SpeechEngine.shared.speak("Something broke: \(recovery.message)")
             }
         }
@@ -801,6 +1117,15 @@ final class ChatService {
                                                      : Array(state.chat.suffix(30)))
         var stablePath = false
         if lean {
+            // D159: a message to write for someone is text to hand over, and
+            // a small model offered any write tool calls it (see DraftAsk).
+            // D175: so is a list to write (see ListAsk).
+            // D183: so is pasted text to rewrite, summarize or translate.
+            // Such a turn sends no tools on either path, so it never takes the
+            // stable list below either.
+            let noTools = DraftAsk.matches(lastUser?.content ?? "") || ListAsk.matches(lastUser?.content ?? "")
+                || DraftAsk.transformsPastedText(lastUser?.content ?? "")
+            if noTools { tools = [] }
             let filtered = tools
             tools = LocalTurn.rank(tools, utterance: lastUser?.content ?? "")
             // Room for the line naming what is left out, at its longest.
@@ -824,7 +1149,8 @@ final class ChatService {
             // Tools and the cut line go out in the one order (LocalTurn.stableOrder),
             // on either path, so the order never depends on the words (D17).
             let order = LocalTurn.canonicalOrder(Self.allTools())
-            if let stable = Self.stableLocalTools(systemBlocks: systemBlocks, messages: messages, ranked: tools,
+            if !noTools,
+               let stable = Self.stableLocalTools(systemBlocks: systemBlocks, messages: messages, ranked: tools,
                                                   utterance: lastUser?.content ?? "",
                                                   hasImage: lastUser?.imageData != nil,
                                                   recentToolNames: RecentToolUse.shared.names(),
@@ -847,6 +1173,10 @@ final class ChatService {
                 }
                 tools = LocalTurn.inCanonicalOrder(Array(tools.prefix(fit.tools)), order: order)
             }
+            // D167: a draft reply starts with its greeting, and the model writes on.
+            // D175: a list starts "Here is <the list asked for>:".
+            if let start = DraftAsk.prefillMessage(ask: lastUser?.content ?? "")
+                ?? ListAsk.prefillMessage(ask: lastUser?.content ?? "") { messages.append(start) }
         }
         let routing = ModelRegistry.shared.resolvedRouting(
             provider: presetApp?.providerOverride, modelOverride: presetApp?.modelIdOverride)
@@ -992,6 +1322,23 @@ final class ChatService {
             maxOutputTokens: pending.maxTokens)
     }
 
+    /// D180 item 2: the hop's whole text is the reply start Grux sent for the
+    /// model to write on (`DraftAsk.prefillMessage`, `ListAsk.prefillMessage`),
+    /// so the continuation came back empty. Only while that start is still the
+    /// turn's last message: a later hop after a tool carries no start.
+    nonisolated static func onlyPrefilledStart(_ hopText: String, messages: [[String: Any]]) -> Bool {
+        guard let last = messages.last, last[DraftAsk.prefillKey] != nil,
+              let start = (last["content"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !start.isEmpty else { return false }
+        return hopText.trimmingCharacters(in: .whitespacesAndNewlines) == start
+    }
+
+    /// D167: a local draft turn's greeting goes only to the backend that knows
+    /// to send it on as the reply's start (`OpenAICompatBackend.prefilled`).
+    nonisolated static func wireMessages(_ messages: [[String: Any]], for backend: ModelBackend) -> [[String: Any]] {
+        backend is OpenAICompatBackend ? messages : DraftAsk.withoutPrefill(messages)
+    }
+
     /// The tool_result for a tool the turn did not offer, or nil when it was offered. A
     /// model may name any tool it read about in the prompt; only an offered one runs.
     nonisolated static func notOfferedRefusal(_ name: String, offered: [ClaudeTool]) -> String? {
@@ -1058,6 +1405,18 @@ final class ChatService {
         return trimmed
     }
 
+    /// The model a local Ollama server says it does not have, from its 404
+    /// body `{"error":"model 'qwen3.5:4b' not found"}`, or nil.
+    nonisolated static func missingLocalModel(in body: String) -> String? {
+        guard let data = body.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let msg = obj["error"] as? String,
+              let m = msg.range(of: #"^model '([^']{1,400})' not found"#, options: .regularExpression)
+        else { return nil }
+        let quoted = msg[m].dropFirst("model '".count)
+        return quoted.split(separator: "'").first.map(String.init)
+    }
+
     nonisolated static func humanMessage(for error: Error) -> String {
         guard case ClaudeError.http(let code, let body) = error else {
             return error.localizedDescription
@@ -1093,6 +1452,12 @@ final class ChatService {
         case 401, 403:
             return "The API key was rejected. Check the key in Settings, then retry."
         case 404:
+            // Ollama names a model it does not have: {"error":"model 'x' not found"} (D152).
+            // "Does not have", not "no longer": a default nobody pulled was never there.
+            if let name = missingLocalModel(in: body) {
+                let shown = name.count > 80 ? name.prefix(77) + "..." : name
+                return "Ollama does not have the model \(shown). Pick one you have in Local Models, then retry."
+            }
             return "That model is not available on this account. Pick another model in Settings."
         case 413:
             return "That turn was too large to send. Remove an attachment or shorten it, then retry."
@@ -1103,6 +1468,69 @@ final class ChatService {
         default:
             return "The model call failed. Retry."
         }
+    }
+
+    // MARK: - Cognition Map
+
+    /// Records the one Cognition Map card for a chat turn the gate let go
+    /// ahead. Since D120 a confident gate verdict is not its own card, so this
+    /// must run for every such turn, memory on or off; with memory off nothing
+    /// is retrieved, so the card lists no memories.
+    ///
+    /// heuristicsFired = the JaxProfile heuristics whose rule/domain text
+    /// actually appears in this turn's prompt (a cheap, honest attribution;
+    /// empty when none match, never invented). memoriesRetrieved = the SAME
+    /// HybridRetriever hits memoryBlock was built from, mapped to short
+    /// snippets. The confidence is the ConfidenceGate's verdict for this turn
+    /// when it ran, and nil (rendered "n/a") when it did not: never a second
+    /// number invented from retrieval or heuristic counts.
+    @discardableResult
+    static func recordTurnTrace(userText: String,
+                                gate: ConfidenceVerdict?,
+                                memoryEnabled: Bool,
+                                outcome: String,
+                                retrieve: ((String) -> [String])? = nil) -> CognitionEvent {
+        let lc = userText.lowercased()
+        let firedHeuristics: [String] = JaxProfile.shared.heuristics.compactMap { h in
+            let rule = h.rule.trimmingCharacters(in: .whitespacesAndNewlines)
+            let domain = h.domain.trimmingCharacters(in: .whitespacesAndNewlines)
+            let domainHit = !domain.isEmpty && lc.contains(domain.lowercased())
+            let ruleHit = !rule.isEmpty && rule.lowercased()
+                .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+                .contains { $0.count >= 5 && lc.contains($0) }
+            guard domainHit || ruleHit else { return nil }
+            return domain.isEmpty ? rule : "[\(domain)] \(rule)"
+        }
+        let retrievedSnippets: [String] = memoryEnabled
+            ? (retrieve ?? Self.retrievedSnippets(for:))(userText)
+            : []
+        return CognitionTrace.shared.noteTurn(
+            trigger: userText,
+            gate: gate,
+            heuristicsFired: firedHeuristics,
+            memoriesRetrieved: retrievedSnippets,
+            mode: AutonomyController.shared.mode.rawValue,
+            outcome: outcome
+        )
+    }
+
+    /// The memory kinds a chat turn may read back as RELEVANT_MEMORIES, and
+    /// the ones its Cognition card lists. Every chat retrieval reads this one
+    /// set. It leaves out `.chatUser` (past prompts replay as fresh commands)
+    /// and `.chatAssistant`: Grux's earlier replies, made-up ones included,
+    /// came back as memories and the model repeated them as the person's plans
+    /// (D137). The thread's own messages already carry this conversation.
+    static let chatContextMemoryKinds: Set<SemanticMemoryKind> =
+        [.corpus, .ambient, .focus, .fact, .web]
+
+    private static func retrievedSnippets(for userText: String) -> [String] {
+        HybridRetriever.shared
+            .retrieve(query: userText, topK: 8, kinds: chatContextMemoryKinds)
+            .map { entry in
+                let t = entry.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                return t.count > 90 ? String(t.prefix(90)) + "..." : t
+            }
+            .filter { !$0.isEmpty }
     }
 
     static func classifyChatFailure(
@@ -1363,7 +1791,7 @@ final class ChatService {
             ),
             ClaudeTool(
                 name: "remember_slang",
-                description: "Save a slang term / jargon / acronym the user uses to their profile so Grux understands it next time. Use whenever they teach you what a word means ('it's slang for X', 'that means Y').",
+                description: "Save a slang term / jargon / acronym the user uses to their profile so Grux understands it next time. Use whenever they teach you what a word means ('it's slang for X', 'that means Y'). Never for a preference or a fact about the person ('I prefer short answers'): that is remember_fact.",
                 inputSchema: [
                     "type": "object",
                     "properties": [
@@ -1792,6 +2220,36 @@ final class ChatService {
         return Double(hits) / Double(tokens.count) >= 0.6
     }
 
+    /// The item whose title is closest to `query`, among those `fuzzyMatches`
+    /// takes: an exact title (case and spacing aside) first, then the title
+    /// holding the most of the words asked, then the one with the fewest
+    /// words not asked; the first on a tie. Taking the first match removed
+    /// "Stretch" for "remove the task Stretch in 2 minutes" (D150), and ranking
+    /// any title inside the words first checked off "Email" for "email the
+    /// deck" while "Email Sarah the deck" was on the list (W47-FIX).
+    static func bestMatch<T>(_ items: [T], title: (T) -> String, query: String) -> T? {
+        func norm(_ s: String) -> String { s.lowercased().split(whereSeparator: \.isWhitespace).joined(separator: " ") }
+        // Little words do not count: "the gym" asks for "Gym", not "Book the gym class".
+        func words(_ s: String) -> Set<String> {
+            let all = Set(s.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init))
+            let meant = all.subtracting(matchStopwords)
+            return meant.isEmpty ? all : meant
+        }
+        let q = norm(query)
+        guard !q.isEmpty else { return nil }
+        let asked = words(q)
+        var best: (score: (Int, Double, Int), item: T)?
+        for item in items {
+            let t = norm(title(item))
+            guard !t.isEmpty, fuzzyMatches(t, query: q) else { continue }
+            let has = words(t)
+            let held = asked.isEmpty ? 0 : Double(asked.intersection(has).count) / Double(asked.count)
+            let score = (t == q ? 1 : 0, held, -has.subtracting(asked).count)
+            if best.map({ score > $0.score }) ?? true { best = (score, item) }
+        }
+        return best?.item
+    }
+
     static func dispatchTool(name: String, input: [String: Any]) async -> String {
         // A dry-run turn records what a tool that acts outside Grux would do,
         // before the gate: nothing is queued, approved or run (review RV4).
@@ -1826,7 +2284,7 @@ final class ChatService {
         case "remove_task":
             let match = (input["match"] as? String ?? "").lowercased()
             guard !match.isEmpty else { return "error: empty match" }
-            if let t = AppState.shared.activeTasks.first(where: { Self.fuzzyMatches($0.title, query: match) }) {
+            if let t = Self.bestMatch(AppState.shared.activeTasks, title: { $0.title }, query: match) {
                 AppState.shared.deleteTask(t.id)
                 return "ok: removed '\(t.title)'"
             }
@@ -1835,7 +2293,7 @@ final class ChatService {
         case "complete_task":
             let match = (input["match"] as? String ?? "").lowercased()
             guard !match.isEmpty else { return "error: empty match" }
-            if let t = AppState.shared.activeTasks.first(where: { Self.fuzzyMatches($0.title, query: match) }) {
+            if let t = Self.bestMatch(AppState.shared.activeTasks, title: { $0.title }, query: match) {
                 AppState.shared.completeTask(t.id)
                 return "ok: completed '\(t.title)'"
             }
@@ -1844,7 +2302,7 @@ final class ChatService {
         case "focus_on_task":
             let match = (input["match"] as? String ?? "").lowercased()
             guard !match.isEmpty else { return "error: empty match" }
-            if let t = AppState.shared.activeTasks.first(where: { Self.fuzzyMatches($0.title, query: match) }) {
+            if let t = Self.bestMatch(AppState.shared.activeTasks, title: { $0.title }, query: match) {
                 AppState.shared.focus(on: t.id)
                 return "ok: focused on '\(t.title)' (now NOW)"
             }
@@ -1852,7 +2310,7 @@ final class ChatService {
 
         case "promote_action":
             let match = (input["match"] as? String ?? "").lowercased()
-            if let a = AmbientState.shared.activeActions.first(where: { Self.fuzzyMatches($0.title, query: match) }) {
+            if let a = Self.bestMatch(AmbientState.shared.activeActions, title: { $0.title }, query: match) {
                 AmbientState.shared.promoteAction(a.id)
                 return "ok: promoted '\(a.title)' into task stack"
             }
@@ -1860,7 +2318,7 @@ final class ChatService {
 
         case "dismiss_action":
             let match = (input["match"] as? String ?? "").lowercased()
-            if let a = AmbientState.shared.activeActions.first(where: { Self.fuzzyMatches($0.title, query: match) }) {
+            if let a = Self.bestMatch(AmbientState.shared.activeActions, title: { $0.title }, query: match) {
                 AmbientState.shared.dismissAction(a.id)
                 return "ok: dismissed '\(a.title)'"
             }
@@ -1938,7 +2396,7 @@ final class ChatService {
                 return "error: screen analysis is disabled in settings"
             }
             guard ScreenCapturer.shared.hasPermission() else {
-                return "error: screen recording permission not granted"
+                return "error: Screen Recording permission not granted"
             }
             // Short-TTL verdict reuse: if a recent event already covers the
             // exact screen the user is on (same app + window, <8s old), serve it
@@ -2030,7 +2488,8 @@ final class ChatService {
             let q = (input["query"] as? String) ?? ""
             let depth = (input["depth"] as? String) ?? "fast"
             guard !q.trimmingCharacters(in: .whitespaces).isEmpty else { return "error: empty query" }
-            return await WebResearch.research(query: q, depth: depth)
+            let answer = await WebResearch.research(query: q, depth: depth)
+            return await MainActor.run { WebResearch.markingKept(answer, memoryOn: AppState.shared.config.memoryEnabled) }
 
         case _ where ResearchTool.toolNames.contains(name):
             return await ResearchTool.dispatch(name: name, input: input)
@@ -2403,7 +2862,7 @@ final class ChatService {
         // The prompt described who Grux is at length and never said what Grux can
         // do, so "what can you do?", the likeliest first sentence a new user
         // types, had nothing to answer from but the persona header.
-        let capabilities = FeatureRegistry.systemPromptBlock()
+        let capabilities = FeatureRegistry.systemPromptBlock(signInExpired: ClaudeSignInState.shared.expired)
         // The user's NAME, which onboarding asks for on its second screen and
         // which this prompt never learned. UserIdentity.systemPromptLine() was
         // written for exactly this, JaxProfile's own comment says the name
@@ -2412,10 +2871,16 @@ final class ChatService {
         // them and then never used it. Empty string when unset, so an unnamed
         // user adds nothing rather than naming a placeholder.
         let identityLine = UserIdentity.systemPromptLine()
+        // D186: what the model is told about itself (name, the model chat runs
+        // on, offline, where a bigger model and the voice switch are), right
+        // after the header, so the lean local prompt keeps it too.
+        let aboutYou = AboutYou.block(state: state)
         let stable = """
         \(jaxPersona)
 
         \(identityLine)
+
+        \(aboutYou)
 
         VOICE & VIBE (non-negotiable):
         - Talk like a sharp, loyal friend who also happens to be a world-class operator. Warm, direct, zero corporate energy, zero HR-speak.
@@ -2495,7 +2960,7 @@ final class ChatService {
             3. Call play_music_track with that EXACT (song, artist) copied from the list.
             4. ONLY if list_library_tracks returns "empty:" (the user owns NOTHING by this artist) do you pick a well-known song for that vibe by that artist YOURSELF and call play_music_track - the catalog fallback will stream it (this path is less reliable, so prefer an owned track whenever one exists).
         - If play_music_track returns "miss: ...", it means both library AND catalog missed. ONE retry allowed: pick a different well-known song by the same artist and call play_music_track once more.
-        - If play_music_track returns "partial: ...", the song WAS found and opened but did not start playing (almost always because Grux lacks the macOS Accessibility permission needed to press Play). Do NOT claim it is playing. Say it in ONE honest line, e.g. "Opened Stronger in Apple Music, but I need Accessibility access to hit play. Grant Grux under System Settings > Privacy & Security > Accessibility and I'll start it." Do not retry a different song for a partial.
+        - If play_music_track returns "partial: ...", the song WAS found and opened but did not start playing (almost always because Grux lacks the macOS Accessibility permission needed to press Play). Do NOT claim it is playing. Say it in ONE honest line, e.g. "Opened Stronger in Apple Music, but I need Accessibility access to hit play. Turn on Grux AI under System Settings > Privacy & Security > Accessibility and I'll start it." Do not retry a different song for a partial.
         - Fallback behavior after an exhausted retry is governed by MUSIC_STRATEGY (see volatile block). libraryFirst → call play_on_youtube as a last resort. libraryOnly → tell the user briefly and stop. webFirst → you should already have called research_web before reaching this point.
         - NEVER tell the user "not in your library" or "want me to pull up YouTube?" before play_music_track has actually returned a miss. The catalog path handles songs they don't own.
         - **Music replies are ONE LINE, final state only.** Good: "Apologies by Fenix Flexin is up - heavy 808s. 🔥" Bad: multi-line with "Let me check your library first.\nNot in the library - streaming from catalog.\nApologies by Fenix Flexin..." - the first two lines leak your process and MUST NOT appear. Ever. The one line is what the user sees; everything else is noise.
@@ -2682,8 +3147,9 @@ final class ChatService {
         let mode = state.config.currentMode
 
         // Semantic memory retrieval - pull the top matching facts / web
-        // snippets / ambient intents / focus signals / prior Grux replies
-        // for whatever the user just asked. Cheap (~30ms in-process), off by
+        // snippets / ambient intents / focus signals for whatever the user
+        // just asked (never Grux's own earlier replies, see
+        // chatContextMemoryKinds). Cheap (~30ms in-process), off by
         // default only if they disabled memory.
         //
         // DELIBERATELY excludes `.chatUser` - resurfacing the user's own past
@@ -2701,11 +3167,10 @@ final class ChatService {
         let memoryBlock: String? = {
             guard state.config.memoryEnabled else { return nil }
             guard let lastUser = state.chat.last(where: { $0.role == .user })?.content else { return nil }
-            let kinds: Set<SemanticMemoryKind> = [.corpus, .chatAssistant, .ambient, .focus, .fact, .web]
             // Hybrid retrieval (Item 18): RRF-fused cosine + BM25 lanes.
             // Degrades to keyword-only when NLEmbedding is unavailable, so
             // the SemanticMemory.isReady guard is intentionally dropped.
-            return HybridRetriever.shared.retrievedAsSystemBlock(query: lastUser, topK: 8, kinds: kinds)
+            return HybridRetriever.shared.retrievedAsSystemBlock(query: lastUser, topK: 8, kinds: Self.chatContextMemoryKinds)
         }()
 
         // Rolling thread summary - emitted as its own cached block (when
@@ -2772,6 +3237,17 @@ final class ChatService {
             return "\n\n\n\(card)"
         }()
 
+        // D154: a local model asked about the weather is told Grux reads it.
+        let weatherBlock = lean
+            ? WeatherAsk.localNote(ask: lastUserUtterance, remembered: state.config.weatherPlace).map { "\n\n" + $0 } ?? ""
+            : ""
+        // D157 item 17, D159: a message to write for someone is drafted now.
+        // D175: a list to write is written now. D183: pasted text is changed, not answered.
+        let draftBlock = lean
+            ? (DraftAsk.localNote(ask: lastUserUtterance) ?? ListAsk.localNote(ask: lastUserUtterance)
+                ?? DraftAsk.pastedTextNote(ask: lastUserUtterance)).map { "\n\n" + $0 } ?? ""
+            : ""
+
         let volatile = """
         NOW: \(nowStr)
         CURRENT_MODE: \(mode.label) - \(mode.replyCapDescription)
@@ -2785,7 +3261,7 @@ final class ChatService {
         PENDING_MEMORIES (unreviewed items from the user's "remember this" inbox - surface ONE if a conversational opening makes it natural; don't list them all unprompted):
         \(pendingMemoriesBlock)
 
-        \(memoryBlock ?? "")\(macrosBlock)
+        \(memoryBlock ?? "")\(macrosBlock)\(weatherBlock)\(draftBlock)
         """
 
         let developerRides = ToolRelevance.developerContextRides(signals: .init(

@@ -504,4 +504,16 @@ final class GoalPlanGroundingTests: XCTestCase {
             XCTAssertNil(Engine.settle(p, signals: signals, signalBlock: block).action, reply)
         }
     }
+
+    // D179 item 4: the fallback step's title was the signal cut at 50 characters,
+    // "Advance: 1 item already waiting in the Jax HQ approval queu" on the card
+    // (`jaxCommand-page1.png`). The title carries the whole signal; the card's own
+    // one-line limit ends it with an ellipsis where it must.
+    @MainActor
+    func testTheFallbackStepTitleCarriesTheWholeSignal() {
+        let long = Engine.Signal(domain: "product/code",
+                                 line: "[in progress] Ship v3.2: the update check that tells a person a new version is out")
+        let kept = Engine.settle(plan(oct30), signals: [long], signalBlock: long.line)
+        XCTAssertEqual(kept.action?.title, "Advance: " + long.line)
+    }
 }

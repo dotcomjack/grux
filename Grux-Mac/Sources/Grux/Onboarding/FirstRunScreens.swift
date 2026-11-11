@@ -193,6 +193,9 @@ struct FirstPromptStep: View {
 /// here asks for anything; it is the answer, shown back, and changeable.
 struct YourGruxStep: View {
     @ObservedObject private var model = OnboardingModel.shared
+    /// Observed so a row's status redraws the moment a sign-in lands or an
+    /// agent run finds it expired.
+    @ObservedObject private var claudeSignIn = ClaudeSignInState.shared
     @State private var picked: [String] = []
     @State private var showMore = false
 
@@ -328,16 +331,41 @@ enum YourGrux {
         return raw.prefix(1).uppercased() + raw.dropFirst() + (raw.isEmpty ? "" : ".")
     }
 
-    static func isReady(_ id: String) -> Bool {
+    /// What is left before a feature works: every unmet blocking item the
+    /// model gate does not ask for, plus the Claude sign-in when the last agent
+    /// run found it expired and the feature needs the agent. Said "Ready" for
+    /// Agents with the sign-in expired (D115 item 4, `fr55/yourGrux-1.png`); the
+    /// sign-in rule is the setup card's own, so the two cannot disagree.
+    static func gaps(_ row: FeatureRow, satisfied: (SetupRequirement) -> Bool,
+                     signInExpired: Bool) -> (count: Int, signIn: Bool) {
+        let all = FeatureRegistry.unmetBlocking(of: row, satisfied: satisfied)
+        let signIn = CapabilitySetupCard.listsAgentSignIn(blocking: row.blocking, missing: all,
+                                                          signInExpired: signInExpired)
+        return (all.filter { !SetupOrder.handledByTheModelGate.contains($0) }.count + (signIn ? 1 : 0), signIn)
+    }
+
+    static func isReady(_ id: String, satisfied: (SetupRequirement) -> Bool, signInExpired: Bool) -> Bool {
         guard let row = FeatureRegistry.row(id: id) else { return true }
-        return FeatureRegistry.unmetBlocking(of: row)
-            .filter { !SetupOrder.handledByTheModelGate.contains($0) }.isEmpty
+        return gaps(row, satisfied: satisfied, signInExpired: signInExpired).count == 0
+    }
+
+    static func status(_ id: String, satisfied: (SetupRequirement) -> Bool, signInExpired: Bool) -> String {
+        guard let row = FeatureRegistry.row(id: id) else { return "Ready" }
+        let gap = gaps(row, satisfied: satisfied, signInExpired: signInExpired)
+        switch gap.count {
+        case 0: return "Ready"
+        case 1: return gap.signIn ? "Needs a Claude sign-in" : "Needs 1 thing"
+        default: return "Needs \(gap.count) things"
+        }
+    }
+
+    /// The same, answered against this Mac and the stored sign-in verdict.
+    static func isReady(_ id: String) -> Bool {
+        isReady(id, satisfied: { CapabilityResolver.isSatisfied($0) }, signInExpired: ClaudeSignInState.shared.expired)
     }
 
     static func status(_ id: String) -> String {
-        guard let row = FeatureRegistry.row(id: id) else { return "Ready" }
-        let n = FeatureRegistry.unmetBlocking(of: row).filter { !SetupOrder.handledByTheModelGate.contains($0) }.count
-        return n == 0 ? "Ready" : (n == 1 ? "Needs 1 thing" : "Needs \(n) things")
+        status(id, satisfied: { CapabilityResolver.isSatisfied($0) }, signInExpired: ClaudeSignInState.shared.expired)
     }
 }
 
@@ -348,6 +376,9 @@ enum YourGrux {
 /// not shift everything under the person's cursor; it shows done instead.
 struct SetupStep: View {
     @ObservedObject private var model = OnboardingModel.shared
+    /// Observed so a sign-in that lands while this screen is up moves what
+    /// waited on it into "Already working".
+    @ObservedObject private var claudeSignIn = ClaudeSignInState.shared
     @State private var plan: SetupOrder.Plan?
     @State private var index = 0
     @State private var oneAtATime = true
@@ -386,8 +417,8 @@ struct SetupStep: View {
                     .accessibilityLabel(Setup.wholeList)
             }
             if let screen = screens[safe: index] {
-                if screen.remaining > 0 {
-                    Text(Setup.left(screen.remaining))
+                if let left = Setup.leftLine(screens, at: index) {
+                    Text(left)
                         .font(GruxTheme.Font.caption.monospacedDigit())
                         .foregroundStyle(GruxTheme.accentPrimaryLight)
                 }
@@ -468,7 +499,12 @@ struct SetupStep: View {
     @ViewBuilder
     private func content(_ screen: SetupOrder.Screen) -> some View {
         switch screen {
-        case .ready(let ids):
+        case .ready(let readyIds):
+            let waitingOnSignIn = claudeSignIn.expired ? (plan?.needsSignIn ?? []) : []
+            let summary = Setup.readySummary(
+                plan ?? SetupOrder.Plan(ready: readyIds, required: [], optional: []),
+                signInExpired: claudeSignIn.expired)
+            let ids = summary.working
             if !ids.isEmpty {
                 Text(Setup.readyLead).font(GruxTheme.Font.body).foregroundStyle(GruxTheme.textSecondary)
                 ForEach(ids, id: \.self) { id in
@@ -487,6 +523,32 @@ struct SetupStep: View {
                 }
                 Text(Setup.needsModelNote).font(GruxTheme.Font.caption).foregroundStyle(GruxTheme.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+            if !waitingOnSignIn.isEmpty {
+                Text(Setup.needsSignInLead).font(GruxTheme.Font.body).foregroundStyle(GruxTheme.textSecondary)
+                    .padding(.top, ids.isEmpty && (plan?.needsModel ?? []).isEmpty ? 0 : 8)
+                ForEach(waitingOnSignIn, id: \.self) { id in
+                    Label(Setup.name(of: id), systemImage: "circle")
+                        .foregroundStyle(GruxTheme.textPrimary)
+                        .font(GruxTheme.Font.body)
+                }
+                Text(Setup.needsSignInNote(waitingOnSignIn.map(Setup.name(of:)))).font(GruxTheme.Font.caption).foregroundStyle(GruxTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button(CapabilitySetupCard.agentSignInButton) { ClaudeSignInState.shared.startSignIn() }
+            }
+            if !summary.next.isEmpty {
+                Text(Setup.nextLead).font(GruxTheme.Font.body).foregroundStyle(GruxTheme.textSecondary)
+                    .padding(.top, 8)
+                ForEach(summary.next, id: \.self) { id in
+                    Label(Setup.name(of: id), systemImage: "circle")
+                        .foregroundStyle(GruxTheme.textPrimary)
+                        .font(GruxTheme.Font.body)
+                }
+            }
+            if summary.asksListening {
+                Text(Setup.listeningNext).font(GruxTheme.Font.body).foregroundStyle(GruxTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 8)
             }
             nextRow(primary: "Continue")
         case .one(let item, _):
@@ -778,6 +840,15 @@ enum Setup {
     static let listenAfterWakeWord = "Only after \u{201C}Hey Grux\u{201D}"
     static let listenAllTheTime = "Listen all the time"
     static let needsModelLead = "Still needs a model:"
+    static let needsSignInLead = "Still needs a Claude sign-in:"
+    /// The line under the features waiting on the sign-in names what the list
+    /// holds: it said "Agents cannot run" over a list of Jax Command alone
+    /// (W32-P3 item 2).
+    static func needsSignInNote(_ names: [String]) -> String {
+        if names.count == 1 { return CapabilitySetupCard.agentSignInRemediation(featureLabel: names[0]) }
+        return "What these hand to Claude cannot run until you sign in. "
+            + "Sign in opens Claude's login in Terminal, and it finishes in your browser."
+    }
     static let needsModelNote = "Connect one any time from \u{201C}Connect a model\u{201D} in the panel, or Settings, then Models."
     static let decisionsKeyTitle = "A Decisions key"
     static let decisionsKeyWhy = "Grux decides on this Mac for free, matching what you say word for word, so this is "
@@ -786,6 +857,46 @@ enum Setup {
         + "It lives in Integrations if you add it later, and Tuning shows what it spends."
 
     static func left(_ n: Int) -> String { n == 1 ? "1 left" : "\(n) left" }
+
+    static let nextLead = "Set up next:"
+
+    /// What the first setup screen lists, so it names the same features
+    /// "Here's your Grux" just showed (D142 items 1 and 2): it listed nine
+    /// after "7 things", adding back Today, Approvals and Settings, and left
+    /// out a feature whose screen came next, so Mailbox read as dropped.
+    struct ReadySummary: Equatable {
+        /// Feature ids that already work.
+        let working: [String]
+        /// Feature ids that still need something asked on the screens after this one.
+        let next: [String]
+        /// Listening is a choice every Grux asks, not a feature "Here's your
+        /// Grux" showed, so it gets its own line rather than a row among the
+        /// picked features (D146 item 14).
+        var asksListening = false
+    }
+
+    /// Not "Then": the microphone is asked first when Meetings shares it (W45-FIX).
+    static let listeningNext = "One more choice: whether Grux listens for your voice, and when."
+
+    static func readySummary(_ plan: SetupOrder.Plan, signInExpired: Bool) -> ReadySummary {
+        let hidden = Set(IntentToFeatures.always + [SetupOrder.listeningId])
+        let working = (plan.ready + (signInExpired ? [] : plan.needsSignIn)).filter { !hidden.contains($0) }
+        var next: [String] = []
+        for id in plan.required.flatMap(\.neededBy) where !hidden.contains(id) && !next.contains(id) {
+            next.append(id)
+        }
+        let asksListening = plan.required.contains { $0.neededBy.contains(SetupOrder.listeningId) }
+        return ReadySummary(working: working, next: next, asksListening: asksListening)
+    }
+
+    /// "N left" for the screen at `index`. The first screen asks nothing, so it
+    /// counts the screens after it: "1 left" above Mailbox's coming screen.
+    static func leftLine(_ screens: [SetupOrder.Screen], at index: Int) -> String? {
+        guard let screen = screens[safe: index] else { return nil }
+        let n: Int
+        if case .ready = screen { n = screens[safe: index + 1]?.remaining ?? 0 } else { n = screen.remaining }
+        return n > 0 ? left(n) : nil
+    }
 
     /// Where Settings takes an item set up there: a key or a server lands on
     /// its own row, a step on the place it is done. Nothing for a permission
@@ -871,7 +982,8 @@ enum Setup {
         return SetupOrder.plan(features: rows,
                                listening: true,
                                listeningStarted: c.listeningModeInEffect != .off,
-                               satisfied: CapabilityResolver.isSatisfied)
+                               satisfied: CapabilityResolver.isSatisfied,
+                               signInExpired: ClaudeSignInState.shared.expired)
     }
 
     static func isListening(_ item: SetupOrder.Item) -> Bool {

@@ -322,7 +322,7 @@ final class SurfaceSyncEngine {
         pushActivityNow()
     }
 
-    // MARK: Change observation (reminders + notes are @Published)
+    // MARK: Change observation (reminders, notes and tasks are @Published)
 
     private func observe() {
         GruxReminderState.shared.$reminders
@@ -330,6 +330,11 @@ final class SurfaceSyncEngine {
             .sink { [weak self] _ in self?.scheduleDebouncedPush() }
             .store(in: &cancellables)
         NotesStore.shared.$notes
+            .dropFirst()
+            .sink { [weak self] _ in self?.scheduleDebouncedPush() }
+            .store(in: &cancellables)
+        // Ending a task ends its reminder on the phone (W48-P3 item 5).
+        AppState.shared.$tasks
             .dropFirst()
             .sink { [weak self] _ in self?.scheduleDebouncedPush() }
             .store(in: &cancellables)
@@ -380,7 +385,15 @@ final class SurfaceSyncEngine {
     }
 
     private static func reminderDTOs() -> [SurfaceReminderDTO] {
-        GruxReminderState.shared.reminders
+        reminderDTOs(from: GruxReminderState.shared.reminders,
+                     taskIsOpen: GruxReminderState.taskIsOpenInList,
+                     titleIsOpen: GruxReminderState.titleIsOpenInList)
+    }
+
+    static func reminderDTOs(from reminders: [GruxReminder],
+                             taskIsOpen: (UUID) -> Bool,
+                             titleIsOpen: (String) -> Bool) -> [SurfaceReminderDTO] {
+        reminders
             .prefix(SurfaceSnapshotLimits.reminders)
             .map { r in
                 SurfaceReminderDTO(
@@ -392,7 +405,12 @@ final class SurfaceSyncEngine {
                     scheduledFor: r.scheduledFor,
                     firedAt: r.firedAt,
                     accepted: r.accepted,
-                    dismissed: r.dismissed,
+                    // A reminder whose task was checked off or removed is set
+                    // aside when it comes due; the phone hides it now, not at
+                    // its time (W48-P3 item 5).
+                    dismissed: r.dismissed
+                        || GruxReminderState.taskEnded(r, taskIsOpen: taskIsOpen,
+                                                     titleIsOpen: titleIsOpen),
                     snoozedUntil: r.snoozedUntil
                 )
             }

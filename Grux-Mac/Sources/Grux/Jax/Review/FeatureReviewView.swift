@@ -49,9 +49,9 @@ struct FeatureReviewView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("FEATURE REVIEW").font(.system(size: 12, weight: .bold)).tracking(2).foregroundStyle(GruxTheme.accentPrimary)
-            Text("Grux explains his work, you decide what reaches main")
+            Text("Grux explains its work, you decide what reaches main")
                 .font(.system(size: 22, weight: .bold)).foregroundStyle(GruxTheme.textPrimary)
-            Text("\(staged.count) awaiting review, \(engine.features.count) total. Every pitch is written live from the real commit. Nothing reaches main without your tap.")
+            Text("\(staged.count) awaiting review, \(engine.features.count) total. Every pitch is written live from the real commit. Nothing reaches main without your OK.")
                 .font(.system(size: 13)).foregroundStyle(GruxTheme.textSecondary)
             HStack(spacing: 10) {
                 Button {

@@ -14,7 +14,7 @@ import Foundation
 //   - Top NOW / NEXT tasks (AppState)
 //   - Open commitments (GruxReminderState)
 //   - Agent jobs parked overnight (AgentService, waiting / paused)
-//   - Pending Foundry proposal count (ProposalStore)
+//   - Self-upgrade proposals waiting for review (ProposalStore.awaitingReview)
 // plus a Claude-generated forward narrative, with an offline fallback.
 
 struct MorningBriefData: Codable, Hashable {
@@ -108,7 +108,9 @@ final class MorningBriefScheduler {
             .prefix(4)
             .map(\.title)
 
-        let pendingProposalCount = ProposalStore.shared.ranked().count
+        // Only proposals waiting for the person's review: one accepted,
+        // building or verifying already has their yes (Now counts the same).
+        let pendingProposalCount = ProposalStore.awaitingReview(ProposalStore.shared.proposals)
 
         let narrative = await composeNarrative(
             agenda: agendaHighlights,
@@ -149,7 +151,7 @@ final class MorningBriefScheduler {
         }
 
         let sys = """
-        You are Grux helping the user START their day. Write ONE short forward-looking paragraph (40 to 70 words) that: names today's agenda highlights, points at the top one or two tasks to hit now and next, carries any open commitments forward, flags anything parked overnight (paused agent jobs) and the count of pending Foundry proposals waiting on them. Warm, direct, encouraging, like a friend kicking off the day. Forward, not retrospective. No emoji, no markdown, no bullet lists. Plain spoken prose, this will be read aloud.
+        You are Grux helping the user START their day. Write ONE short forward-looking paragraph (40 to 70 words) that: names today's agenda highlights, points at the top one or two tasks to hit now and next, carries any open commitments forward, flags anything parked overnight (paused agent jobs) and the count of self-upgrade proposals waiting for their review. Warm, direct, encouraging, like a friend kicking off the day. Forward, not retrospective. No emoji, no markdown, no bullet lists. Plain spoken prose, this will be read aloud.
         """
 
         let user = """
@@ -231,7 +233,7 @@ final class MorningBriefScheduler {
             parts.append("Carrying \(commitments.count) open commitment\(commitments.count == 1 ? "" : "s").")
         }
         if proposalCount > 0 {
-            parts.append("\(proposalCount) proposal\(proposalCount == 1 ? "" : "s") waiting on you.")
+            parts.append("\(proposalCount) self-upgrade proposal\(proposalCount == 1 ? "" : "s") waiting for your review.")
         }
         if !parked.isEmpty {
             parts.append("\(parked.count) job\(parked.count == 1 ? "" : "s") parked overnight to resume.")

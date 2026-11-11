@@ -115,7 +115,7 @@ The feature renders `needs-setup` with a setup card carrying these exact strings
 
 - Reddit API credentials: "Connect Reddit in Settings to read mentions of your product."
 - App Store Connect API key: "Add your App Store Connect key, issuer ID and .p8 file in Settings to let Grux publish builds."
-- Anthropic API key: "Add your Anthropic API key in Settings to use Claude. Get one at console.anthropic.com. Chat also runs on a local model with no key."
+- Anthropic API key: "Add your Anthropic API key in Settings to use Claude. Get one at console.anthropic.com. Many features run on a local model with no key."
 - Notifications: "Allow notifications so Grux can nudge you. Open System Settings, Notifications, Grux, and turn them on."
 
 With `grux.mentions.sources` empty there is nothing to watch, and the same registry-shaped

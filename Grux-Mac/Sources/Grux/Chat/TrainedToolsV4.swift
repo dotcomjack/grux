@@ -1,9 +1,9 @@
-// Written by TrainedTools.tableSource with Resources/GruxLocal/trained-tools-v3.json.
+// Written by TrainedTools.tableSource with Resources/GruxLocal/trained-tools-v4.json.
 // Do not edit by hand: TrainedToolsContractTests compares the two.
 
 extension TrainedTools {
-    /// Tool name to the schema hash Grux Local v3 was trained on.
-    static let v3: [String: String] = [
+    /// Tool name to the schema hash Grux Local v4 is trained on.
+    static let v4: [String: String] = [
         "list_tasks": "1b762e0678bb9a92abfe379ec5d7b0b63103d50ab331ddab20d3b5b2bca42c31",
         "add_task": "32255166cdc5c456d90016e78070285fab821451c482a7786266da7c9fcdb460",
         "complete_task": "cb35a3a721950e84ad32b7a542ab80c28871d6349d7f79d26c488bb5f9194c2c",
@@ -17,7 +17,7 @@ extension TrainedTools {
         "focus_on_task": "749234a307e46a95930f1d0ff5be994ba300e86851e25efa30cf3e5da9dcea79",
         "promote_action": "9c73bf2bb345ec20a942e2b50089187c0f589c8e551846f0333a0200a5431b51",
         "dismiss_action": "71db4c7fc5be7a8b6d78ab52fd20b59b8bdebdb9b5e9005da8267d37809d2eb4",
-        "remember_slang": "98f570ac55a562f9275f1462026c334decd749c4872b952f6f7268ead464c651",
+        "remember_slang": "4fec46ecfff82622b71b171d98a49128bc04eccc063db375cc98f0ff656a2efb",
         "list_proposed_actions": "bba5a44858593195b74d047b1f4edb98a4e944465c00013966d980076d598d5a",
         "get_current_activity": "425b23b342811f0ab465402434a9c8dfdaf935057373418bfc7d1e683fa3a247",
         "play_music_track": "43a9ca5b4708af692a69b50d044067fa9e2ceed8520870a79014df0364b4af8a",
@@ -36,8 +36,8 @@ extension TrainedTools {
         "list_speakers": "2daaff4a7ef089ed40e61eda2c565a607f471098c010b39b356533826d5f0ff3",
         "delete_speaker": "ddb4f30b40c3ee3f65aada792e2db0a07e552c4539e581b4b8225860f2c293fe",
         "speaker_stats": "f0769fc0d3197392a43e8cf3817280c7525415137255e877df2998c20d91d1cb",
-        "list_inbox": "c4d459cb9fb1dde8e1dd9c27459a7ed98c33a17a8dc082d27d6b92bb65d417c7",
-        "compose_email": "cff97f67425ef481d7c380f11a9ff77e2dcf541cb7975deb6105c08ffdf20703",
+        "list_inbox": "e18f5ee45c890f7af3e9bd4fc826f7d9ca5a76ab2e4d5d64726fe9877949b926",
+        "compose_email": "f251628ae3d8f1346ce974eed9c957d61bc65525e08957fca47873ea843b2690",
         "import_ics": "f75ff8b293cab5e79020a57ff0bb4a7e5fe64049f5207711b2bd79d43a19284c",
         "export_ics": "f8b9f2937e4eda84c975c8f835ef32981f07b9232a03f1bff1dd1f05f1fdbfea",
         "search_notes": "1e60341ccc98b1bca7a876fdbc94ee8e09b5e6ad63dedb0b362bc4a9334f5d2c",

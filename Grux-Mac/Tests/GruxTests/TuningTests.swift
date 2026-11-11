@@ -73,7 +73,13 @@ final class TuningTests: XCTestCase {
         XCTAssertTrue(engine.hasSavedKey, "the key is still saved, and Tuning must say so")
         XCTAssertTrue(engine.budgetReached())
         XCTAssertEqual(engine.remoteKey(), "", "the batched path reads through the same cap")
-        XCTAssertFalse(engine.budgetReached(now: Date().addingTimeInterval(86_400)), "tomorrow starts again")
+        // Tomorrow by the calendar: 24 hours after 12:05 AM on the day clocks fall back is
+        // still today (this test failed at 12:13 AM on 2026-11-01).
+        let cal = Calendar.current
+        let tomorrow = cal.date(byAdding: .hour, value: 1,
+                                to: cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: Date()))!)!
+        XCTAssertFalse(cal.isDate(tomorrow, inSameDayAs: Date()))
+        XCTAssertFalse(engine.budgetReached(now: tomorrow), "tomorrow starts again")
     }
 
     func test_noCapMeansNoCap() {

@@ -157,12 +157,72 @@ final class FoundryScheduleTests: XCTestCase {
 
     func testTheScheduleLineSaysWhatRunsByItself() {
         XCTAssertEqual(FoundrySchedule.line(enabled: false, schedule: FoundrySchedule(nightly: true)),
-                       "Self-upgrade is off. Turn it on in Settings, or ask Grux to upgrade itself.")
+                       "Self-upgrade is off, so Grux proposes nothing, spends nothing, and turns down \"upgrade yourself\" until you switch it on here or in Settings.")
         XCTAssertEqual(FoundrySchedule.line(enabled: true, schedule: FoundrySchedule()),
                        "Self-upgrade is on. It runs only when you ask.")
         XCTAssertEqual(FoundrySchedule.line(enabled: true, schedule: FoundrySchedule(nightly: true, whenIdle: true)),
                        "Self-upgrade is on. It also runs nightly between 2 and 6 AM and when your Mac is idle on power.")
         XCTAssertEqual(FoundrySchedule.line(enabled: true, schedule: FoundrySchedule(nightly: true, weeklyDeep: true, whenIdle: true)),
                        "Self-upgrade is on. It also runs nightly between 2 and 6 AM, Sundays at 11 PM and when your Mac is idle on power.")
+    }
+
+    // MARK: - D119: every place agrees on what asking does while off
+
+    // Sense pass 12 read Settings ("With it off Grux never proposes anything") against
+    // this pane ("Turn it on in Settings, or ask Grux to upgrade itself"), while the
+    // chat tool and the build door both refuse while off. The pane invited the one
+    // thing that is turned down.
+    func testWhileOffTheOffLineAndTheRefusalsAgree() {
+        let line = FoundrySchedule.line(enabled: false, schedule: FoundrySchedule())
+        XCTAssertFalse(line.contains("or ask Grux to upgrade itself"),
+                       "the off line must not invite an ask that is refused")
+        XCTAssertNotNil(FoundryEngine.manualCycleRefusal(foundryEnabled: false))
+        XCTAssertNil(FoundryEngine.manualCycleRefusal(foundryEnabled: true))
+        guard case .refuse = FoundryEngine.resolveBuildRequest(
+            token: "ABCDEFGH", proposals: [], foundryEnabled: false, inFlight: []) else {
+            return XCTFail("a build while off must be refused")
+        }
+    }
+
+    // Both refusals send the person to "Self-Upgrade (or Settings)", so the pane
+    // itself carries the on switch, not only the empty state's button (which is gone
+    // the moment one proposal exists).
+    func testTheSelfUpgradePaneCarriesItsOwnOnSwitch() throws {
+        let pane = try BackendSweepTests.source("Sources/Grux/Foundry/SelfUpgradeView.swift")
+        let bar = try XCTUnwrap(pane.range(of: "private var scheduleBar: some View {"))
+        let end = try XCTUnwrap(pane.range(of: "// MARK:", range: bar.upperBound..<pane.endIndex))
+        let body = String(pane[bar.upperBound..<end.lowerBound])
+        XCTAssertTrue(body.contains("Toggle(\"Self-upgrade\""), "the schedule bar needs an on switch")
+        XCTAssertTrue(body.contains("appState.config.foundryEnabled = on"),
+                      "the switch writes the same setting the refusals ask for")
+        XCTAssertTrue(FoundryEngine.manualCycleRefusal(foundryEnabled: false)?
+            .contains("Turn it on in Self-Upgrade (or Settings)") ?? false)
+    }
+
+    // Settings said "takes effect on next launch" while asking works the moment the
+    // switch is on (the chat tool and the pane activate the engine on demand).
+    func testSettingsSaysAskingWorksOnceOn() throws {
+        let settings = try BackendSweepTests.source("Sources/Grux/SettingsView.swift")
+        let start = try XCTUnwrap(settings.range(of: "Section(\"Self-upgrade loop\")"))
+        let end = try XCTUnwrap(settings.range(of: ".id(\"data.foundry\")", range: start.upperBound..<settings.endIndex))
+        let section = String(settings[start.upperBound..<end.lowerBound])
+        XCTAssertFalse(section.contains("takes effect on next launch"))
+        XCTAssertTrue(section.contains("With it off Grux never proposes anything and never spends on this."))
+        XCTAssertTrue(section.contains("Asking works as soon as it is on"))
+    }
+
+    // Wave 35: the empty state sat under the off line and still said "Ask Grux to
+    // look for upgrades" with the voice hint "Grux, upgrade yourself", the ask the
+    // line above it says is turned down.
+    func testTheEmptyStateInvitesTheAskOnlyWhenOn() {
+        let off = SelfUpgradeEmptyCopy.make(enabled: false)
+        XCTAssertNil(off.voiceHint)
+        XCTAssertFalse(off.line.contains("Ask Grux"), off.line)
+        XCTAssertEqual(off.line, "No proposals yet. Turn on self-upgrade and Grux looks for upgrades; what it finds lands here.")
+        XCTAssertEqual(off.cta, "Turn on self-upgrade")
+        let on = SelfUpgradeEmptyCopy.make(enabled: true)
+        XCTAssertEqual(on.voiceHint, "Grux, upgrade yourself")
+        XCTAssertEqual(on.line, "No proposals yet. Ask Grux to look for upgrades, and what it finds lands here.")
+        XCTAssertEqual(on.cta, "Look for upgrades now")
     }
 }

@@ -108,11 +108,36 @@ struct OperatorTool: Equatable {
     /// fifth one added below is checked against FeatureRegistry automatically and
     /// a fifth one NOT added here is caught from the other direction.
     static let all: [OperatorTool] = [social, metaAds, featureReview]
+
+    /// Whether "Open in Grux chat" is offered.
+    ///
+    /// Every prompt above asks for the source to be read, the tab rebuilt and the
+    /// suite run, which only an agent does (chat hands it to `agent_swarm_start`).
+    /// Chat alone, on a local model or on a key with Agents signed out, answers it
+    /// with a reply that cannot act (D116 item 7), so the button waits on Agents
+    /// too. `agentsStatus` is first run's own word for Agents (`YourGrux.status`),
+    /// which counts an expired Claude sign-in.
+    static func offersChatHandover(chatReady: Bool, agentsChosen: Bool, agentsStatus: String) -> Bool {
+        chatReady && agentsChosen && agentsStatus == "Ready"
+    }
+
+    /// The one line shown instead of the button, or nil. With chat not usable,
+    /// copying is the whole story: naming a second thing to set up would answer a
+    /// dead end with another.
+    static func chatHandoverNote(chatReady: Bool, agentsChosen: Bool, agentsStatus: String) -> String? {
+        guard chatReady, !offersChatHandover(chatReady: chatReady, agentsChosen: agentsChosen,
+                                             agentsStatus: agentsStatus) else { return nil }
+        let why = agentsChosen ? "Agents " + agentsStatus.prefix(1).lowercased() + agentsStatus.dropFirst()
+                               : "Agents is turned off"
+        return "Grux chat can make this change once Agents can run. \(why)."
+    }
 }
 
 struct OperatorToolNoticeView: View {
     let tool: OperatorTool
     @State private var copied = false
+    /// Observed so the chat handover appears the moment a Claude sign-in lands.
+    @ObservedObject private var claudeSignIn = ClaudeSignInState.shared
 
     var body: some View {
         ScrollView {
@@ -187,17 +212,29 @@ struct OperatorToolNoticeView: View {
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
                     .tint(GruxTheme.accentPrimary)
-                // Only offered when Chat is actually usable. Routing a stranger
-                // with no key to a gated Chat tab would answer a dead end with a
-                // second dead end.
-                if FeatureRegistry.state(forTab: "chat") == .ready {
+                // Only offered when chat can hand the job to an agent that can
+                // do it. Routing a stranger to a chat that cannot act would answer
+                // a dead end with a second dead end.
+                if OperatorTool.offersChatHandover(chatReady: chatReady, agentsChosen: agentsChosen,
+                                                   agentsStatus: agentsStatus) {
                     Button("Open in Grux chat") { sendToChat() }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                 }
             }
+            if let note = OperatorTool.chatHandoverNote(chatReady: chatReady, agentsChosen: agentsChosen,
+                                                        agentsStatus: agentsStatus) {
+                Text(note)
+                    .font(GruxType.caption)
+                    .foregroundStyle(GruxTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
+
+    private var chatReady: Bool { FeatureRegistry.state(forTab: "chat") == .ready }
+    private var agentsChosen: Bool { FeatureSelection.isOn("agents") }
+    private var agentsStatus: String { YourGrux.status("agents") }
 
     private func copy() {
         let pb = NSPasteboard.general

@@ -55,6 +55,23 @@ final class PIMTaskIntentTests: XCTestCase {
         }
     }
 
+    /// D180 item 1, live (`logs/d175/wake.txt` 11:09:35 PM): "Make a to-do list
+    /// for the weekend" added one task titled "List for the weekend". An ask to
+    /// make a list is not a task named after the list; it goes to the model,
+    /// which has the task tools.
+    func test_aListAskIsNotATaskNamedList() {
+        for u in ["Make a to-do list for the weekend", "make a todo list for my trip", "Create a task list for Saturday",
+                  "make a to do list", "add a to-do list for the move", "make a new to-do list: milk, eggs",
+                  "create a tasks list for the week", "make a to-dos list"] {
+            XCTAssertNotEqual(PIMIntents.match(u)?.kind, .addTask, u)
+        }
+        // A task named as one still is, a to-do included.
+        XCTAssertEqual(PIMIntents.match("make a to-do for the laundry")?.slots.title, "the laundry")
+        XCTAssertEqual(PIMIntents.match("add a todo: listen to the new album")?.slots.title, "listen to the new album")
+        XCTAssertEqual(PIMIntents.match("add a task to list the garage sale items")?.slots.title, "list the garage sale items")
+        XCTAssertEqual(PIMIntents.match("add a task called lists for school")?.slots.title, "lists for school")
+    }
+
     func test_otherKindsKeepTheirWords() {
         XCTAssertEqual(PIMIntents.match("add lunch with Sarah to my calendar Friday at 1pm")?.kind, .addToCalendar)
         XCTAssertEqual(PIMIntents.match("take a note to remind me to call the bank")?.kind, .takeNote)

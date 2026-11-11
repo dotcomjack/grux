@@ -57,10 +57,13 @@ final class ComparisonService: ObservableObject {
         }
         if ModelRegistry.shared.local != nil {
             let baseURL = AppState.shared.config.ollamaBaseURL
-            for tag in ModelRegistry.shared.localTags {
+            // One chip per model, by its name: Ollama lists a model once per name
+            // it was pulled or copied under (wave 37, after D130).
+            let shown = ModelRegistry.shared.shownLocalModels(configured: AppState.shared.config.offlineLLMModel)
+            for tag in shown {
                 out.append(ComparisonContender(
                     key: "local/\(tag)",
-                    name: "Local (\(tag))",
+                    name: "Local (\(Cookbook.personName(for: tag)))",
                     modelId: tag,
                     apiKey: "ollama",
                     backend: OpenAICompatBackend(baseURL: baseURL)

@@ -8,7 +8,9 @@ import AppKit
 /// each window's focused control. `snapshot` renders each window's own view
 /// hierarchy to PNG with `cacheDisplay(in:to:)` into
 /// `~/.grux/headless-workspace/shots/<time>-<key>-<window>.png`, on `fire-headless-snapshot` and
-/// shortly after every tab change or pane open. The folder keeps the newest 200.
+/// shortly after every tab change or pane open, plus `...-page<n>.png` with the whole
+/// content of each scroll view that runs past its window (`pages` in the result).
+/// The folder keeps the newest 200.
 @MainActor
 enum HeadlessWorkspace {
     /// Not `headless`: on a case-insensitive disk that is the sentinel `HEADLESS` itself.
@@ -81,6 +83,7 @@ enum HeadlessWorkspace {
         try? fm.createDirectory(at: shotsDir, withIntermediateDirectories: true)
         let stamp = stampFormatter.string(from: Date())
         var written: [String] = []
+        var pages: [String] = []
         for w in windows where w.isVisible {
             guard let view = w.contentView, view.bounds.width > 1, view.bounds.height > 1,
                   let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { continue }
@@ -89,14 +92,39 @@ enum HeadlessWorkspace {
             let name = slug(w.title.isEmpty ? String(describing: type(of: w)) : w.title)
             let url = shotsDir.appendingPathComponent("\(stamp)-\(slug(reason))-\(name)-\(w.windowNumber).png")
             if (try? png.write(to: url, options: .atomic)) != nil { written.append(url.path) }
+            // The whole page of each scroll view that runs past the window, so
+            // what sits below the fold is readable too. Listed apart from
+            // `files`, which stays one PNG per window for the sweeps that count.
+            for (i, scroll) in overflowingScrollViews(in: view).enumerated() {
+                guard let doc = scroll.documentView, doc.bounds.width > 1,
+                      let pageRep = doc.bitmapImageRepForCachingDisplay(in: doc.bounds) else { continue }
+                doc.cacheDisplay(in: doc.bounds, to: pageRep)
+                guard let page = pageRep.representation(using: .png, properties: [:]) else { continue }
+                let pageURL = shotsDir.appendingPathComponent(
+                    "\(stamp)-\(slug(reason))-\(name)-\(w.windowNumber)-page\(i + 1).png")
+                if (try? page.write(to: pageURL, options: .atomic)) != nil { pages.append(pageURL.path) }
+            }
         }
         prune()
         refresh()
-        let result: [String: Any] = ["reason": reason, "renderedTab": state()["renderedTab"] ?? "", "files": written]
+        let result: [String: Any] = ["reason": reason, "renderedTab": state()["renderedTab"] ?? "",
+                                     "files": written, "pages": pages]
         if let data = try? JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys]) {
             try? data.write(to: resultURL, options: .atomic)
         }
         return written
+    }
+
+    /// Every scroll view under `view` whose content runs past what it shows, so a
+    /// snapshot can draw the whole page and not only the part above the fold.
+    static func overflowingScrollViews(in view: NSView) -> [NSScrollView] {
+        var found: [NSScrollView] = []
+        if let scroll = view as? NSScrollView, let doc = scroll.documentView,
+           doc.frame.height > scroll.contentView.bounds.height + 0.5 {
+            found.append(scroll)
+        }
+        for sub in view.subviews { found += overflowingScrollViews(in: sub) }
+        return found
     }
 
     /// Keeps the newest `shotCap` files; names start with the time, so name order is age order.

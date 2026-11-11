@@ -31,7 +31,13 @@ struct CognitionMapView: View {
     // Which event row is expanded to full detail. nil = all collapsed.
     @State private var expandedID: CognitionEvent.ID?
 
-    private static let logCap = 60
+    static let logCap = 60
+
+    // The Decision trace header counts the cards it lists, and says when older
+    // ones are kept but not listed.
+    static func traceListing(total: Int) -> (listed: Int, note: String?) {
+        total > logCap ? (logCap, "The newest \(logCap) of \(total).") : (total, nil)
+    }
 
     // The decision log narrowed by the app-wide brand filter (decision 4). A
     // decision with no brand (a general chat turn) shows only under "All", so a
@@ -261,14 +267,21 @@ struct CognitionMapView: View {
     // MARK: Log (newest first, tappable rows)
 
     private var log: some View {
-        let shown = Array(filteredEvents.prefix(Self.logCap))
+        let listing = Self.traceListing(total: filteredEvents.count)
+        let shown = Array(filteredEvents.prefix(listing.listed))
         return JaxSection(
             title: "Decision trace",
             icon: "list.bullet.rectangle.portrait.fill",
             tint: GruxTheme.textSecondary,
-            count: filteredEvents.count
+            count: listing.listed
         ) {
             VStack(spacing: 8) {
+                if let note = listing.note {
+                    Text(note)
+                        .font(GruxTheme.Font.caption)
+                        .foregroundStyle(GruxTheme.textSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
                 ForEach(shown) { event in
                     CognitionEventRow(
                         event: event,

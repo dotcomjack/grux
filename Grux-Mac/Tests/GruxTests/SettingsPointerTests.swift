@@ -88,6 +88,18 @@ final class SettingsPointerTests: XCTestCase {
         XCTAssertFalse(flat.contains("Local Models tab"), "The README names a Local Models tab")
     }
 
+    /// D192 item 6, sense pass 26: the README's no-key route (Offline mode) never
+    /// said it turns web search off, beside "Research over the web, with a search
+    /// key you supply", so a person who followed it added a Brave key and still got
+    /// no search. The sentence is held to the gate Research and Settings read.
+    @MainActor func testTheReadmeSaysOfflineModeTurnsWebSearchOff() throws {
+        let readme = try String(contentsOf: root.deletingLastPathComponent().appendingPathComponent("README.md"), encoding: .utf8)
+        let flat = readme.replacingOccurrences(of: "\n", with: " ")
+        XCTAssertEqual(WebResearch.blocker(offline: true, enabled: true, hasSearchKey: true), .offline)
+        XCTAssertTrue(flat.contains("Offline mode also turns web search off"),
+                      "The README's offline route must say web search is off in it")
+    }
+
     func testTheScannerCatchesAPlantedPointer() {
         let planted = """
         let a = "Enable it in Settings, Upgrades."

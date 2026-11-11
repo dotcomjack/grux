@@ -117,7 +117,7 @@ enum SignalProposalFiler {
             expectedGain: gain(top: top.severity, count: signals.count),
             riskClass: .medium,
             estCostLabel: "$3 estimated",
-            tierRequired: .propose,
+            tierRequired: ProposalSynthesizer.filedTier,
             createdAt: now,
             updatedAt: now,
             readyPrompt: prompt(area: top.suggestedDomain, signals: Array(cited)),

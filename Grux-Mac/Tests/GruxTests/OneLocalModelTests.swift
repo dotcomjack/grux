@@ -88,8 +88,20 @@ final class OneLocalModelTests: XCTestCase {
     }
 
     /// The first-run probe names the model chat is set to when the server
-    /// holds it, not whichever tag the server lists first.
+    /// holds it, not whichever tag the server lists first, however the server
+    /// spells it. Since 3.3 the probe and the button both ask
+    /// `ModelGate.modelToUse` (FirstRunNamesTheModelItUsesTests), so the rule
+    /// is pinned there.
     func test_theFirstRunProbeNamesChatsModel() throws {
+        let installed = ["llama3.2:3b", "gruxai.com/grux/grux-local:4b"]
+        XCTAssertEqual(ModelGate.modelToUse(configured: "grux-local:4b", installed: installed, headline: nil),
+                       "gruxai.com/grux/grux-local:4b", "the probe names the first listed tag again")
+        XCTAssertEqual(ModelGate.modelToUse(configured: "gruxai.com/grux/grux-local:4b", installed: installed,
+                                            headline: "llama3.2:3b"),
+                       "gruxai.com/grux/grux-local:4b", "chat's own model, not the headline")
+        XCTAssertEqual(ModelGate.modelToUse(configured: "grux-local:4b",
+                                            installed: ["gruxai.com/grux/grux-local:4b", "grux-local:4b"], headline: nil),
+                       "grux-local:4b", "a spelling chat already uses is rewritten to another")
         let sources = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources/Grux")
         let view = try String(contentsOf: sources.appendingPathComponent("Onboarding/OnboardingView.swift"),
@@ -98,9 +110,8 @@ final class OneLocalModelTests: XCTestCase {
         let rest = view[probe.upperBound...]
         let end = rest.range(of: "\n    private ")?.lowerBound ?? rest.endIndex
         let body = String(rest[..<end])
-        XCTAssertTrue(body.contains("usable.first(where: { FileNamingRoute.sameTag($0, chat) }) ?? usable.first"),
-                      "the probe names the first listed tag again")
-        XCTAssertTrue(body.contains("probe = .found(shown)"))
+        XCTAssertTrue(body.contains("ModelGate.modelToUse("), "the probe names a model by a rule of its own")
+        XCTAssertTrue(body.contains("probe = .found(usable)"))
     }
 
     /// File naming uses chat's Grux Local rather than loading the size made

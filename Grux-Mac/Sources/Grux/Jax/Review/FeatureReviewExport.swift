@@ -80,9 +80,9 @@ enum FeatureReviewExport {
         footer{color:var(--ink-faint);font-size:12px;text-align:center;padding:36px 0 10px}
         </style></head><body><div class="wrap">
         <header>
-          <div class="eyebrow">Grux explains his work &middot; staging to main</div>
+          <div class="eyebrow">Grux explains its work &middot; staging to main</div>
           <h1>Feature Review</h1>
-          <p class="lede">Every feature Grux built, in his own words: what it is, why he built it that way, what it helps, and why to implement it. Staged features wait for your call; nothing reaches <b>main</b> without your tap. Generated live, not a static doc.</p>
+          <p class="lede">Every feature Grux built, in its own words: what it is, why it was built that way, what it helps, and why to implement it. Staged features wait for your call; nothing reaches <b>main</b> without your OK. Generated live, not a static doc.</p>
           <div class="count"><b>\(staged)</b> awaiting your review &middot; <b>\(features.count)</b> total</div>
           <div class="stamp">Generated \(stamp). Pitches written by Grux from the real commits.</div>
         </header>

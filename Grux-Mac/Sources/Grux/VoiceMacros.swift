@@ -867,7 +867,7 @@ enum TerminalGridTiler {
         end tell
         """)
         guard (launched ?? "") == "ok" else {
-            return "error: Terminal didn't respond to scripting - grant Automation permission in System Settings → Privacy & Security → Automation → Grux → Terminal."
+            return "error: Terminal didn't respond to scripting - grant Automation permission in System Settings → Privacy & Security → Automation → Grux AI → Terminal."
         }
 
         let quads = axQuadrants(rows: rows, cols: cols)

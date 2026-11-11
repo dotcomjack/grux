@@ -2253,7 +2253,7 @@ struct CreativeStudioView: View {
                 .help("Save the current direction as a reusable recipe")
             }
             if brandRecipes.isEmpty {
-                Text("No saved looks yet. Dial in a direction and tap Save look.")
+                Text("No saved looks yet. Dial in a direction and click Save look.")
                     .font(.system(size: 12)).foregroundStyle(GruxTheme.textTertiary)
             } else {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -2296,7 +2296,7 @@ struct CreativeStudioView: View {
                                       + "you already generated are not touched.",
                                   confirmLabel: "Delete recipe") { recipeStore.delete(recipe.id) }
         }
-        .help("Tap to load this look. Right click for favorite, duplicate, delete.")
+        .help("Click to load this look. Right click for favorite, duplicate, delete.")
     }
 
     private func currentControls() -> SceneControls {
@@ -3017,7 +3017,7 @@ private struct CreativeStudioCard: View {
                     Circle()
                         .fill(bundle.brand.accentColor)
                         .frame(width: 5, height: 5)
-                    Text("NEEDS IMAGE · TAP TO RENDER")
+                    Text("NEEDS IMAGE · CLICK TO RENDER")
                         .font(.system(size: 9, weight: .heavy, design: .monospaced))
                         .kerning(1.0)
                 }
@@ -3253,7 +3253,7 @@ private struct CreativeStudioDetailSheet: View {
                          // reader could act on. Which port an internal service
                          // listens on is not a fact a user has, or wants.
                          ? "Calling the image service. If this stalls, that service is offline."
-                         : "The image service did not return an image. Tap Render image to retry.")
+                         : "The image service did not return an image. Click Render image to retry.")
                         .font(.system(size: 11)).multilineTextAlignment(.center)
                         .foregroundStyle(.white.opacity(0.65)).frame(maxWidth: 360)
                 }

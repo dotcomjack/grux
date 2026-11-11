@@ -117,9 +117,21 @@ enum CapabilityRequest {
         }
         let granted = status == .authorized || status == .provisional
         notificationsDeniedLastSeen = status == .denied
+        notificationStatusLastSeen = status
         CapabilityResolver.setNotificationAuthorizationCache(granted)
         return granted
     }
+
+    /// Settings, General's reminders toggle: nil until macOS has been asked, so a
+    /// Mac where Grux never asked does not read as one that refused (W32-P3 item 1).
+    static func refreshedNotificationAllowance() async -> Bool? {
+        let granted = await refreshedNotificationAuthorization()
+        guard let status = notificationStatusLastSeen else { return granted ? true : nil }
+        return ReminderToggleTruth.allowed(status)
+    }
+
+    /// The last awaited status, nil outside an app bundle (where it cannot be read).
+    private static var notificationStatusLastSeen: UNAuthorizationStatus?
 
     /// Whether the last awaited read found Notifications explicitly turned off. In memory
     /// only: it feeds `recordedDenial`, which the setup card reads on every render, and it
@@ -271,17 +283,22 @@ enum CapabilityRequest {
     /// One sentence telling somebody what to do, naming the path and the control.
     ///
     /// Two shapes, because the two cases genuinely differ. Notifications has a per-app row
-    /// with a switch; the Privacy panes have a list you tick Grux AI in. Saying "turn it on"
-    /// for a list you have to find yourself is the kind of almost-right instruction that
-    /// wastes more time than none.
+    /// with an Allow Notifications switch inside it; the Privacy panes have a list of apps,
+    /// each with its own switch, so the line names the row to find, Grux AI. Saying "turn it
+    /// on" for a list you have to find yourself is the kind of almost-right instruction
+    /// that wastes more time than none.
     static func howToGrant(_ requirement: SetupRequirement) -> String {
         let path = settingsPath(for: requirement)
         switch requirement {
         case .permNotifications:
             return "To turn this on, go to \(path) and switch on Allow Notifications. "
                  + "Grux checks again when you come back."
+        case .permAutomation:
+            // Automation lists Grux AI as a heading; the switches are the apps under it (W57-FIX P3 3).
+            return "To turn this on, go to \(path), find Grux AI and turn on the apps under it. "
+                 + "Grux checks again when you come back."
         default:
-            return "To turn this on, go to \(path) and tick Grux AI in the list. "
+            return "To turn this on, go to \(path) and turn on Grux AI in the list. "
                  + "Grux checks again when you come back."
         }
     }

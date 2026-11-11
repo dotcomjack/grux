@@ -182,8 +182,8 @@ equivalent `CommandV2Definition` to `CommandV2Definitions.swift` and list it in
 The feature renders `needs-setup` with a setup card showing these exact strings.
 
 - Social accounts: "Connect the social accounts you want Grux to watch in Settings."
-- Anthropic API key: "Add your Anthropic API key in Settings to use Claude. Get one at console.anthropic.com. Chat also runs on a local model with no key."
-- Automation: "Grux needs Automation to control other apps. Approve the prompt macOS shows, or enable Grux under Privacy and Security, Automation."
+- Anthropic API key: "Add your Anthropic API key in Settings to use Claude. Get one at console.anthropic.com. Many features run on a local model with no key."
+- Automation: "Grux needs Automation to control other apps. Approve the macOS prompt, or in Privacy & Security, Automation, turn on apps under Grux AI."
 - Notifications: "Allow notifications so Grux can nudge you. Open System Settings, Notifications, Grux, and turn them on."
 
 ## Example, not a default

@@ -462,7 +462,7 @@ final class VoiceCommandRouter: ObservableObject {
             event.ask(Self.appIntentGate, context: "Apps running on this Mac: \(apps.joined(separator: ", ")).",
                       ["app": .choice(instructions: Self.appIntentInstructions, criteria: appCriteria)])
         }
-        if let plan, plan.kind.isJudged {
+        if let plan, plan.isJudged {
             event.ask(ChatIntentClassifier.pimGate,
                       context: ChatIntentClassifier.pimState(plan: plan, utterance: body),
                       ChatIntentClassifier.pimQuestions)

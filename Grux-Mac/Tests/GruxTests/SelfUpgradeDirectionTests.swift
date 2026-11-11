@@ -222,10 +222,10 @@ final class SelfUpgradeDirectionTests: XCTestCase {
     func testCostLineIsPlainAndAlwaysANumeral() {
         // D50 (sense pass 3): "About $3 of your subscription" read as a price on a flat plan.
         // The figure is usage counted against the plan, and the line says so.
-        XCTAssertEqual(FoundryFormat.costLine(usd: 8), "About $8 worth of usage, counted against your subscription")
-        XCTAssertEqual(FoundryFormat.costLine(usd: 12.6), "About $13 worth of usage, counted against your subscription")
-        XCTAssertEqual(FoundryFormat.costLine(usd: 0.45), "Under $1 worth of usage, counted against your subscription")
-        XCTAssertEqual(FoundryFormat.costLine(usd: 1.0), "About $1 worth of usage, counted against your subscription")
+        XCTAssertEqual(FoundryFormat.costLine(usd: 8), "About $8 worth of usage, counted against your Claude subscription")
+        XCTAssertEqual(FoundryFormat.costLine(usd: 12.6), "About $13 worth of usage, counted against your Claude subscription")
+        XCTAssertEqual(FoundryFormat.costLine(usd: 0.45), "Under $1 worth of usage, counted against your Claude subscription")
+        XCTAssertEqual(FoundryFormat.costLine(usd: 1.0), "About $1 worth of usage, counted against your Claude subscription")
         XCTAssertEqual(FoundryFormat.costLine(usd: 0), "No measurable usage")
         XCTAssertEqual(FoundryFormat.costLine(usd: -3), "No measurable usage")
         for usd in [0.2, 1.0, 4.0, 25.0] {

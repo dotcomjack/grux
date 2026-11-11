@@ -358,7 +358,7 @@ final class OnboardingLocalPathTests: XCTestCase {
         // allowed it. The test reads the DOCUMENT for that amendment, so the
         // list cannot be extended by editing this array alone: a new group
         // still needs a dated CR in the contract before this goes green.
-        let grouped = ["chat": "CR-33", "design.studio": "CR-38"]
+        let grouped = ["chat": "CR-33", "design.studio": "CR-38", "research": "CR-40"]
         let registry = try String(
             contentsOf: URL(fileURLWithPath: #filePath)
                 .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()

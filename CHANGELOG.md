@@ -7,14 +7,147 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [3.3.0] - 2026-11-11
+
+Everyday asks get straight, true answers, even on a small local model. Ask Grux the
+weather for a place and an hour, to remind you at 9 AM, to add or remove a task, to write
+a message or a list, what day next Friday is, or what it can do, and it does what you
+asked or says plainly why not. Ask whether what you type leaves your Mac and it answers
+for your setup. And first run, Settings, Today and the morning briefing now say only
+what is true on your Mac, in plain words.
+
+### Added
+
+- **Ask Grux about Grux, and get a true answer at once.** "What can you do?", "Who are
+  you?", "Do you work without internet?", "Which model do you run on?" and "Can I use a
+  smarter model?" are answered right away, for your setup, with steps that work there and
+  only buttons that are really on screen. "What can you do?" names the features you
+  skipped at setup and a command that really turns one on.
+- **Privacy questions get Grux's own answer.** Asking whether what you type leaves your
+  Mac, or whether your calendar, contacts, mail or messages are private, gets what Grux
+  reads and where it goes on your setup, never a guess from the model.
+- **Weather for the place and the hours you mean.** "In 2 hours", "this evening",
+  "tonight", "tomorrow morning", "the weekend", "this week", "the beach" and "Toronto ON"
+  get the forecast for exactly that. When the city is unclear Grux asks once, and a place
+  it cannot find says which city it used. A forecast a local model makes up is replaced
+  by the real one, and "I can't check the weather" becomes how to get it.
+- **Reminders at the time you said.** "Remind me to call Sam at 9 AM" reminds you at
+  9 AM; "remind me on Friday at 3 PM", said on a Friday, reminds you that afternoon; and
+  when the day is unclear Grux keeps the task without guessing one. A reminder follows
+  the task you meant and goes away with it.
+- **Tasks do what you said.** "Add a task: Email" adds Email, "remove the task X" acts on
+  X, and "make a to-do list" asks what goes on it instead of adding a task called "List".
+  A to-do list for a trip, a birthday or the weekend is started the same way.
+- **Writing you ask for is the writing.** Asking Grux to write a message to someone, or a
+  packing, shopping or idea list, gets that text, and a list of your own things still goes
+  to the tools that read it. A draft never greets the wrong name and never stops at "Hi Sam,". The
+  short line under it says truthfully that Grux saved, sent and added nothing, and says
+  so when the draft names another day than you did.
+- **Dates, times and sums are exact.** "How many days until Christmas?", "What date is
+  next Friday?", "What's the date now?", tips, sums and the time anywhere are worked out,
+  not guessed.
+- **Calendar questions find what is on your calendar.** Asking when your appointment,
+  flight or call is finds it by name, calendar answers name the right day, a refusal says
+  what is actually true, and a reply about anything else is never swapped for a calendar
+  list.
+- **Remembering is yours.** Asking Grux to remember something saves it once and says it
+  back as yours.
+- **Saying hi gets an instant hello,** and "never mind" is answered at once and cancels a
+  card that is still counting down.
+
+### Changed
+
+- **First run starts with what stays on your Mac.** The How Grux works screen opens on
+  what stays here and says plainly what a model can read, says self-upgrade is off until
+  you turn it on, names the model chat will use, and says whether the model that fits
+  your Mac best is already on it.
+- **First run offers one way past each screen.** Connect a model shows the model it
+  found and one way to use it, stops offering Ollama when a model is already running, no
+  longer flashes buttons it then takes away, and still offers the Grux Local made for
+  your Mac when it is not there yet. Setup lists only what you picked and what comes
+  next.
+- **Settings names things in plain words.** The Claude and local models, Claude Code,
+  backups, the last decision and its tool, what a Decisions key bills, and which voice
+  really speaks are named as a person would name them. Settings asks for each key once.
+- **Grux says click, approve and OK like a Mac app,** and every permission step says
+  Privacy & Security and to turn on Grux AI, exactly as the Mac shows them.
+- **Mail is called Mail everywhere.**
+- **Chat bubbles carry your assistant's name,** and Jax Command, approval cards and the
+  quiet briefing name your own assistant.
+
+### Fixed: chat on a local model
+
+- **With chat on Grux Local, nothing you said or dictated goes to the cloud while the
+  model is down.** The offline line says chat moves to Claude only when it really does.
+- **A question about something you just mentioned or showed still goes to the model,**
+  and "Where do I start?" mid-conversation is answered about the conversation.
+- **A reply never says "Okay." over a request that was refused or is still waiting.**
+- **Grux stops repeating what it made up,** and a rewrite a local model returns unchanged
+  says so.
+- **Removing the model Grux chats on moves chat to one you have** instead of breaking
+  every message.
+- **Nothing sent during a long chat's tidy-up disappears.**
+- **A new chat is named after what you asked,** in your own words.
+- **Agent reports reach chat in a tenth of a second, as one message.**
+- **No Grux step waits forever on a tool that has finished.**
+
+### Fixed: Today, the briefing and Approvals
+
+- **The briefing counts only what waits for your OK.** It names what is waiting in
+  Approvals and what waits in Self-Upgrade, names your day and your list, never claims an
+  action Grux did not take or that you have the day off, and an old briefing says when it
+  was written. On a local model it says only what is true.
+- **Today and the Focus log never say Watching while nothing is watched,** and Focus
+  log's card lets you review the first capture.
+- **A Jax plan waiting in Approvals says what a yes runs,** and saying yes starts it.
+- **A Grux nobody is watching never makes a sound,** and the mute button stops the voice
+  at once, even mid-reply.
+- **Setup cards count once,** and a setup card's button restarts setup right there.
+
+### Fixed: Settings and the rest
+
+- **Settings says what Grux really does.** Where the URL guard stands, when Grux is
+  silent, what it does with your screen this minute, where your memories go, which
+  programs Strict runs, that web search also needs a Brave key, which microphone
+  listening keeps off, that the wake word can send audio to Apple, and why a switch that
+  cannot work on this Mac is off.
+- **An expired Claude sign-in is never called Ready,** and `grux next` and `grux doctor`
+  lead with it exactly when the app does, pointing at the Sign in that clears it.
+- **Setup cards, `grux next` and `grux doctor` name only what each feature needs,** with
+  the reason, and never say a feature cannot run when another option would do. With a
+  local model, Research asks only for the web search key.
+- **A key you just saved is the key Grux uses, and a removed key is really gone.** A
+  revoked TypeSafe key is removed.
+- **Mail can be set up from a fresh Mac again.** Adding a mail address that is already
+  listed fixes that account instead of making a second one, and adding a switched off
+  account switches it on. A locked Keychain is no longer read as a missing mail password;
+  Grux says the Keychain is locked.
+- **Jax HQ approvals work before mail is set up,** and Jax Command says when Gmail is not
+  set up and how to fix a refused password.
+- **A meeting just recorded can be deleted and stays deleted,** the meeting audio switch
+  says what it keeps and opens the folder to remove it, and Speakers names what Meetings
+  still needs, with a button there.
+- **Offline mode really stops deep research,** and the README says what offline mode
+  turns off and which features still need Claude.
+- **No pane shows a false zero or a developer's note,** and five panes say their name
+  once.
+- **Notion says connected only with both its key and its database.**
+- **Jax Command's Memory card lets you index your own writing,** and says what it has
+  stored and where it came from.
+- **A strange plan can no longer crash Grux.**
+- **Corrected the 3.2 entry:** Self-Upgrade proposes and specifies upgrades, builds one
+  in your own source checkout only when you press Build it, installs only on your yes
+  (unless Self-Upgrade's ceiling in Tuning is raised above ask-first; a new install starts at ask-first), and never publishes a release.
+
 ## [3.2.0] - 2026-11-01
 
 Private by default, and fast on the model made for your Mac. A Mac with Ollama gets
 Grux Local, the model trained for Grux, in one click at first run and sized to its
 memory; on a 16 GB Mac, Grux Local 2B answers in about 2 seconds (35 of 35 replies within 3.4 s, median 2.3 s) and its first reply after a ten-minute pause comes in 0.62 s, down from 6 s. Grux says when a new version is out,
-and asks nothing about you to find out. Self-Upgrade runs end to end: it reads its own
-source, proposes its next version, builds it, verifies it, and waits for your approval,
-and the ways we found for that chain to claim more than it did are closed. And a
+and asks nothing about you to find out. Self-Upgrade reads its own source and proposes
+and specifies upgrades; it builds one in your own source checkout only when you press
+Build it and installs only on your yes (unless Self-Upgrade's ceiling in Tuning is raised above ask-first; a new install starts at ask-first), and the ways we found for that chain to claim
+more than it did are closed. And a
 second stranger's five minutes: what still confused a person on a fresh Mac, in Now,
 Settings, Approvals and the setup cards, is fixed.
 
@@ -1368,7 +1501,8 @@ listed because each was a promise the app made and did not keep.
   deliberately unwired. It is declared as unused rather than removed, because it
   is a half-built feature and not a false claim.
 
-[Unreleased]: https://github.com/dotcomjack/grux/compare/v3.2.0...HEAD
+[Unreleased]: https://github.com/dotcomjack/grux/compare/v3.3.0...HEAD
+[3.3.0]: https://github.com/dotcomjack/grux/compare/v3.2.0...v3.3.0
 [3.2.0]: https://github.com/dotcomjack/grux/compare/v3.1.0...v3.2.0
 [3.1.0]: https://github.com/dotcomjack/grux/compare/v3.0.0...v3.1.0
 [3.0.0]: https://github.com/dotcomjack/grux/compare/v1.2.1...v3.0.0

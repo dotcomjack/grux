@@ -23,16 +23,39 @@ final class MessageSideTests: XCTestCase {
     }
 
     func test_everySideHasItsOwnLabel() {
-        let labels = [ChatRole.user, .assistant, .system].map { MessageBubble.label(for: $0) }
+        let labels = [ChatRole.user, .assistant, .system].map { MessageBubble.label(for: $0, assistantName: "Jax") }
         XCTAssertEqual(Set(labels).count, 3, "two roles share a label: \(labels)")
-        XCTAssertEqual(MessageBubble.label(for: .user), "YOU")
-        XCTAssertEqual(MessageBubble.label(for: .assistant), "GRUX")
+        XCTAssertEqual(MessageBubble.label(for: .user, assistantName: "Jax"), "YOU")
+        XCTAssertEqual(MessageBubble.label(for: .assistant, assistantName: "Jax"), "JAX")
+    }
+
+    /// D189 leftover: the bubble said GRUX over a reply that said "I'm Jax"
+    /// (sense pass 25, `chat-page1.png`). The bubble names whoever the model is
+    /// told it is (`AboutYou`: "Your name is Jax. The app is Grux AI."), so the
+    /// two can never disagree.
+    func test_theBubbleNamesTheAssistantTheReplyNames() {
+        XCTAssertEqual(MessageBubble.label(for: .assistant, assistantName: "Jax"), "JAX")
+        XCTAssertEqual(MessageBubble.label(for: .assistant, assistantName: "  Ada "), "ADA")
+        XCTAssertEqual(MessageBubble.label(for: .user, assistantName: "Ada"), "YOU")
+        XCTAssertEqual(MessageBubble.label(for: .system, assistantName: "Ada"), "NOTICE")
+    }
+
+    /// A name that is blank, or that reads as another side's label, never lets
+    /// the assistant's bubble pass for the person or a notice.
+    func test_aNameThatWouldPassForAnotherSideReadsGrux() {
+        for name in ["", "   ", "you", "You", "notice", " NOTICE "] {
+            XCTAssertEqual(MessageBubble.label(for: .assistant, assistantName: name), "GRUX", "name \"\(name)\"")
+        }
+        XCTAssertEqual(MessageBubble.label(for: .assistant, assistantName: "Yours"), "YOURS")
     }
 
     func test_aSystemMessageIsNotLabelledAsGrux() {
-        XCTAssertNotEqual(MessageBubble.label(for: .system), MessageBubble.label(for: .assistant),
-                          "a system notice is labelled as Grux speaking")
-        XCTAssertNotEqual(MessageBubble.label(for: .system), MessageBubble.label(for: .user))
+        for name in ["Jax", "", "Notice"] {
+            XCTAssertNotEqual(MessageBubble.label(for: .system, assistantName: name),
+                              MessageBubble.label(for: .assistant, assistantName: name),
+                              "a system notice is labelled as the assistant speaking")
+        }
+        XCTAssertNotEqual(MessageBubble.label(for: .system, assistantName: "Jax"), MessageBubble.label(for: .user, assistantName: "Jax"))
     }
 
     /// The rule rots the moment one branch in the view asks the question its

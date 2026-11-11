@@ -31,11 +31,18 @@ struct JaxActivitySection: View {
         }
 
         if let b = latestBriefing {
-            let slot = b.slot == .morning ? "morning" : (b.slot == .night ? "night" : "on-demand")
-            out.append(JaxActivityEntry(id: "b-\(b.id)", kind: .spoke, text: "Spoke the \(slot) briefing", brand: nil, at: b.date))
+            out.append(Self.briefingEntry(b))
         }
 
         return out.sorted { $0.at > $1.at }
+    }
+
+    /// "Spoke" only for a briefing a speaker played (D117).
+    static func briefingEntry(_ b: Briefing) -> JaxActivityEntry {
+        let slot = b.slot == .morning ? "morning" : (b.slot == .night ? "night" : "on-demand")
+        return b.spoken == true
+            ? JaxActivityEntry(id: "b-\(b.id)", kind: .spoke, text: "Spoke the \(slot) briefing", brand: nil, at: b.date)
+            : JaxActivityEntry(id: "b-\(b.id)", kind: .wrote, text: "Wrote the \(slot) briefing", brand: nil, at: b.date)
     }
 
     var body: some View {
@@ -64,7 +71,7 @@ struct JaxActivitySection: View {
 // the real queue/briefing state, not a persisted model.
 struct JaxActivityEntry: Identifiable {
     enum Kind {
-        case queued, approved, skipped, spoke
+        case queued, approved, skipped, spoke, wrote
 
         var icon: String {
             switch self {
@@ -72,6 +79,7 @@ struct JaxActivityEntry: Identifiable {
             case .approved: return "checkmark.seal.fill"
             case .skipped: return "xmark.seal.fill"
             case .spoke: return "waveform"
+            case .wrote: return "doc.text"
             }
         }
 
@@ -81,6 +89,7 @@ struct JaxActivityEntry: Identifiable {
             case .approved: return GruxTheme.successMint
             case .skipped: return GruxTheme.destructiveRose
             case .spoke: return GruxTheme.accentCo
+            case .wrote: return GruxTheme.textSecondary
             }
         }
     }

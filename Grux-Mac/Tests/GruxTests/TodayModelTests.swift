@@ -125,7 +125,7 @@ final class TodayModelTests: XCTestCase {
         let reason = FocusWatcher.Skip.noScreenAccess.line
         let denied = TodayModel.watching(.init(focusTask: "Back up the Mini", focusWatched: .no(because: reason), drifting: true))
         XCTAssertEqual(denied.map(\.line), ["Focus: Back up the Mini"])
-        XCTAssertEqual(denied.map(\.detail), ["Not watched: macOS has not allowed screen recording."],
+        XCTAssertEqual(denied.map(\.detail), ["Not watched: macOS has not allowed Screen Recording."],
                        "the reason has its own line, so the card never cuts it (seen cut live at two lines)")
         XCTAssertEqual(denied.map(\.tab), ["focus"], "the line still opens the Focus log, which says how to fix it")
         let unknown = TodayModel.watching(.init(focusTask: "Back up the Mini", drifting: true))
@@ -203,6 +203,61 @@ final class TodayModelTests: XCTestCase {
     }
 }
 
+/// D101 (sense pass 9, 2026-10-31): Today's card was headed "Watching" above
+/// "Not watched: macOS has not allowed screen recording.", because the title
+/// was a fixed word while D44 made only the line under it honest. The title
+/// now comes from the same reading as the focus line.
+final class TodayWatchingTitleTests: XCTestCase {
+    private let reason = FocusWatcher.Skip.noScreenAccess.line
+
+    /// Every focus reading, with and without a task and other items: the title
+    /// says Watching only when no focus task is named or the watcher samples it.
+    func test_theTitleClaimsWatchingOnlyWhenTheFocusLineDoes() {
+        let readings: [TodayModel.FocusWatched] = [
+            .yes, .unknown, .no(because: reason), .no(because: "Watching is paused."),
+            .no(because: FocusWatcher.Skip.noTask.line),
+        ]
+        for task in [nil, "", "Back up the Mini"] as [String?] {
+            for watched in readings {
+                for others in [0, 1] {
+                    let w = TodayModel.WatchInput(focusTask: task, focusWatched: watched, jobsRunning: others,
+                                                  proposals: others, focusChecksToday: others)
+                    let title = TodayModel.watchingTitle(w)
+                    let lines = TodayModel.watching(w)
+                    let focusClaims = lines.contains { $0.id == "focus" && $0.line.hasPrefix("Focusing on") }
+                    let namesTask = !(task ?? "").isEmpty
+                    // The oracle, in words: a named task that is not being sampled
+                    // never sits under a title that says it is watched.
+                    let expectWatching = !namesTask || focusClaims
+                    XCTAssertEqual(title == TodayModel.Copy.watchingTitle, expectWatching,
+                                   "task \(task ?? "nil") reading \(watched) others \(others): \(title)")
+                    if !expectWatching {
+                        XCTAssertFalse(title.lowercased().contains("watch"), title)
+                    }
+                }
+            }
+        }
+    }
+
+    func test_theTitlesReadPlainly() {
+        XCTAssertEqual(TodayModel.Copy.watchingTitle, "Watching")
+        XCTAssertEqual(TodayModel.Copy.trackingTitle, "Keeping track")
+        XCTAssertEqual(TodayModel.watchingTitle(.init(focusTask: "Back up the Mini", focusWatched: .no(because: reason))),
+                       "Keeping track")
+        XCTAssertEqual(TodayModel.watchingTitle(.init(focusTask: "Back up the Mini", focusWatched: .yes)), "Watching")
+    }
+
+    /// Today draws the model's title, not a word of its own.
+    func test_todayDrawsTheModelsTitle() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let src = try String(contentsOf: root.appendingPathComponent("Sources/Grux/Home/HomeView.swift"), encoding: .utf8)
+        let card = try XCTUnwrap(src.components(separatedBy: "private var watchingCard: some View {").dropFirst().first).prefix(300)
+        XCTAssertTrue(card.contains("BriefingCard(title: model.today.watchingTitle"), String(card))
+        XCTAssertFalse(src.contains("title: \"Watching\""), "a fixed Watching title is back")
+    }
+}
+
 /// D2 and D3: Today draws what the model decides, with an empty state per card,
 /// the say-it line from the one shared tell, and no second door to anything.
 final class TodayViewWiringTests: XCTestCase {
@@ -218,7 +273,7 @@ final class TodayViewWiringTests: XCTestCase {
                      "TodayModel.Copy.watchingEmpty"] {
             XCTAssertTrue(src.contains(copy), "\(copy) is never drawn")
         }
-        for title in ["title: \"Next\"", "title: \"Mail that needs you\"", "title: \"Watching\""] {
+        for title in ["title: \"Next\"", "title: \"Mail that needs you\"", "title: model.today.watchingTitle"] {
             XCTAssertTrue(src.contains(title), "missing card \(title)")
         }
     }

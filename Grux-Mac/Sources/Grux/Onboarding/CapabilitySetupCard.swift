@@ -1,4 +1,5 @@
 import SwiftUI
+import GruxAgentCore
 
 /// One line item on the setup card: either a single missing capability, or an
 /// `anyOf` group standing in for all of its members at once.
@@ -123,6 +124,23 @@ struct CapabilitySetupCard: View {
     /// environment, for the reason `state` above gives.
     @ObservedObject private var claudeSignIn = ClaudeSignInState.shared
 
+    /// The restart question for a step only the setup walk answers.
+    @State private var confirmingRestart = false
+
+    /// The consent this card is asking right now, if any (D138).
+    @State private var asking: SetupRequirement?
+    /// Focus log's first capture, shown on the card (D157 item 3).
+    @State private var reviewingFrame = false
+    /// The mail account form, opened by the mail server's Set it up (D201).
+    @State private var addingMailAccount = false
+    /// The step whose command was just copied, so its button says so.
+    @State private var copied: SetupRequirement?
+    /// The outside steps missing at the last re-read.
+    @State private var outsideWatch = OutsideStepWatch()
+
+    /// Redraws the card when a step is answered, here or anywhere else.
+    @ObservedObject private var setupRevision = SetupRevision.shared
+
     private var missing: [SetupRequirement] {
         FeatureRegistry.missing(forTab: featureKey)
     }
@@ -152,11 +170,15 @@ struct CapabilitySetupCard: View {
                   missing: missing, signInExpired: claudeSignIn.expired)
     }
 
-    /// The line under the headline, counting what the card lists. It says the
-    /// rest is ready only when there is a rest and it is.
-    static func subtitle(missing: Int, readyBesides: Int) -> String {
-        let count = missing == 1 ? "One item is missing." : "\(missing) items are missing."
-        return readyBesides > 0 ? count + " Everything else is ready." : count
+    /// The line under the headline. The headline is the one place the count
+    /// lives (D97: the subtitle counted too, four ways); this line says the
+    /// rest is ready only when there is a rest and it is. With nothing ready
+    /// yet it says the listed items are all it takes: "Nothing else is
+    /// needed." under "Focus log needs 4 more things" read as if the four
+    /// were not needed either (D115 item 8).
+    static func subtitle(readyBesides: Int, listed: Int) -> String {
+        if readyBesides > 0 { return "Everything else is ready." }
+        return listed == 1 ? "Once this is done, it is ready." : "Once these are done, it is ready."
     }
 
     /// D70: the card stands in for a feature that needs the agent, the agent
@@ -170,8 +192,17 @@ struct CapabilitySetupCard: View {
     }
 
     static let agentSignInLabel = "Claude sign-in expired"
-    static let agentSignInRemediation = "Agents cannot run until you sign in again. Sign in opens Claude's login in Terminal, and it finishes in your browser."
+    static let agentSignInRemediation = "Agents cannot run until you sign in. Sign in opens Claude's login in Terminal, and it finishes in your browser."
     static let agentSignInButton = "Sign in"
+
+    /// The sign-in line on one feature's card names that feature: Jax
+    /// Command's card said "Agents cannot run" (D116 item 3).
+    static func agentSignInRemediation(featureLabel: String) -> String {
+        if featureLabel == "Agents" { return agentSignInRemediation }
+        let name = featureLabel == "This feature" ? "this feature" : featureLabel
+        return "What \(name) hands to Claude cannot run until you sign in. "
+            + "Sign in opens Claude's login in Terminal, and it finishes in your browser."
+    }
 
     /// The headline and the line under it, counting the sign-in as an item
     /// when it is listed and never as ready.
@@ -182,7 +213,16 @@ struct CapabilitySetupCard: View {
         let ready = max(0, blocking.count - missing.count - (signIn ? 1 : 0))
         let headline = listed == 1 ? "\(featureLabel) needs one more thing"
                                    : "\(featureLabel) needs \(listed) more things"
-        return (headline, subtitle(missing: listed, readyBesides: ready))
+        return (headline, subtitle(readyBesides: ready, listed: listed))
+    }
+
+    /// The sentence under one item on this feature's card: the feature's own
+    /// line when it declares one, then the line every card uses for that item,
+    /// then the contract's sentence.
+    static func line(for requirement: SetupRequirement, featureKey: String) -> String {
+        let id = FeatureRegistry.row(forTab: featureKey)?.id ?? featureKey
+        return FeatureRegistry.cardLines[id]?[requirement] ?? FeatureRegistry.cardLinesEverywhere[requirement]
+            ?? requirement.remediation
     }
 
     private var featureLabel: String {
@@ -212,6 +252,58 @@ struct CapabilitySetupCard: View {
         // black pane where the point is that the user sees what they are
         // unlocking. Sizing to content is what makes the dimmed UI show.
         .fixedSize(horizontal: false, vertical: true)
+        .confirmationDialog(OnboardingModel.restartQuestion, isPresented: $confirmingRestart,
+                            titleVisibility: .visible) {
+            Button(OnboardingModel.restartTitle, role: .destructive) { OnboardingModel.shared.reset() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(OnboardingModel.restartDetail)
+        }
+        // Claude Code is installed in Terminal, so nothing in Grux redraws this
+        // card when it lands: re-read it while listed, and on coming back (D160).
+        // The first read is on appear, so an install that lands before the
+        // first tick is still seen landing (W52-FIX).
+        .onAppear { recheckOutsideSteps() }
+        .onReceive(Timer.publish(every: Self.recheckSeconds, on: .main, in: .common).autoconnect()) { _ in
+            recheckOutsideSteps()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            recheckOutsideSteps()
+        }
+        .gruxSheet(isPresented: $reviewingFrame) {
+            FirstCaptureReviewSheet { reviewingFrame = false }
+        }
+        .gruxSheet(isPresented: $addingMailAccount) {
+            MailAccountsSheet()
+        }
+        .onChange(of: addingMailAccount) { _, open in
+            if !open { SetupRevision.shared.bump() }
+        }
+        .confirmationDialog(askedConsent?.title ?? "", isPresented: askingBinding,
+                            titleVisibility: .visible, presenting: askedConsent) { consent in
+            Button(consent.confirm) {
+                if let step = asking { Self.answer(step) }
+                asking = nil
+            }
+            if let tag = consent.settingsTag {
+                Button("Open the list in Settings") {
+                    asking = nil
+                    state.requestedSettingsTab = tag
+                    state.requestedTab = "settings"
+                }
+            }
+            Button(RecordingConsent.cancelTitle, role: .cancel) { asking = nil }
+        } message: { consent in
+            Text(consent.message)
+        }
+    }
+
+    private var askedConsent: CardConsent? {
+        asking.flatMap { Self.consent(for: $0, config: state.config) }
+    }
+
+    private var askingBinding: Binding<Bool> {
+        Binding(get: { asking != nil }, set: { if !$0 { asking = nil } })
     }
 
     private var header: some View {
@@ -295,14 +387,22 @@ struct CapabilitySetupCard: View {
                     requirementButton(requirement)
                 }
             }
-            // The contract's own sentence, verbatim. It is written for exactly
-            // this surface, which is why onboarding says something different:
-            // "add it in Settings" is right here and wrong when the paste field
-            // is already on screen.
-            Text(requirement.remediation)
+            // The contract's own sentence, verbatim, unless this feature
+            // declares its own (CR-40). It is written for exactly this surface,
+            // which is why onboarding says something different: "add it in
+            // Settings" is right here and wrong when the paste field is already
+            // on screen.
+            Text(Self.line(for: requirement, featureKey: featureKey))
                 .font(GruxTheme.Font.caption)
                 .foregroundStyle(GruxTheme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
+
+            if let first = Self.waitsOn(requirement, missing: missing) {
+                Text(Self.waitingLine(first))
+                    .font(GruxTheme.Font.caption)
+                    .foregroundStyle(GruxTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             // The re-offer. This line is the difference between a card that
             // introduces something and a card that picks up a conversation.
@@ -336,8 +436,9 @@ struct CapabilitySetupCard: View {
     @ViewBuilder
     private func requirementButton(_ requirement: SetupRequirement) -> some View {
         if let title = actionTitle(for: requirement) {
-            Button(title) { open(requirement) }
+            Button(copied == requirement ? "Copied" : title) { open(requirement) }
                 .font(.system(size: 12, weight: .semibold))
+                .disabled(Self.waitsOn(requirement, missing: missing) != nil)
         }
     }
 
@@ -357,7 +458,7 @@ struct CapabilitySetupCard: View {
                         signInButton
                     }
                 }
-                Text(Self.agentSignInRemediation)
+                Text(Self.agentSignInRemediation(featureLabel: featureLabel))
                     .font(GruxTheme.Font.caption)
                     .foregroundStyle(GruxTheme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -410,6 +511,174 @@ struct CapabilitySetupCard: View {
     /// that pretends to fix it. A step is completed by the feature itself, so it
     /// gets no button at all and the sentence explains what will happen.
     private func actionTitle(for requirement: SetupRequirement) -> String? {
+        Self.actionTitle(for: requirement)
+    }
+
+    enum StepRoute: Equatable {
+        case settings(String)
+        case restartOnboarding
+        /// The card asks the consent itself (D138 item 1).
+        case answerHere
+        /// The card shows the first capture itself (D157 item 3).
+        case reviewFrame
+        /// The card copies a command to paste in Terminal (D160).
+        case copy(String)
+    }
+
+    /// Steps a person completes outside Grux, which Grux detects on disk: Claude
+    /// Code is installed in Terminal. The card re-reads them while it lists one,
+    /// so the step clears once the install lands, with no relaunch (D160).
+    static let detectedOutsideGrux: Set<SetupRequirement> = [.stepAgentCliInstalled]
+
+    /// How often a listed outside step is re-read. A few file checks.
+    static let recheckSeconds: TimeInterval = 3
+
+    /// True when a step this card lists, of the ones done outside Grux, is now
+    /// satisfied. Only those are read here: a key or a permission is read when
+    /// the card redraws, and reading the Keychain on a timer could raise a prompt.
+    static func landedOutsideGrux(listed: [SetupRequirement],
+                                  satisfied: (SetupRequirement) -> Bool) -> Bool {
+        listed.contains { detectedOutsideGrux.contains($0) && satisfied($0) }
+    }
+
+    /// What the card last saw of its outside steps, and whether one has landed
+    /// since (W52-FIX: the wiring is tested here, not as text in the view).
+    struct OutsideStepWatch {
+        /// The outside steps missing at the last read; nil before the first.
+        private(set) var missing: [SetupRequirement]?
+
+        /// Records what is missing now, and says whether a step missing at the
+        /// last read has landed. The first read only records.
+        mutating func tick(nowMissing: [SetupRequirement]) -> Bool {
+            defer { missing = nowMissing }
+            guard let before = missing else { return false }
+            return CapabilitySetupCard.landedOutsideGrux(listed: before, satisfied: { !nowMissing.contains($0) })
+        }
+    }
+
+    /// Steps the feature completes while its card is up, so the card offers
+    /// no button for them and the sentence says what will happen: Meetings
+    /// fetches its speech model when it opens. Not the first capture: Focus
+    /// log captures nothing until it is reviewed (`FocusWatcher.skipReason`).
+    static let completedByUse: Set<SetupRequirement> = [.stepSpeechModelDownloaded]
+
+    /// Steps with no button yet and no way to complete by use. Named so the
+    /// debt stays visible and a new step cannot join it unnoticed
+    /// (`SetupCardFirstCaptureTests`): Pair iPhone has no Settings home to
+    /// route to (`TerminalSessionsOnboardingTests`).
+    static let knownWithoutButton: Set<SetupRequirement> = [.stepPhonePaired]
+
+    /// A listed step that cannot run before another listed item (D170 item 3:
+    /// a live Review under a Screen Recording not yet allowed opened a sheet
+    /// that could only say to grant it). Its button waits, and says on what.
+    static func waitsOn(_ requirement: SetupRequirement, missing: [SetupRequirement]) -> SetupRequirement? {
+        (SetupOrder.prerequisites[requirement] ?? []).first(where: missing.contains)
+    }
+
+    static func waitingLine(_ prerequisite: SetupRequirement) -> String {
+        "Comes after \(prerequisite.label) above."
+    }
+
+    /// Where a step's button goes. A consent the setup walk asks is asked on
+    /// the card itself: restarting the walk (wave 26) put a person back through
+    /// every first-run screen to answer one question, and sending them to
+    /// Settings (D72) left them hunting for it. `.restartOnboarding` stays for a
+    /// first-run step the card has no question for.
+    enum EndpointRoute: Equatable {
+        case settings(String)
+        case mailAccounts
+    }
+
+    /// Where Set it up takes an endpoint. A tag Settings does not know resolves to General,
+    /// so a mail server and Ollama both landed there, on no form at all, and the Mail
+    /// pane, which is only its card until an account exists, had no way in (D201). A mail
+    /// account is added in the form Mail's own Accounts button opens, so the card opens
+    /// that form itself; Ollama is Connect a model in Settings, Models.
+    static func endpointRoute(for requirement: SetupRequirement) -> EndpointRoute {
+        switch requirement {
+        case .endpointImap: return .mailAccounts
+        case .endpointOllama: return .settings("connect")
+        default: return .settings(requirement.rawValue)
+        }
+    }
+
+    static func stepRoute(for requirement: SetupRequirement) -> StepRoute? {
+        if requirement == .stepFirstFrameReviewed { return .reviewFrame }
+        if requirement == .stepAgentCliInstalled { return .copy(ClaudeBinaryLocator.installCommand) }
+        if SettingsTabAliases.stepNeedsFirstRun(requirement) {
+            return consent(for: requirement, config: .default) == nil ? .restartOnboarding : .answerHere
+        }
+        return SettingsTabAliases.stepDestination(requirement).map { .settings($0) }
+    }
+
+    /// What a consent card asks: the whole of what is agreed to, the words on
+    /// the button that agrees, and where the thing agreed to can be changed.
+    struct CardConsent: Equatable {
+        let title: String
+        let message: String
+        let confirm: String
+        let settingsTag: String?
+    }
+
+    /// The question for a consent step, or nil for any other requirement.
+    /// Read from `config` so the exclusions question names this Mac's list.
+    static func consent(for requirement: SetupRequirement, config: GruxConfig) -> CardConsent? {
+        switch requirement {
+        case .stepRecordingConsentAcknowledged:
+            // The question Meetings asks before a first recording, word for word.
+            return CardConsent(title: RecordingConsent.title, message: RecordingConsent.body,
+                               confirm: RecordingConsent.confirmTitle, settingsTag: nil)
+        case .stepCaptureExclusionsConfirmed:
+            return CardConsent(title: "What Grux never looks at",
+                               message: exclusionsMessage(apps: config.captureExcludedBundleIds,
+                                                          titleWords: config.captureExcludedTitlePatterns),
+                               confirm: "Keep this list", settingsTag: "capture-privacy")
+        case .stepCorpusSourcesConfirmed:
+            return CardConsent(
+                title: "Learning how you write",
+                message: "Grux can learn how you write from your messages, notes and sent mail, kept on this Mac. "
+                    + "Confirming lets Grux check which of them it can read. Nothing is indexed by confirming.",
+                confirm: "Let Grux check", settingsTag: nil)
+        default:
+            return nil
+        }
+    }
+
+    /// The exclusions question, true to the list as it stands: the defaults are
+    /// described by kind, an edited list by count, and an empty one says so.
+    static func exclusionsMessage(apps: [String], titleWords: [String]) -> String {
+        let where_ = "You can change it in Settings, Data & Security, Data & Capabilities, Privacy and capture."
+        if apps.isEmpty && titleWords.isEmpty {
+            return "Your list is empty, so Grux leaves out no app and no window. " + where_
+        }
+        let isDefault = apps == CapturePrivacy.defaultExcludedBundleIds
+            && titleWords == CapturePrivacy.defaultExcludedTitlePatterns
+        if isDefault {
+            return "Grux never captures \(apps.count) apps: password managers, Keychain Access, Passwords and authenticator apps. "
+                + "It also leaves out any window whose title names a password, a bank, a card number or a recovery phrase. "
+                + "They are cut out before a frame is taken, even behind other windows. " + where_
+        }
+        func count(_ n: Int, _ one: String, _ many: String) -> String { n == 1 ? "1 \(one)" : "\(n) \(many)" }
+        let appsLine = apps.isEmpty ? "Grux captures every app."
+            : "Grux never captures \(count(apps.count, "app", "apps")) you listed."
+        let wordsLine = titleWords.isEmpty ? "No window is left out by its title."
+            : "It also leaves out any window whose title has \(count(titleWords.count, "title word", "title words")) you listed."
+        return appsLine + " " + wordsLine + " " + where_
+    }
+
+    /// The card's yes. The same writer first run uses (and the Meetings alert,
+    /// for the recording consent), so the answer reads the same everywhere.
+    static func answer(_ requirement: SetupRequirement) {
+        if requirement == .stepRecordingConsentAcknowledged {
+            RecordingConsent.acknowledge()
+        } else {
+            CapabilityResolver.markStepCompleted(requirement)
+            WakeLog.shared.log("setup: \(requirement.rawValue) answered on its card")
+        }
+        OnboardingModel.shared.clearSkip(requirement)
+    }
+
+    static func actionTitle(for requirement: SetupRequirement) -> String? {
         switch requirement.kind {
         case .key:      return "Add it"
         case .endpoint: return "Set it up"
@@ -419,28 +688,105 @@ struct CapabilitySetupCard: View {
             // original rule and still right. A step completed in Settings gets
             // a route, because otherwise its own remediation sends the user
             // somewhere the card cannot take them.
-            guard SettingsTabAliases.stepDestination(requirement) != nil else { return nil }
-            // A consent step is answered by walking first-run again, so the
-            // button says that. "Open Settings" would land someone on a pane
-            // and leave them looking for the choice.
-            return SettingsTabAliases.stepNeedsFirstRun(requirement) ? "Run setup again" : "Open Settings"
+            // A consent step is answered in the setup walk, so the button
+            // restarts it, and says so in the words Settings uses. "Open
+            // Settings" would land someone on a pane and leave them looking for
+            // the choice; "Run setup again" (D72) was read by people who had
+            // never walked these steps, and "Confirm" would claim the tap itself
+            // confirms.
+            // A consent the card asks itself says Review: the tap shows what is
+            // agreed to, and only the dialog's own button agrees (D138 item 1).
+            switch stepRoute(for: requirement) {
+            case .answerHere: return "Review"
+            case .reviewFrame: return "Review"
+            case .copy: return "Copy the command"
+            case .restartOnboarding: return OnboardingModel.restartTitle
+            case .settings: return "Open Settings"
+            case nil: return nil
+            }
         }
+    }
+
+    /// Redraws every setup surface once a step done outside Grux lands. Reads
+    /// only this feature's outside steps, never `missing` (that reads the
+    /// Keychain), and compares with the last tick so a step that was already
+    /// done redraws nothing.
+    private func recheckOutsideSteps() {
+        let nowMissing = blocking.filter {
+            Self.detectedOutsideGrux.contains($0) && !CapabilityResolver.isSatisfied($0)
+        }
+        if outsideWatch.tick(nowMissing: nowMissing) { SetupRevision.shared.bump() }
     }
 
     private func open(_ requirement: SetupRequirement) {
         switch requirement.kind {
-        case .key, .endpoint:
+        case .key:
             // Reuses the deep link that already existed. A capability id resolves
             // to its own row, so this lands on the field rather than the top of
             // a list.
             state.requestedSettingsTab = requirement.rawValue
             state.requestedTab = "settings"
+        case .endpoint:
+            switch Self.endpointRoute(for: requirement) {
+            case .mailAccounts:
+                addingMailAccount = true
+            case .settings(let tag):
+                state.requestedSettingsTab = tag
+                state.requestedTab = "settings"
+            }
         case .perm:
             CapabilityRequest.openSystemSettings(for: requirement)
         case .step:
-            guard let tag = SettingsTabAliases.stepDestination(requirement) else { break }
-            state.requestedSettingsTab = tag
-            state.requestedTab = "settings"
+            switch Self.stepRoute(for: requirement) {
+            case .answerHere:
+                asking = requirement
+            case .reviewFrame:
+                reviewingFrame = true
+            case .copy(let command):
+                OptimizeClipboard.copy(command)
+                copied = requirement
+            case .restartOnboarding:
+                confirmingRestart = true
+            case .settings(let tag):
+                state.requestedSettingsTab = tag
+                state.requestedTab = "settings"
+            case nil:
+                break
+            }
         }
+    }
+}
+
+/// The first capture, reviewed on Focus log's card: the same frame and text
+/// the first-run walk shows, and "Looks right" only once they are on screen.
+/// With Screen Recording not granted it shows the walk's grant line instead,
+/// and nothing is recorded.
+struct FirstCaptureReviewSheet: View {
+    let done: () -> Void
+    @State private var canConfirm = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: GruxSpacing.m) {
+            Text(SetupRequirement.stepFirstFrameReviewed.label)
+                .font(.system(size: 17, weight: .bold))
+                .foregroundStyle(GruxTheme.textPrimary)
+            Text(SetupRequirement.stepFirstFrameReviewed.remediation)
+                .font(GruxTheme.Font.caption)
+                .foregroundStyle(GruxTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            FirstFrameReview { canConfirm = FirstFrameReview.canConfirm($0) }
+            HStack {
+                Spacer()
+                Button("Not now", role: .cancel) { done() }
+                Button("Looks right") {
+                    CapabilityResolver.recordFirstFrameReviewedOnCard()
+                    done()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canConfirm)
+            }
+        }
+        .padding(GruxSpacing.l)
+        .frame(width: 520)
     }
 }

@@ -104,7 +104,7 @@ struct FileNamingStatus: Codable, Equatable {
         let refused = unwatched.filter { !missing.contains($0) }
         let waitingNames = refused.map { URL(fileURLWithPath: $0).lastPathComponent }
         var waiting = waitingNames.isEmpty ? "" :
-            " Waiting to open \(Self.list(waitingNames)): allow Grux in System Settings, Privacy and Security, Files and Folders."
+            " Waiting to open \(Self.list(waitingNames)): allow Grux AI in System Settings, Privacy & Security, Files & Folders."
         for path in unwatched where missing.contains(path) {
             let name = URL(fileURLWithPath: path).lastPathComponent
             waiting += path == screenshotFolder

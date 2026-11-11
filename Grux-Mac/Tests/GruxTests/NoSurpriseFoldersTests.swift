@@ -263,7 +263,7 @@ final class KeychainNeverPromptsTests: XCTestCase {
 ///
 /// Anything written to ~/.grux/inject-chat.txt reaches `ChatService.send()` and therefore a
 /// model with tools. It was created with the default mask, which leaves it world readable, so
-/// a line sitting in it before the 0.8 second timer picked it up was legible to any other
+/// a line sitting in it before Grux read it was legible to any other
 /// account on the Mac. The control socket it now shares a switch with has always been 0600.
 final class InjectChatPermissionsTests: XCTestCase {
 
@@ -281,7 +281,14 @@ final class InjectChatPermissionsTests: XCTestCase {
             LaunchConsentGateTests.lines(containing: "inject-chat.txt", in: src).first,
             "the inject-chat file is not created here any more")
         let window = src[created...min(created + 12, src.count - 1)].joined(separator: "\n")
-        XCTAssertTrue(window.contains("posixPermissions: 0o600"),
+        // D113: the file is kept by InjectChatWatcher now, which makes it 0600 every time
+        // it puts the door in place (`InjectChatWatcherTests` reads the mode back).
+        XCTAssertTrue(window.contains("InjectChatWatcher(file: file)"),
+                      "the inject-chat file is no longer kept by InjectChatWatcher")
+        let watcher = try String(contentsOf: LaunchConsentGateTests.repoRoot()
+            .appendingPathComponent("Sources/Grux/Triggers/InjectChatWatcher.swift"), encoding: .utf8)
+        XCTAssertTrue(watcher.contains("attributes: [.posixPermissions: 0o600]")
+                      && watcher.contains("setAttributes([.posixPermissions: 0o600]"),
                       "the inject-chat file is created with the default mask, so a command "
                       + "waiting in it is readable by every account on the Mac")
     }

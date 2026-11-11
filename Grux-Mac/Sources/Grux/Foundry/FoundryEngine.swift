@@ -729,7 +729,7 @@ final class FoundryEngine: ObservableObject {
     /// the job's own words (D26: it used to say only "ended failed; nothing to verify").
     nonisolated static func escalationFailureReason(job: AgentJob?, jobId: String, statusRaw: String) -> String {
         if let job, job.failedOnSignIn {
-            return "The build could not start: Claude's sign-in on this Mac has expired. Sign in again (Claude sign-in, at the top of Now), then build it again."
+            return "The build could not start: Claude's sign-in on this Mac has expired. Sign in (Claude sign-in, at the top of Now), then build it again."
         }
         var words = (job?.errorMessage ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         while words.hasSuffix(".") { words.removeLast() }

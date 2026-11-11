@@ -93,7 +93,7 @@ struct PendingApproval: Codable, Identifiable, Equatable {
         urgent = (try? c.decode(Bool.self, forKey: .urgent)) ?? false
         persona = (try? c.decode(GatePersona.self, forKey: .persona)) ?? .none
         let stored = (try? c.decode(String.self, forKey: .reason)) ?? ""
-        reason = DecisionGate.earlierAsksFirstReasons.contains(stored) ? DecisionGate.asksFirstReason : stored
+        reason = DecisionGate.rewordedReason(stored)
         state = (try? c.decode(State.self, forKey: .state)) ?? .pending
         resolvedAt = try? c.decodeIfPresent(Date.self, forKey: .resolvedAt)
         risk = try? c.decodeIfPresent(ApprovalRisk.self, forKey: .risk)
@@ -143,6 +143,9 @@ final class ApprovalQueue: ObservableObject {
         AppState.shared.appendChat(ChatMessage(role: .assistant, content: line))
     }
 
+    // Whether self-upgrade is on, read at the tap (`CannotRunNow`). A seam for tests.
+    var foundryEnabled: @MainActor () -> Bool = { AppState.shared.config.foundryEnabled }
+
     private var riskAsked: Set<UUID> = []
     // Judgments still out, by item id. Each removes itself when it lands, so
     // this never grows past the handful in flight.
@@ -188,7 +191,7 @@ final class ApprovalQueue: ObservableObject {
             // The CLI reads this file as it is, so an item the decode reworded
             // or a fold dropped is written back once.
             let reworded = (try? JSONSerialization.jsonObject(with: data) as? [[String: Any]])?
-                .contains { DecisionGate.earlierAsksFirstReasons.contains($0["reason"] as? String ?? "") } ?? false
+                .contains { let r = $0["reason"] as? String ?? ""; return DecisionGate.rewordedReason(r) != r } ?? false
             if foldWaitingTwins() || reworded { save() }
         }
     }
@@ -388,6 +391,16 @@ final class ApprovalQueue: ObservableObject {
         guard !executing else { return "busy: another approval is executing, give it a second" }
         guard let idx = items.firstIndex(where: { $0.id == id }) else { return "error: approval not found" }
         guard items[idx].state == .pending else { return "error: already resolved" }
+        // A yes that the tool would turn down now is not a yes: the card stays
+        // waiting, says why (`CannotRunNow.cardLine`), and nothing is tried.
+        if let tool = items[idx].action.detail["__replay_tool"],
+           let refusal = CannotRunNow.refusal(
+               tool: tool,
+               input: items[idx].action.detail["__replay_input"].flatMap(Self.decodeInput) ?? [:],
+               foundryEnabled: foundryEnabled()) {
+            WakeLog.shared.log("jax-approve: held '\(tool)' for \(id.uuidString.prefix(8)) -> \(refusal)")
+            return "refused: \(refusal)"
+        }
         executing = true
         defer { executing = false }
 
@@ -432,7 +445,7 @@ final class ApprovalQueue: ObservableObject {
     }
 
     // Decode a stored replay input back into a tool input dict. Fails soft to nil.
-    static func decodeInput(_ s: String) -> [String: Any]? {
+    nonisolated static func decodeInput(_ s: String) -> [String: Any]? {
         guard let data = s.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
         return obj

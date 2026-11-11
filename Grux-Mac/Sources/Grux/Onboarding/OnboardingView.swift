@@ -194,7 +194,11 @@ struct ModelKeyStep: View {
     /// deliberately not got, with the local option as grey text below the
     /// fold of the primary row. The probe is one request to a loopback
     /// address and it changes what the screen leads with.
-    @State private var probe: ModelGate.Probe = .none
+    @State private var probe: ModelGate.Probe = .looking
+    /// Which probe is the newest. SwiftUI starts `.task` again when the screen
+    /// comes back and a cancelled probe keeps going, so only the newest run
+    /// settles the screen or names a model (W46-P3 item 7, wave 48 review).
+    @State private var probeGeneration = 0
 
     // The model being fetched, so the screen can say WHICH one and how big
     // rather than spinning silently through a multi-gigabyte download.
@@ -220,7 +224,7 @@ struct ModelKeyStep: View {
                     Text(ModelGate.foundTitle)
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(GruxTheme.textPrimary)
-                    Text(ModelGate.foundDetail(model: found))
+                    Text(ModelGate.foundDetail(model: Cookbook.personName(for: found)))
                         .font(GruxTheme.Font.caption)
                         .foregroundStyle(GruxTheme.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -294,17 +298,26 @@ struct ModelKeyStep: View {
             // than a variation on it.
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
-                    // NAMES GRUX LOCAL before anything downloads: the button
-                    // says which model and how big, and only this press fetches
-                    // it (ModelGate.localButton).
-                    Button(ModelGate.localButton(recommendedLocal,
-                                                 installed: recommendedLocal.map { ollama.isInstalled($0.id) } ?? false)) {
-                        useLocalModel(fetchRecommended: true)
+                    if ModelGate.showsLocalButton(probe, recommended: recommendedLocal,
+                                                  recommendedInstalled: recommendedLocal.map { ollama.isInstalled($0.id) } ?? false) {
+                        // NAMES GRUX LOCAL before anything downloads: the button
+                        // says which model and how big, and only this press fetches
+                        // it (ModelGate.localButton).
+                        Button(ModelGate.localButton(recommendedLocal,
+                                                     installed: recommendedLocal.map { ollama.isInstalled($0.id) } ?? false)) {
+                            useLocalModel(fetchRecommended: true)
+                        }
+                            .buttonStyle(.plain)
+                            .font(GruxTheme.Font.caption)
+                            .foregroundStyle(GruxTheme.accentPrimaryLight)
+                            .disabled(model.validating || probingLocal)
                     }
-                        .buttonStyle(.plain)
-                        .font(GruxTheme.Font.caption)
-                        .foregroundStyle(GruxTheme.accentPrimaryLight)
-                        .disabled(model.validating || probingLocal)
+                    if probe == .looking {
+                        ProgressView().controlSize(.small)
+                        Text(ModelGate.lookingLine)
+                            .font(GruxTheme.Font.caption)
+                            .foregroundStyle(GruxTheme.textTertiary)
+                    }
                     if probingLocal {
                         ProgressView().controlSize(.small)
                         // NAMES THE MODEL AND THE SIZE. A multi-gigabyte
@@ -316,19 +329,25 @@ struct ModelKeyStep: View {
                     }
                 }
 
-                Text(ModelGate.localLine)
-                    .font(GruxTheme.Font.caption)
-                    .foregroundStyle(GruxTheme.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
-                if let recommendedLocal {
+                if ModelGate.showsLocalPath(probe) {
+                    Text(ModelGate.localLine)
+                        .font(GruxTheme.Font.caption)
+                        .foregroundStyle(GruxTheme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let recommendedLocal,
+                   ModelGate.showsLocalButton(probe, recommended: recommendedLocal,
+                                              recommendedInstalled: ollama.isInstalled(recommendedLocal.id)) {
                     Text(ModelGate.gruxLocalLine(recommendedLocal))
                         .font(GruxTheme.Font.caption)
                         .foregroundStyle(GruxTheme.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                Link(ModelGate.ollamaLink, destination: ModelGate.ollamaURL)
-                    .font(GruxTheme.Font.caption)
-                    .gruxLink()
+                if ModelGate.offersOllamaLink(probe) {
+                    Link(ModelGate.ollamaLink, destination: ModelGate.ollamaURL)
+                        .font(GruxTheme.Font.caption)
+                        .gruxLink()
+                }
 
                 // THE UPSELL, said once and said honestly.
                 //
@@ -369,14 +388,16 @@ struct ModelKeyStep: View {
             openRouterPath
 
             // Never a dead end: with nothing to connect yet, carry on without.
-            HStack(spacing: 8) {
-                Button(ModelGate.skip) { model.completeModelKey() }
-                    .buttonStyle(.bordered)
-                    .disabled(model.validating || probingLocal || probingOpenRouter)
-                Text(ModelGate.skipNote)
-                    .font(GruxTheme.Font.caption)
-                    .foregroundStyle(GruxTheme.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
+            if ModelGate.offersSkip(probe, localFailed: localError != nil) {
+                HStack(spacing: 8) {
+                    Button(ModelGate.skip) { model.completeModelKey() }
+                        .buttonStyle(.bordered)
+                        .disabled(model.validating || probingLocal || probingOpenRouter)
+                    Text(ModelGate.skipNote)
+                        .font(GruxTheme.Font.caption)
+                        .foregroundStyle(GruxTheme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
         .task { await probeForLocalModel() }
@@ -420,18 +441,23 @@ struct ModelKeyStep: View {
     /// taking that path starts a multi-gigabyte download, and `useLocalModel`
     /// already handles that case properly for somebody who chooses it.
     private func probeForLocalModel() async {
-        guard probe == .none, !hasStoredKey else { return }
+        probeGeneration += 1
+        let mine = probeGeneration
+        defer { if mine == probeGeneration, probe == .looking { probe = .none } }
+        guard probe.model == nil, !hasStoredKey else { return }
+        probe = .looking
         await ModelRegistry.shared.discoverLocal()
         guard ModelRegistry.shared.local != nil else { return }
         await OllamaManager.shared.refreshInstalled()
-        // The model chat is set to when the server holds it: discovery may
-        // just have adopted an installed Grux Local, and "found llama3.2:3b"
-        // beside a chat on Grux Local would name the wrong one.
-        let usable = GruxConfig.usableLocalModels(OllamaManager.shared.installedTags)
-        let chat = AppState.shared.config.offlineLLMModel
-        guard let shown = usable.first(where: { FileNamingRoute.sameTag($0, chat) }) ?? usable.first
+        // The server's version first, so the headline is the one the button reads (D25).
+        _ = await OllamaManager.shared.isHealthy()
+        // Named by the rule the button adopts by, never by Ollama's listing order (D111).
+        guard let usable = ModelGate.modelToUse(
+            configured: AppState.shared.config.offlineLLMModel,
+            installed: OllamaManager.shared.installedTags,
+            headline: Cookbook.headline(for: HardwareProfile.detect())?.id)
         else { return }
-        probe = .found(shown)
+        if mine == probeGeneration { probe = .found(usable) }
     }
 
     /// The third way in: one key for many models, billed by OpenRouter.
@@ -677,10 +703,11 @@ struct ModelKeyStep: View {
                 AppState.shared.config.offlineLLMModel = chosen.id
                 AppState.shared.config.localLLMModel = chosen.id
                 AppState.shared.saveConfig()
-            } else if let adopt = GruxConfig.installedModelToAdopt(
+            } else if let adopt = ModelGate.modelToUse(
                 configured: AppState.shared.config.offlineLLMModel,
                 installed: OllamaManager.shared.installedTags,
-                headline: settledPick?.id ?? Cookbook.headline(for: HardwareProfile.detect())?.id) {
+                headline: settledPick?.id ?? Cookbook.headline(for: HardwareProfile.detect())?.id),
+               adopt != AppState.shared.config.offlineLLMModel {
                 AppState.shared.config.offlineLLMModel = adopt
                 AppState.shared.config.localLLMModel = adopt
                 AppState.shared.saveConfig()

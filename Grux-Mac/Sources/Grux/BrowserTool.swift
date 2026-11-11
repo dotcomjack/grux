@@ -44,7 +44,7 @@ enum BrowserTool {
         guard !q.isEmpty else { return "error: empty query" }
         // Asking for a video is asking for sound, so silent mode refuses it like music.
         guard AudioOutput.permit(.video, source: "BrowserTool.playOnYouTube", text: q) else {
-            return "error: silent mode is on (~/.grux/SILENT), so Grux will not play '\(q)'"
+            return "error: silent mode is on\(AudioOutput.silentNote), so Grux will not play '\(q)'"
         }
         let encoded = q.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? q
         // sp=EgIQAQ filters to videos only - gets you to a clickable video
@@ -81,7 +81,7 @@ enum BrowserTool {
             break
         case .failed(let code, _) where code == -1743:
             // errAEEventNotPermitted: the person denied Automation permission.
-            return "error: macOS blocked Grux from controlling Chrome. Grant it in System Settings → Privacy & Security → Automation → Grux → Google Chrome."
+            return "error: macOS blocked Grux from controlling Chrome. Grant it in System Settings → Privacy & Security → Automation → Grux AI → Google Chrome."
         case .failed(let code, let message):
             return "error: Chrome scripting failed (\(code.map(String.init) ?? "?")): \(message)"
         case .refused, .timedOut, .busy, .stopped, .behindLongerScript:

@@ -1,4 +1,5 @@
 import Foundation
+import GruxAgentCore
 
 // Client for a self-hosted WhisperKit transcription queue. Grux uploads a
 // recording, the server transcribes it with large-v3_turbo, Grux polls for the
@@ -311,7 +312,7 @@ actor WhisperQueueClient {
         p.standardError = FileHandle.nullDevice
         do {
             try p.run()
-            p.waitUntilExit()
+            p.waitForExitBlocking()
             return p.terminationStatus == 0
         } catch {
             return false

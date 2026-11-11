@@ -18,19 +18,22 @@ Open it, drag Grux into Applications, and open it from there.
 
 37 features and 116 tools in one native window.
 
-Grux opens persistent terminal sessions in your project and can undo anything it
-did, because every command is snapshotted into a shadow git repository first. It
-runs swarms of agents in parallel. It scaffolds, builds and runs iOS apps in the
+Grux opens persistent terminal sessions in your project. Its shell tool snapshots
+the project into a shadow git repository when its session starts and again before
+each command that runs without its own gate and looks destructive (a command you approve
+after its gate is not snapshotted again), so undo can restore the files to one of
+those points. Build output and dependency folders such as node_modules, build,
+dist, target and .git are not included. It runs swarms of agents in parallel. It scaffolds, builds and runs iOS apps in the
 simulator. It drives your screen when clicking is faster than describing. It
 captures meetings, tells the speakers apart on device, and files the transcript.
-And it reads its own source, proposes its next version, builds it, verifies it,
-and waits for you to approve the install.
+And it reads its own source, proposes and specifies its next version, and waits
+for your yes (unless Self-Upgrade's ceiling in Tuning is raised above ask-first; a new install starts at ask-first).
 
 The mail, calendar, contacts, notes, documents and meetings already on your Mac
 are the easy part, and it does those too.
 
 It talks to a model you pay for directly, or to a local model with no key at all.
-There is no Grux account, no Grux server, and no subscription. Your key, your
+There is no Grux account, no Grux server, and no Grux subscription. Your key, your
 machine, your data.
 
 Star the repository on GitHub, and watch its releases to hear about new versions.
@@ -60,7 +63,7 @@ Star the repository on GitHub, and watch its releases to hear about new versions
 > Mac with 24 GB or more).
 > [How it was trained and measured](#grux-local).
 
-**Status: shipping, currently 3.2.** 37 features ship in 14 surfaces, and a command line drives all of them. 25 are
+**Status: shipping, currently 3.3.** 37 features ship in 14 surfaces, and a command line drives all of them. 25 are
 core and 12 are labs: real, but rough at the edges, and labelled so. Those are
 two different counts on purpose. A feature is a capability the app has; a surface
 is a place to open. 3.0 folded nine things into where they belonged, so the list
@@ -82,14 +85,17 @@ what it still needs, and nothing in it is required to use the rest of Grux.
 
 Optimize Grux is where you make it yours. Say what you want different and Grux
 writes a work order your coding agent builds. Nothing about Grux changes without
-your yes.
+your yes (unless Self-Upgrade's ceiling in Tuning is raised above ask-first; a new install starts at ask-first).
 
 Grux reads your hardware and tells you which local models actually fit it; with a
-local model, chat, file naming and the background jobs run on this Mac and what you
+local model, chat, file naming and the background jobs that use chat's model run on this Mac and what you
 type goes to no model provider, while mail and calendar still come from your own
-accounts and Research still searches the web with your own key. Credentials go to your
-Keychain and services are called directly from your machine. There is no server
-in the middle because there is no server.
+accounts and Research still searches the web with your own key. A few things still
+need Claude, and each says so where you open it: Focus log and Compare need an
+Anthropic API key, and Agents, Jax Command and Self-Upgrade run the Claude Code CLI
+on your own Claude sign-in. Credentials go to your Keychain and services are called
+directly from your machine. There is no server in the middle because there is no
+server.
 
 These are the real interface, not mockups. Three views rather than a gallery,
 because the rest of the app is full of the author's own mail and calendar and
@@ -204,7 +210,7 @@ so a web search opens Google in Chrome.
 
 ## Install
 
-**[Download Grux AI 3.2 for Apple silicon](https://github.com/dotcomjack/grux/releases/latest/download/Grux.dmg)** (Grux.dmg, 28 MB, macOS 14 or later)
+**[Download Grux AI 3.3 for Apple silicon](https://github.com/dotcomjack/grux/releases/latest/download/Grux.dmg)** (Grux.dmg, 28 MB, macOS 14 or later)
 
 1. Open `Grux.dmg`.
 2. Drag Grux into Applications.
@@ -309,9 +315,11 @@ The short version: one Command Panel that opens each surface as a pane beside it
 and an assistant that can reach the things a Mac assistant should be able to reach.
 
 - **Chat** with tool use, against Anthropic or a local model.
-- **Local models** through Ollama: chat, file naming and the background jobs run on
+- **Local models** through Ollama: chat, file naming and the background jobs that use chat's model run on
   this Mac and what you type goes to no model provider; mail and calendar still come
   from your own accounts, and Research still searches the web with your own key.
+  Focus log and Compare still need an Anthropic API key, and Agents, Jax Command and
+  Self-Upgrade run the Claude Code CLI on your own Claude sign-in.
 - **Mailbox, Calendar, Contacts, Notes, Documents** against your real accounts,
   not a hosted copy of them.
 - **Meetings** that record both the microphone and system audio, transcribe on
@@ -321,7 +329,11 @@ and an assistant that can reach the things a Mac assistant should be able to rea
 - **Research** over the web, with a search key you supply.
 - **A shell** that runs real commands behind a path allowlist, a command
   denylist, a rate limit, and an audit log.
-- **Approvals**, which is where anything sensitive stops and waits for you.
+- **Approvals**, where every shell command from chat waits for your tap. In the
+  default guarded mode a push, forced git, branch deletion, a curl with an
+  explicit -X write verb, a download piped to sh or bash, a deploy or publish from
+  its list, or sudo is also held at the shell, and does not run until you approve
+  it.
 
 Every one of those is a real surface in the app. None of them is a stub.
 
@@ -364,8 +376,13 @@ grux why <feature>         # why a feature says it needs setup
 - **Every command can print itself as a prompt** instead of running, so you can
   hand the job to whichever coding agent you already use rather than translating
   it yourself.
-- **An MCP bridge**, so an agent that speaks it can drive Grux through the same
-  tools you do.
+- **An MCP bridge**, `grux serve`, so an agent that speaks it can drive Grux
+  through the same tools you do. Its `grux_shell` tool refuses, at the default
+  guarded setting, the commands Approvals holds at the shell. Two of its
+  doors have no shell gate: `grux_agent` starts an agent worker that runs without
+  permission prompts, and `grux_run` runs your own macros and workflows, whose
+  shell steps skip the shell checks. On the command line, `grux shell` asks you
+  to type run before every command, unless you pass `--yes`.
 - **Reads answer with Grux closed.** They come from files on disk. Writes go over
   a Unix socket at `0600`, so Grux still opens no network port.
 
@@ -388,7 +405,7 @@ If you run a local model through Ollama, it costs nothing at all.
 - Xcode 16 or later (Swift 6.0+). `Package.swift` says `swift-tools-version:5.9`,
   but `swift-transformers` pulls `swift-jinja` 2.x, which is written against
   tools-version 6.0, so an older toolchain cannot resolve the dependency graph
-- An Anthropic API key, or Ollama running locally
+- An Anthropic API key, or Ollama running locally. Focus log and Compare need the key either way, and Agents, Jax Command and Self-Upgrade need the Claude Code CLI, signed in
 
 Dependencies are deliberately thin. Three direct ones.
 [WhisperKit](https://github.com/argmaxinc/WhisperKit) for on-device speech, which
@@ -462,8 +479,9 @@ Ollama with no key at all.
 
 If you would rather not send anything to a hosted model at all, install
 [Ollama](https://ollama.com), pull a model, and turn on Offline mode in
-Settings, Models: Grux then uses it with no key. Ask Grux to open Local Models
-to see the models you have and the ones that fit your Mac.
+Settings, Models: Grux then uses it with no key. Offline mode also turns web search
+off, because a search sends your question to Brave Search. Ask Grux to open Local
+Models to see the models you have and the ones that fit your Mac.
 
 Credentials go to the macOS Keychain under the service `com.gruxai.grux`. They are
 never written to disk in plaintext and never leave the machine except to the
@@ -475,8 +493,9 @@ Grux asks for a lot, because it does a lot. Every one of these is optional, ever
 one is requested only when you first use the feature that needs it, and refusing
 one disables exactly that feature and nothing else.
 
-Nine permissions, and only five are required by anything at all. The other four
-are asked for by a feature that still works without them, just with less in it.
+Nine permissions under eight macOS switches: System audio capture is the same Screen & System Audio Recording switch as Screen Recording, so Settings, General lists eight rows.
+Of the nine, only five are required by anything at all. The other four are asked for by a
+feature that still works without them, just with less in it.
 
 | Permission | Required by | What refusing costs you |
 |---|---|---|
@@ -499,7 +518,10 @@ list it as optional. Move one without the other and the suite goes red.
 **Grux is not sandboxed.** ScreenCaptureKit, AppleEvents and cross app microphone
 access are not available inside the App Sandbox, so the OS level path allowlist is
 not available either. The filesystem boundary is therefore enforced in Swift, in
-one file, and that file is the only path from the model to your disk. It carries a
+one file, and that file is the only path the file tools give the model to your
+disk. The shell tool writes too, behind the gates above, and agent workers write
+with permission prompts off, inside an allow-default sandbox that blocks writes to
+Grux's own source. The file tool carries a
 read only root allowlist, a denylist covering `.ssh`, `.aws`, `.env`, the Keychain,
 Mail, Messages and browser profiles, a size cap, a rate limit, a secret pattern
 scan on everything it returns, and an audit log. That trade is written up in full
@@ -509,20 +531,40 @@ against.
 ## Privacy posture
 
 - **No account.** There is nothing to sign up for.
-- **No server.** There is no Grux backend. Nothing is proxied.
+- **No server.** There is no Grux backend. Chat goes straight from your Mac to the
+  model you chose. One switch, off by default, sends some background jobs (among
+  them hourly summaries, the workday log, folder sorting, mail and notification
+  triage, and notes about people and decisions) to a proxy you run yourself, at the address you
+  give in Settings, Voice & Ambient, under Ambient; when it does not answer, each
+  job takes chat's route.
 - **No telemetry.** No analytics SDK, no crash reporter, no usage beacon. Grep the
   tree.
 - **Your keys stay in your Keychain**, and go only to the provider they belong to.
+- **The weather asks one free service, with only the place.** Ask Grux the
+  weather and it asks [Open-Meteo](https://open-meteo.com) (no key, no account),
+  sending the words you used for the place, then the place's coordinates. Nothing
+  about you goes with it. It works in offline mode too, because a forecast is not
+  a model.
 - **Meeting audio is transcribed on device.** The recording does not leave the
   machine.
+- **Focus log, when you turn it on, sends a screenshot of your display to Anthropic
+  every few seconds to 30 seconds,** after you approve a first frame and set what to exclude.
+- **The wake word, if you turn it on, sends audio to Apple's speech service.**
+  Meetings never do.
+- **Read aloud with ElevenLabs.** With an ElevenLabs key saved, the text of each
+  reply Grux reads aloud goes to api.elevenlabs.io.
 - **Everything the model reads from disk is logged** to
   `~/Library/Application Support/Grux/fs-audit.log`, including the denials. You
   can read it at any time and it is plain text.
 
 The one thing to be clear eyed about: when you use a hosted model, that provider
-sees what you send it. Grux redacts secrets it recognises before anything goes
-out, but a hosted model is a third party by definition. Run Ollama if that matters
-to you.
+sees what you send it. When Grux has a model judge whether new mail or a
+notification needs you, it takes passwords and keys out of that text first. Mail
+you ask chat about, and mail it drafts a reply to, goes as it is. When a model asks
+the file reader for a file that holds an API key, Grux refuses to read it. What you
+type goes as you typed it, and a picture of your screen goes as it is. A hosted
+model is a third party by definition. Run Ollama if
+that matters to you.
 
 ## Feature tiers
 
@@ -559,7 +601,7 @@ Mac agent, the four modules below are usable without the app around them.
 
 **The pieces.** `GruxShellCore` is a PTY, the safety gates and the snapshot store.
 `GruxAgentCore` is orchestration. `GruxSetupCore` is the capability and permission
-model. `GruxMCPCore` is the read only MCP server. None of the four imports AppKit or
+model. `GruxMCPCore` is the library behind the read only MCP server. None of the four imports AppKit or
 SwiftUI, so they build and test without the UI stack, and all four are `.library`
 products in `Grux-Mac/Package.swift`. You can depend on one without taking the other
 three or the app.
@@ -583,7 +625,7 @@ catches already happened here:
 
 ```sh
 cd Grux-Mac
-swift test                          # 4902 tests
+swift test                          # 6079 tests
 python3 scripts/check-contract.py   # the setup contract is frozen
 ```
 
@@ -600,9 +642,11 @@ matters if you are deciding whether to contribute:
 - **A second model backend.** Chat talks to Anthropic or to Ollama. The seam is real
   but it has only ever had two implementations, so it is shaped by both of them rather
   than by the general case. A third would tell you where it is wrong.
-- **The MCP server is read only.** Writes go over a Unix socket instead. Making it a
-  full bidirectional surface is a contained piece of work and it would let any agent
-  drive the whole app.
+- **The standalone MCP server, `GruxMCPServer`, is read only.** It is built from
+  source (`swift build --product GruxMCPServer`) and does not ship in the app. It
+  serves design projects, design systems, skills and brands; `grux serve` is the one
+  that drives the app, over its Unix socket. Making it read and write is a
+  contained piece of work.
 - **The 12 features behind the Labs door.** Every one of them is real and none of
   them is finished. Agents and Self-Upgrade are the two with the most left in them.
 - **Nothing here runs on an Intel Mac.** One arm64 slice, and no reason beyond nobody

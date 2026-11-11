@@ -32,6 +32,10 @@ import SwiftUI
 //
 // Zero em/en dashes. Money is $N (MetaAdsFormat.dollars). GruxTheme tokens only.
 struct JaxCommandView: View {
+    /// D192 (3): the header line over "Jax Command". It was "The control room for your
+    /// clone", a word the pane never explains; it now opens the Labs shelf's own line for it.
+    static let eyebrowText = "Goals Grux pursues on its own"
+
     @ObservedObject private var autonomy = AutonomyController.shared
     @ObservedObject private var pursuit = GoalPursuitEngine.shared
     @ObservedObject private var profile = JaxProfile.shared
@@ -52,8 +56,7 @@ struct JaxCommandView: View {
                 )
                 JaxMemorySection(
                     sources: corpus.orderedStatuses,
-                    semanticKinds: memory.countByKind(),
-                    semanticTotal: memory.totalCount
+                    semanticKinds: memory.countByKind()
                 )
                 JaxRoadmapSection(items: roadmap.items, progress: roadmap.progress())
                 JaxGuardrailsSection()
@@ -93,7 +96,7 @@ struct JaxCommandView: View {
                     .foregroundStyle(.white)
             }
             VStack(alignment: .leading, spacing: 1) {
-                MetaAdsEyebrow(text: "The control room for your clone", tint: GruxTheme.accentPrimaryLight)
+                MetaAdsEyebrow(text: Self.eyebrowText, tint: GruxTheme.accentPrimaryLight)
                 Text("Jax Command")
                     .font(GruxTheme.Font.title)
                     .foregroundStyle(GruxTheme.textPrimary)
@@ -159,7 +162,7 @@ enum JaxModeStyle {
     static func helpText(_ mode: AutonomyMode) -> String {
         switch mode {
         case .simulate: return "SIMULATE (default): \(UserIdentity.assistantName) plans and logs the move, executes nothing. Zero real-world effect."
-        case .observe:  return "OBSERVE: \(UserIdentity.assistantName) plans the move and queues it to Jax HQ for your one-tap yes. Still nothing runs unprompted."
+        case .observe:  return "OBSERVE: \(UserIdentity.assistantName) plans the move and queues it to Jax HQ for your one-click yes. Still nothing runs unprompted."
         case .live:     return "LIVE: \(UserIdentity.assistantName) dispatches the planned Claude Code session itself. Every action still passes the decision gate."
         }
     }
@@ -277,13 +280,13 @@ struct JaxAutonomySection: View {
 // The real GoalPursuitRun records, newest first, exactly as the engine stored
 // them. Each card shows the domain, the verbatim real goal it advanced, Jax's
 // one-line rationale, the planned Claude Code action (title + scoped goal +
-// template + budget as $N), and an honest status badge: SIMULATED when nothing
-// ran (the default), DISPATCHED only when run.executed is true.
+// template + budget as $N), and an honest status badge with a line saying what
+// it means (JaxRunDisplay.status). Idle cycles in a row share one card (D98).
 struct JaxGoalPursuitSection: View {
     let runs: [GoalPursuitRun]
     let isRunning: Bool
 
-    private var recent: [GoalPursuitRun] { Array(runs.prefix(8)) }
+    private var recent: [JaxRunEntry] { JaxRunDisplay.entries(runs) }
 
     var body: some View {
         JaxSection(
@@ -298,8 +301,8 @@ struct JaxGoalPursuitSection: View {
                              text: "No cycles yet. \(UserIdentity.assistantName) runs nightly (2:00 AM to 6:00 AM local) and on demand; runs land here.")
             } else {
                 VStack(alignment: .leading, spacing: 10) {
-                    ForEach(recent) { run in
-                        JaxRunCard(run: run)
+                    ForEach(recent) { entry in
+                        JaxRunCard(entry: entry)
                     }
                 }
             }
@@ -315,8 +318,76 @@ struct JaxGoalPursuitSection: View {
     }
 }
 
-private struct JaxRunCard: View {
+// One card in Goal pursuit: a run, plus how many cycles in a row before it
+// chose the same goal and found nothing to do (D98), so an idle stretch is
+// one card, not a new one every cycle.
+struct JaxRunEntry: Identifiable {
     let run: GoalPursuitRun
+    let repeats: Int
+    let firstDate: Date
+    var id: UUID { run.id }
+}
+
+// What a run card says, kept out of the view so the words are tested.
+enum JaxRunDisplay {
+    struct Status: Equatable {
+        let label: String
+        let explanation: String?
+    }
+
+    // Runs arrive newest first. A cycle with no plan joins the card above it
+    // when that card is also planless on the same domain and goal; a plan is
+    // always its own card. `limit` counts cards, not cycles.
+    static func entries(_ runs: [GoalPursuitRun], limit: Int = 8) -> [JaxRunEntry] {
+        var out: [JaxRunEntry] = []
+        for run in runs {
+            if let last = out.last, last.run.action == nil, run.action == nil,
+               last.run.domain == run.domain, last.run.chosenGoal == run.chosenGoal {
+                out[out.count - 1] = JaxRunEntry(run: last.run, repeats: last.repeats + 1, firstDate: run.date)
+                continue
+            }
+            if out.count == limit { break }
+            out.append(JaxRunEntry(run: run, repeats: 1, firstDate: run.date))
+        }
+        return out
+    }
+
+    // A plan's budget as its card shows it. A run stored before plans were
+    // capped can hold any finite budget a model returned, and `Int(usd * 100)`
+    // traps from 9.2e16 up (wave 27), so whole cents are made only where they fit.
+    static func budget(_ usd: Double) -> String {
+        let cents = (usd * 100).rounded()
+        guard cents.isFinite, abs(cents) < 1e15 else { return AgentsView.money(usd) }
+        return MetaAdsFormat.dollars(Int(cents))
+    }
+
+    // No plan, no badge: nothing was simulated, queued or dispatched.
+    static func status(_ run: GoalPursuitRun) -> Status? {
+        guard run.action != nil else { return nil }
+        if run.executed { return Status(label: "DISPATCHED", explanation: nil) }
+        if run.mode == AutonomyMode.simulate.rawValue {
+            return Status(label: "SIMULATED",
+                          explanation: "Planned only. Nothing ran, because Autonomy was set to Simulate.")
+        }
+        // Observe, and Live when the worth judgment held it: both queue the
+        // plan to Approvals (GoalPursuitEngine.runCycle).
+        return Status(label: "SENT TO APPROVALS",
+                      explanation: "Nothing ran from here. It runs only if you say yes in Approvals.")
+    }
+
+    // A streak names its first cycle by clock time and day. "the first 1 day
+    // ago" read the same on two streaks a day apart, so the newer one seemed
+    // to start when the older one did (D116 item 3).
+    static func noActionLine(_ entry: JaxRunEntry, now: Date = Date(), calendar: Calendar = .current) -> String {
+        entry.repeats == 1
+            ? "No action worth taking this cycle."
+            : "No action worth taking, \(entry.repeats) cycles in a row (the first at \(JaxTime.clockAndDay(entry.firstDate, now: now, calendar: calendar)))."
+    }
+}
+
+private struct JaxRunCard: View {
+    let entry: JaxRunEntry
+    private var run: GoalPursuitRun { entry.run }
 
     private var domainTint: Color {
         switch run.domain {
@@ -336,7 +407,9 @@ private struct JaxRunCard: View {
                     .padding(.horizontal, 6).padding(.vertical, 2)
                     .background(Capsule().fill(domainTint.opacity(0.16)))
                 Spacer()
-                statusBadge
+                if let status = JaxRunDisplay.status(run) {
+                    statusBadge(status)
+                }
                 Text(JaxTime.ago(run.date))
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(GruxTheme.textTertiary)
@@ -356,10 +429,16 @@ private struct JaxRunCard: View {
 
             if let action = run.action {
                 plannedAction(action)
+                if let explanation = JaxRunDisplay.status(run)?.explanation {
+                    Text(explanation)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(GruxTheme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             } else {
                 HStack(spacing: 6) {
                     Image(systemName: "minus.circle").font(.system(size: 10))
-                    Text("No action worth taking this cycle.")
+                    Text(JaxRunDisplay.noActionLine(entry))
                         .font(.system(size: 10, weight: .medium))
                 }
                 .foregroundStyle(GruxTheme.textTertiary)
@@ -378,15 +457,13 @@ private struct JaxRunCard: View {
     }
 
     // Honest status: DISPATCHED only when the run actually executed (LIVE mode).
-    // Everything else is SIMULATED, the plan existed but nothing ran.
-    private var statusBadge: some View {
+    private func statusBadge(_ status: JaxRunDisplay.Status) -> some View {
         let dispatched = run.executed
         let tint = dispatched ? GruxTheme.successMint : GruxTheme.textSecondary
-        let label = dispatched ? "DISPATCHED" : "SIMULATED"
         let icon = dispatched ? "paperplane.fill" : "circle.dashed"
         return HStack(spacing: 4) {
             Image(systemName: icon).font(.system(size: 8, weight: .bold))
-            Text(label).font(GruxTheme.Font.microCaps).kerning(0.8)
+            Text(status.label).font(GruxTheme.Font.microCaps).kerning(0.8)
         }
         .foregroundStyle(tint)
         .padding(.horizontal, 6).padding(.vertical, 2)
@@ -409,7 +486,7 @@ private struct JaxRunCard: View {
                     .foregroundStyle(GruxTheme.textTertiary)
                     .padding(.horizontal, 5).padding(.vertical, 1)
                     .background(Capsule().fill(Color.white.opacity(0.05)))
-                Text(MetaAdsFormat.dollars(Int((action.budgetUSD * 100).rounded())))
+                Text(JaxRunDisplay.budget(action.budgetUSD))
                     .font(.system(size: 10, weight: .heavy, design: .rounded))
                     .foregroundStyle(GruxTheme.warnAmber)
             }
@@ -528,15 +605,151 @@ struct JaxIdentitySection: View {
 struct JaxMemorySection: View {
     let sources: [CorpusCoordinator.SourceStatus]
     let semanticKinds: [SemanticMemoryKind: Int]
-    let semanticTotal: Int
 
     private var corpusTotal: Int { sources.reduce(0) { $0 + $1.totalIndexed } }
 
     // Hot lanes, biggest first, excluding the uncapped corpus lane (shown above).
-    private var hotLanes: [(SemanticMemoryKind, Int)] {
-        semanticKinds
+    private var hotLanes: [(SemanticMemoryKind, Int)] { Self.hotLanes(semanticKinds) }
+
+    static func hotLanes(_ kinds: [SemanticMemoryKind: Int]) -> [(SemanticMemoryKind, Int)] {
+        kinds
             .filter { $0.key != .corpus && $0.value > 0 }
             .sorted { $0.value > $1.value }
+    }
+
+    // D128: the card holds two stores and said so of neither. The corpus is the person's
+    // own writing, indexed only from the sources they pick; the chips below it are what
+    // was said in chat (and heard, seen or looked up) while Settings, Memory is on. The
+    // card read "0 voice corpus items indexed" over "JAX 619 YOU 556", under a setup card
+    // saying "Nothing is indexed until you choose.", so each line now names its source.
+
+    /// The sum of the chips it sits beside. It was `SemanticMemory.totalCount`, which
+    /// counts the corpus the chips leave out.
+    static func lanesTotal(_ kinds: [SemanticMemoryKind: Int]) -> Int {
+        hotLanes(kinds).reduce(0) { $0 + $1.1 }
+    }
+
+    static let corpusHeadlineText = "items of your own writing indexed"
+
+    /// D179 item 4: this said "Run a corpus sweep" where no control has that name.
+    /// Wave 63 rounds 1 and 2: it then named a setup step whose confirm indexes nothing,
+    /// then first run's "Teach Grux your voice" screen, which the default first run never
+    /// shows. The card now lists every source with an Index button on each readable one
+    /// (`canIndex`), and the line points at those, or says none can be read yet. A read
+    /// in progress is said as such; once anything has been read, the line points at the
+    /// rows, which say what each read reported (round 6).
+    static func canIndex(_ s: CorpusCoordinator.SourceStatus) -> Bool {
+        s.permission == .ready && !s.isRunning
+    }
+
+    /// Why a source with nothing indexed cannot be read now, in words a person can act
+    /// on. Wave 63 round 3: the probe's own text read "Status unknown until first run."
+    /// for Notes while the Notes app is closed (its probe cannot tell then) and "No data
+    /// found yet for this source." for the two import folders, naming neither folder.
+    static func needLine(_ s: CorpusCoordinator.SourceStatus) -> String? {
+        guard s.totalIndexed == 0 else { return nil }
+        // Wave 66 round 3: the probe on reopen sees only a stored password, so a
+        // refused login stands until a later read and keeps naming the fix.
+        if loginRefused(s) {
+            return "Last read: \(sentence(s.lastNote.trimmingCharacters(in: .whitespacesAndNewlines))) "
+                + "Gmail needs an app password, not your Google password: remove the Gmail account in Mail, Accounts "
+                + "and add it again with one, then " + (s.permission == .ready ? "press Index." : "reopen this tab.")
+        }
+        // Wave 63 rounds 4 and 6: a read that indexed nothing showed a guessed reason
+        // ("Not checked yet", "No Gmail account configured", or the line's "had
+        // nothing"). While its verdict still stands, the row says what that read
+        // reported, readable or not; a failed one says how to check again.
+        if readVerdictStands(s), !s.lastNote.isEmpty, s.lastNote != s.permission.humanReason {
+            let note = s.lastNote.trimmingCharacters(in: .whitespacesAndNewlines)
+            return s.permission == .ready
+                ? "Last read: \(note)"
+                : "Last read: \(sentence(note)) Reopen this tab to check it again."
+        }
+        guard s.permission != .ready else { return nil }
+        switch (s.source, s.permission) {
+        case (.chatHistory, .noData):
+            return "Put a Claude or ChatGPT export (.json or .zip) in \(shownPath(ChatHistoryImporter.importsDir)), then reopen this tab."
+        case (.voiceRecording, .noData):
+            return "Put recordings (.m4a, .wav, .mp3, .caf, .aiff or .aac) in \(shownPath(VoiceRecordingsIngester.voiceDir)), then reopen this tab."
+        case (.notes, .unknown):
+            return "Grux can tell whether it may read Notes only while Notes is running. Open the Notes app, then reopen this tab."
+        case (_, .noData):
+            return "Grux found nothing in it to read yet."
+        case (_, .unknown):
+            return "Not checked yet. Reopen this tab to check."
+        default:
+            return s.permission.humanReason
+        }
+    }
+
+    /// The note as a sentence: its own closing mark kept, a period added only when it
+    /// has none. Wave 63 round 7 P3 16: "IMAP timed out (FETCH).. Reopen this tab".
+    static func sentence(_ note: String) -> String {
+        guard let last = note.last else { return note }
+        return ".!?\u{2026}".contains(last) ? note : note + "."
+    }
+
+    /// Gmail refused the password on the last read, no read has worked since, and
+    /// the account is still there. The line names Remove and Add again (wave 66
+    /// round 4); since wave 75 round 3 adding the same address alone also
+    /// updates the account (`EmailAccountStore.formTarget`).
+    static func loginRefused(_ s: CorpusCoordinator.SourceStatus) -> Bool {
+        s.source == .gmailSent && s.lastRunAt != nil && s.lastRunPermission == .unknown
+            && s.permission != .needsAccount && s.permission != .needsPassword
+            && GmailSentIngester.refusedLogin(s.lastNote)
+    }
+
+    /// A read happened and no later probe disagrees with its verdict. A status saved
+    /// before the verdict was kept (nil) counts as standing.
+    static func readVerdictStands(_ s: CorpusCoordinator.SourceStatus) -> Bool {
+        s.lastRunAt != nil && (s.lastRunPermission ?? s.permission) == s.permission
+    }
+
+    /// The folder an import source reads, for its Show folder button.
+    static func folder(for source: CorpusSource) -> URL? {
+        switch source {
+        case .chatHistory:    return ChatHistoryImporter.importsDir
+        case .voiceRecording: return VoiceRecordingsIngester.voiceDir
+        default:              return nil
+        }
+    }
+
+    private static func shownPath(_ url: URL) -> String {
+        (url.path as NSString).abbreviatingWithTildeInPath
+    }
+
+    static func corpusEmptyText(assistant: String, anySourceRan: Bool = false, anyRunning: Bool = false,
+                                anyReady: Bool = false) -> String {
+        if anyRunning {
+            return "None of your own writing is indexed yet. Grux is reading the sources now."
+        }
+        if anySourceRan {
+            // No claim about what the reads found: each way a read can fail fooled one
+            // (wave 63 round 6). The rows say it.
+            return "None of your own writing is indexed yet. Each source below says where it stands."
+        }
+        if anyReady {
+            return "None of your own writing is indexed yet. Index a source below to teach \(assistant) your voice from it; nothing is read until you do."
+        }
+        return "None of your own writing is indexed. No source below can be read yet, so \(assistant) cannot learn your voice from them; each says why."
+    }
+
+    static let lanesTitle = "REMEMBERED FROM CHAT"
+
+    static func lanesCaption(assistant: String) -> String? {
+        "What you and \(assistant) said in chat, and what \(assistant) learned while you used Grux, kept on this Mac while Memory is on. Separate from your own writing above."
+    }
+
+    static func laneLabel(_ kind: SemanticMemoryKind, assistant: String) -> String {
+        switch kind {
+        case .chatUser:      return "you said"
+        case .chatAssistant: return "\(assistant) said"
+        case .ambient:       return "heard"
+        case .focus:         return "screen"
+        case .fact:          return "facts"
+        case .web:           return "web"
+        case .corpus:        return "corpus"
+        }
     }
 
     var body: some View {
@@ -546,12 +759,16 @@ struct JaxMemorySection: View {
 
                 if sources.allSatisfy({ $0.totalIndexed == 0 }) {
                     JaxEmptyLine(icon: "tray",
-                                 text: "No corpus indexed yet. Run a corpus sweep to teach \(UserIdentity.assistantName) your voice from your own writing.")
-                } else {
-                    VStack(spacing: 6) {
-                        ForEach(sources) { source in
-                            corpusRow(source)
-                        }
+                                 text: Self.corpusEmptyText(assistant: UserIdentity.assistantName,
+                                                                 anySourceRan: sources.contains { $0.lastRunAt != nil },
+                                                                 anyRunning: sources.contains { $0.isRunning },
+                                                                 anyReady: sources.contains { Self.canIndex($0) }))
+                }
+                // Listed even while nothing is indexed: each readable source carries
+                // its own Index button, the one place after first run to start it.
+                VStack(spacing: 6) {
+                    ForEach(sources) { source in
+                        corpusRow(source)
                     }
                 }
 
@@ -568,7 +785,7 @@ struct JaxMemorySection: View {
             Text("\(corpusTotal.formatted())")
                 .font(.system(size: 26, weight: .heavy, design: .rounded))
                 .foregroundStyle(GruxTheme.textPrimary)
-            Text("voice corpus items indexed")
+            Text(Self.corpusHeadlineText)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(GruxTheme.textSecondary)
             Spacer()
@@ -576,6 +793,7 @@ struct JaxMemorySection: View {
     }
 
     private func corpusRow(_ source: CorpusCoordinator.SourceStatus) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
         HStack(spacing: 9) {
             Circle()
                 .fill(sourceTint(source).opacity(source.totalIndexed > 0 ? 0.9 : 0.3))
@@ -587,18 +805,49 @@ struct JaxMemorySection: View {
                 ProgressView().controlSize(.mini)
             }
             Spacer()
-            Text(source.totalIndexed > 0 ? source.totalIndexed.formatted() : statusHint(source))
+            Text(source.totalIndexed > 0 ? source.totalIndexed.formatted() : Self.statusHint(source))
                 .font(.system(size: 11, weight: source.totalIndexed > 0 ? .heavy : .medium, design: source.totalIndexed > 0 ? .rounded : .default))
                 .foregroundStyle(source.totalIndexed > 0 ? sourceTint(source) : GruxTheme.textTertiary)
+            if Self.canIndex(source) {
+                Button("Index") {
+                    Task { @MainActor in _ = await CorpusCoordinator.shared.run(source.source) }
+                }
+                .controlSize(.small)
+                .help("Read \(source.displayName) and learn how you write from it")
+            }
+        }
+            // Why a source cannot be read, on the row, not only on hover.
+            if let need = Self.needLine(source) {
+                Text(need)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(GruxTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 16)
+                if source.permission == .noData, let dir = Self.folder(for: source.source) {
+                    Button("Show folder") {
+                        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                        NSWorkspace.shared.activateFileViewerSelecting([dir])
+                    }
+                    .controlSize(.small)
+                    .padding(.leading, 16)
+                }
+            }
         }
         .help(source.lastNote)
     }
 
-    private func statusHint(_ source: CorpusCoordinator.SourceStatus) -> String {
+    /// The chip beside a row with nothing indexed. It said "not run" for every unknown
+    /// state, beside "Last read: Sent sync error" after a read that failed (wave 63).
+    static func statusHint(_ source: CorpusCoordinator.SourceStatus) -> String {
+        if loginRefused(source), !source.isRunning { return "login failed" }
         switch source.permission {
         case .ready:   return source.isRunning ? "indexing" : "ready"
         case .noData:  return "no data"
-        case .unknown: return "not run"
+        case .unknown: return readVerdictStands(source) ? "read failed" : "not checked"
+        // D192: no account is something to set up, not a permission to grant.
+        case .needsAccount: return "not set up"
+        case .needsPassword: return "no password"
+        case .needsKeychain: return "keychain locked"
         default:       return "needs access"
         }
     }
@@ -616,15 +865,21 @@ struct JaxMemorySection: View {
     private var hotLanesView: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
-                Text("HOT SEMANTIC LANES")
+                Text(Self.lanesTitle)
                     .font(GruxTheme.Font.microCaps).kerning(1.0)
                     .foregroundStyle(GruxTheme.textTertiary)
                 Spacer()
-                Text("\(semanticTotal.formatted()) total")
+                Text("\(Self.lanesTotal(semanticKinds).formatted()) total")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(GruxTheme.textTertiary)
             }
-            JaxLaneChips(chips: hotLanes.map { ($0.0.laneLabel, $0.1) })
+            if let caption = Self.lanesCaption(assistant: UserIdentity.assistantName) {
+                Text(caption)
+                    .font(.system(size: 11))
+                    .foregroundStyle(GruxTheme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            JaxLaneChips(chips: hotLanes.map { (Self.laneLabel($0.0, assistant: UserIdentity.assistantName), $0.1) })
         }
     }
 }
@@ -649,20 +904,6 @@ private struct JaxLaneChips: View {
                 .overlay(Capsule().strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
             }
             Spacer(minLength: 0)
-        }
-    }
-}
-
-private extension SemanticMemoryKind {
-    var laneLabel: String {
-        switch self {
-        case .chatUser:      return "you"
-        case .chatAssistant: return "jax"
-        case .ambient:       return "heard"
-        case .focus:         return "screen"
-        case .fact:          return "facts"
-        case .web:           return "web"
-        case .corpus:        return "corpus"
         }
     }
 }
@@ -769,29 +1010,46 @@ struct JaxRoadmapSection: View {
 
 // MARK: - 6. Guardrails (the five hard rules, stated plainly)
 
-// Static, by design. These are the absolute lines from Jax's persona, the same
-// ones the decision gate enforces. Shown so the user (and anyone over their
-// shoulder) can see, in one place, exactly what the clone will never do.
+// Fixed rules, by design. These are the absolute lines the decision gate
+// enforces; the only part that varies is the assistant name, read from the
+// roster the person configured (D118: it once named the owner's own persona).
+// Shown so the user (and anyone over their shoulder) can see, in one place,
+// exactly what the clone will never do.
 struct JaxGuardrailsSection: View {
-    private struct Rule: Identifiable {
+    struct Rule: Identifiable {
         let id = UUID()
         let icon: String
         let title: String
         let detail: String
     }
 
-    private let rules: [Rule] = [
+    private var rules: [Rule] { Self.rules(roster: CommsRosterStore.current, canSendMail: KeychainStore.exists(.resendApiKey)) }
+
+    static func rules(roster: CommsRoster, canSendMail: Bool) -> [Rule] { [
         Rule(icon: "dollarsign.circle.fill", title: "Never moves money",
-             detail: "No send, transfer, swap, or purchase, ever, on its own. The most it does is queue a spend for your one-tap yes."),
+             detail: "No send, transfer, swap, or purchase, ever, on its own. The most it does is queue a spend for your one-click yes."),
         Rule(icon: "lock.doc.fill", title: "Never leaks the edge",
-             detail: "Your documents, files, insights, and trade secrets never go to anyone outside. The empire's edge stays inside."),
+             detail: "Your documents, files, insights, and trade secrets never go to anyone outside. A send like that is refused, not queued for your OK."),
         Rule(icon: "megaphone.fill", title: "Never posts publicly as you",
              detail: "No Threads, no social publishing, no public statements in your name."),
         Rule(icon: "person.2.fill", title: "Always discloses correctly",
-             detail: "Outbound mail is signed as Sarah for business, as you for personal. It never blurs that line."),
+             detail: disclosure(roster: roster, canSendMail: canSendMail)),
         Rule(icon: "hand.raised.fill", title: "When unsure, it pauses and asks",
              detail: "Its default verdict past a guardrail is pause. It notifies you now and waits in the Jax HQ queue. It never guesses past a hard rule.")
-    ]
+    ] }
+
+    // Who signs which mail. Without a Resend key, the one way Grux sends mail
+    // (ResendClient refuses without it), no mail goes out, and the rule says so
+    // before it says who would sign it (D187 item 3).
+    static func disclosure(roster: CommsRoster, canSendMail: Bool) -> String {
+        let who = roster.namesAssistant
+            ? "business mail is signed as \(roster.businessName), your assistant, personal mail as you."
+            : "business mail is signed by your assistant, personal mail by you."
+        let rule = canSendMail
+            ? who.prefix(1).uppercased() + who.dropFirst()
+            : "Grux sends no mail until a Resend API key is added in Settings. Then " + who
+        return rule + " It never blurs that line."
+    }
 
     var body: some View {
         JaxSection(title: "Guardrails", icon: "shield.lefthalf.filled", tint: GruxTheme.warnAmber) {

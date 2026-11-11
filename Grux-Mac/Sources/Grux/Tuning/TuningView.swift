@@ -24,6 +24,10 @@ enum TuningCopy {
     static let spokenPointer = "Speaking aloud and voice speed are in Tuning. The voice itself and its key stay here."
     static let memoryPointer = "The switch is in Tuning. What Grux holds, and clearing it, stay here."
     static let selfUpgradePointer = "How much it may do by itself, at most, is in Tuning."
+    /// The self-upgrade ceiling's dial and its three choices, one per tier. First run's
+    /// How Grux works card names them, so both read these (D138 item 6).
+    nonisolated static let selfUpgradeDial = "Self-upgrade, at most"
+    nonisolated static let selfUpgradeChoices = ["Proposes", "Builds, then asks", "Lands on its own"]
     static let listeningPointer = "Choosing the mode, and whether Grux tells you when it acts, are in Tuning beside how sure it must be."
     /// The one true way to cut Grux off mid-sentence. It does not listen while
     /// it talks (SpeechEngine), so a "stop when I talk over it" switch would
@@ -32,13 +36,32 @@ enum TuningCopy {
 
     /// `spends` is whether anything on this setup is billed. The estimate is
     /// for a cloud key; a fresh install with none read "about $60 a month"
-    /// while nothing could be charged (W4 pass 2, 2026-10-13).
-    static func tierPointer(_ tier: GruxTier, spends: Bool = true) -> String {
+    /// while nothing could be charged (W4 pass 2, 2026-10-13). A saved
+    /// Decisions key bills TypeSafe for each decision Jev judges, so with one
+    /// the line never says nothing is billed (D203); `decisionCap` is
+    /// `dailyDecisionBudget`, 0 for no cap.
+    static func tierPointer(_ tier: GruxTier, spends: Bool = true, decisionsKey: Bool = false, decisionCap: Int = 0) -> String {
+        let cap = decisionCap > 0 ? ", at most \(decisionCap) a day" : ", with no daily cap"
+        let key = "your Decisions key is billed by TypeSafe for each decision Jev judges\(cap)"
         guard spends else {
-            return "\(tier.label), $0 a month as set up: there is no cloud key, so nothing is billed. "
-                + "How often Grux looks, and what a key would cost, is in Tuning."
+            guard decisionsKey else {
+                return "\(tier.label), $0 a month as set up: there is no cloud key, so nothing is billed. "
+                    + "How often Grux looks, and what a key would cost, is in Tuning."
+            }
+            return "\(tier.label). There is no cloud key, so how often Grux looks costs nothing; \(key). "
+                + "How often Grux looks, and what the key spent today, is in Tuning."
         }
-        return "\(tier.label), about $\(tier.estimatedMonthlyUSD) a month. How often Grux looks, and what that costs, is in Tuning."
+        guard decisionsKey else {
+            return "\(tier.label), about $\(tier.estimatedMonthlyUSD) a month. How often Grux looks, and what that costs, is in Tuning."
+        }
+        return "\(tier.label), about $\(tier.estimatedMonthlyUSD) a month, and \(key). "
+            + "How often Grux looks, and what that costs, is in Tuning."
+    }
+
+    /// The Models line from this Mac's own keys and cap.
+    @MainActor static func tierPointerNow(_ config: GruxConfig) -> String {
+        tierPointer(config.tier, spends: tierSpends, decisionsKey: DecisionEngine.shared.hasSavedKey,
+                    decisionCap: config.dailyDecisionBudget)
     }
 
     /// Whether this setup can be billed at all: a cloud key, or a hosted endpoint.
@@ -332,9 +355,11 @@ struct TuningView: View {
             dial("How often it looks, and what that costs") {
                 ForEach(GruxTier.allCases) { tierRow($0) }
             }
-            dial("Self-upgrade, at most") {
+            dial(TuningCopy.selfUpgradeDial) {
                 Picker("", selection: binding(\.selfUpgradeMaxTier)) {
-                    Text("Proposes").tag(0); Text("Builds, then asks").tag(1); Text("Lands on its own").tag(2)
+                    ForEach(TuningCopy.selfUpgradeChoices.indices, id: \.self) { tier in
+                        Text(TuningCopy.selfUpgradeChoices[tier]).tag(tier)
+                    }
                 }.pickerStyle(.segmented).labelsHidden()
                 note("The most any part of Grux may do by itself, whatever it has earned. Lowering it takes effect at once.")
             }

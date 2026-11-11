@@ -89,6 +89,11 @@ enum SetupOrder {
         /// was listed under "Already working" with no model at all (W4 pass 1,
         /// 2026-10-13).
         var needsModel: [String] = []
+        /// Feature ids whose only gap is the Claude sign-in the last agent run
+        /// found expired: the CLI is installed, so its step reads done, and
+        /// Agents was listed under "Already working" while it could not run
+        /// (D115 item 4, `fr55/setup-1.png`).
+        var needsSignIn: [String] = []
     }
 
     enum Rule: CaseIterable {
@@ -106,9 +111,11 @@ enum SetupOrder {
     /// the plan until it has actually started.
     static func plan(features: [FeatureRow], listening: Bool, listeningStarted: Bool,
                      satisfied: (SetupRequirement) -> Bool,
+                     signInExpired: Bool = false,
                      skip: Set<SetupRequirement> = handledByTheModelGate.union(handledByItsOwnScreen)) -> Plan {
         var ready: [String] = []
         var needsModel: [String] = []
+        var needsSignIn: [String] = []
         var need: [SetupRequirement: [String]] = [:]
         var firstSeen: [SetupRequirement] = []
         func note(_ r: SetupRequirement, for id: String, in table: inout [SetupRequirement: [String]]) {
@@ -119,7 +126,14 @@ enum SetupOrder {
             let all = FeatureRegistry.unmetBlocking(of: row, satisfied: satisfied)
             let unmet = all.filter { !skip.contains($0) }
             if unmet.isEmpty {
-                if all.contains(where: handledByTheModelGate.contains) { needsModel.append(row.id) } else { ready.append(row.id) }
+                if all.contains(where: handledByTheModelGate.contains) {
+                    needsModel.append(row.id)
+                } else if CapabilitySetupCard.listsAgentSignIn(blocking: row.blocking, missing: all,
+                                                               signInExpired: signInExpired) {
+                    needsSignIn.append(row.id)
+                } else {
+                    ready.append(row.id)
+                }
             }
             for r in unmet { note(r, for: row.id, in: &need) }
         }
@@ -135,7 +149,8 @@ enum SetupOrder {
         }
         let required = sorted(firstSeen.compactMap { r in need[r].map { Item(requirement: r, neededBy: $0) } })
         let optional = sorted(firstSeen.compactMap { r in extra[r].map { Item(requirement: r, neededBy: $0) } })
-        return Plan(ready: ready, required: required, optional: optional, needsModel: needsModel)
+        return Plan(ready: ready, required: required, optional: optional, needsModel: needsModel,
+                    needsSignIn: needsSignIn)
     }
 
     /// Items by the rules in `rules` order, contract order breaking ties, and
@@ -213,7 +228,7 @@ enum SetupOrder {
     static func screens(for plan: Plan, oneAtATime: Bool, extrasAccepted: Bool,
                         decisionsKey: Bool = false) -> [Screen] {
         var out: [Screen] = []
-        if !plan.ready.isEmpty || !plan.needsModel.isEmpty { out.append(.ready(plan.ready)) }
+        if !plan.ready.isEmpty || !plan.needsModel.isEmpty || !plan.needsSignIn.isEmpty { out.append(.ready(plan.ready)) }
         let extrasCount = plan.optional.count + (decisionsKey ? 1 : 0)
         if oneAtATime {
             let extrasScreens = extrasCount == 0 ? 0 : 1 + (extrasAccepted ? extrasCount : 0)

@@ -113,9 +113,9 @@ no en dashes. Write clock times as 4:15 PM, never 16:15.
 
 The feature renders `needs-setup` with a setup card showing these exact strings.
 
-- Screen Recording: "Grux needs Screen Recording to see what you are working on. Open System Settings, Privacy and Security, Screen Recording, and enable Grux."
-- Accessibility: "Grux needs Accessibility to read the active window title. Open System Settings, Privacy and Security, Accessibility, and enable Grux."
-- Anthropic API key: "Add your Anthropic API key in Settings to use Claude. Get one at console.anthropic.com. Chat also runs on a local model with no key."
+- Screen Recording: "Grux needs Screen Recording to see your work. In System Settings, Privacy & Security, Screen & System Audio Recording, turn on Grux AI."
+- Accessibility: "Grux needs Accessibility to read the active window title. Open System Settings, Privacy & Security, Accessibility, and turn on Grux AI."
+- Anthropic API key: "Add your Anthropic API key in Settings to use Claude. Get one at console.anthropic.com. Many features run on a local model with no key."
 - Notifications: "Allow notifications so Grux can nudge you. Open System Settings, Notifications, Grux, and turn them on."
 
 There is one more gate that is not a capability. While `grux.capture.first_frame_reviewed`

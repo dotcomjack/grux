@@ -222,7 +222,7 @@ enum CapabilityResolver {
         case .keyTelegram:
             return CredentialCompanion(
                 title: "Telegram chat id",
-                placeholder: "the chat or channel the alerts go to",
+                placeholder: "chat or channel id for alerts",
                 isSatisfied: { !KeychainStore.get(.telegramChatId).isEmpty },
                 save: { raw in
                     let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -230,9 +230,29 @@ enum CapabilityResolver {
                     _ = KeychainStore.set(.telegramChatId, t)
                     return true
                 })
+        case .keyNotion:
+            // The row's own line asks for the secret and the database, and Notion
+            // writes only with both (`NotionClient.isConnected`), D170 item 2.
+            return CredentialCompanion(
+                title: "Notion database",
+                placeholder: "the database's link or id",
+                isSatisfied: { !KeychainStore.get(.notionDatabaseId).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty },
+                save: { raw in
+                    guard let id = notionDatabaseId(from: raw) else { return false }
+                    _ = KeychainStore.set(.notionDatabaseId, id)
+                    return true
+                })
         default:
             return nil
         }
+    }
+
+    /// The database id in what Notion gives a person to copy: the database's link
+    /// (`notion.so/team/Title-<id>?v=<view id>`) or the id itself, with or without
+    /// dashes. The view id after `?v=` is also 32 hex characters and is not the
+    /// database, so the query and fragment are cut first. Nil when there is no id.
+    static func notionDatabaseId(from raw: String) -> String? {
+        NotionClient.databaseId(from: raw)
     }
 
     // MARK: - perm.*
@@ -579,7 +599,8 @@ enum CapabilityResolver {
             return firstFrameWasReviewed(stage: OnboardingModel.shared.stage,
                                         skippedFirstLook: OnboardingModel.shared.skippedFirstLook,
                                         level: OnboardingModel.shared.level,
-                                        path: OnboardingModel.shared.path)
+                                        path: OnboardingModel.shared.path,
+                                        reviewedAFrame: OnboardingModel.shared.reviewedAFrame)
         default:
             guard let key = stepDefaultsKey(for: requirement) else { return false }
             return UserDefaults.standard.bool(forKey: key)
@@ -594,12 +615,26 @@ enum CapabilityResolver {
     /// come up, so only the screen's own "Continue" counts (`skippedFirstLook`
     /// starts true there and only `recordFirstLookReviewed` clears it); the
     /// level alone says nothing about what was shown.
+    /// `reviewedAFrame` is a "Looks right" with a frame on screen, which counts
+    /// on every path and level: Focus log's card offers it at Essentials on the
+    /// list path too, where the walk never shows the first look (W52-FIX).
     static func firstFrameWasReviewed(stage: OnboardingModel.Stage,
                                       skippedFirstLook: Bool,
                                       level: OnboardingModel.Level,
-                                      path: OnboardingModel.Path = .list) -> Bool {
+                                      path: OnboardingModel.Path = .list,
+                                      reviewedAFrame: Bool = false) -> Bool {
         guard stage == .done, skippedFirstLook == false else { return false }
-        return path == .question || OnboardingModel.stages(for: level).contains(.firstLook)
+        return reviewedAFrame || path == .question || OnboardingModel.stages(for: level).contains(.firstLook)
+    }
+
+    /// Focus log's card "Looks right" (D157 item 3), taken only with a frame
+    /// on screen (`FirstFrameReview.canConfirm`). Recorded where the walk's own
+    /// "Looks right" records it, so there is one home and nothing to disagree,
+    /// and it counts at every level (`reviewedAFrame`, W52-FIX).
+    static func recordFirstFrameReviewedOnCard() {
+        OnboardingModel.shared.recordFirstLookReviewed()
+        markStepCompleted(.stepFirstFrameReviewed)
+        WakeLog.shared.log("setup: step.first_frame_reviewed answered on its card, a frame on screen")
     }
 
     /// Marks a setup step complete. The only writer, so a step cannot be set
@@ -608,6 +643,9 @@ enum CapabilityResolver {
         // WRITTEN WHERE IT IS READ. A step whose truth lives somewhere else has to be
         // written there too, or the onboarding checkbox sets a key nothing consults and the
         // control springs back the next time the screen is drawn.
+        // Every step answer redraws the setup gates. Nothing watches UserDefaults, so a
+        // card answered in place stayed up until something unrelated redrew it (D138).
+        defer { SetupRevision.shared.bump() }
         if requirement == .stepRecordingConsentAcknowledged {
             AppState.shared.config.recordingConsentAcknowledged = done
             AppState.shared.saveAll()
@@ -622,6 +660,16 @@ enum CapabilityResolver {
         // mic-status.json shipped with for weeks.
         SetupStatusFile.write()
     }
+}
+
+/// Bumped whenever a setup step is answered, so `CapabilityGate` and
+/// `CapabilitySetupCard` redraw: they read the resolver on every render, and a
+/// step's truth lives in UserDefaults, which SwiftUI does not watch.
+@MainActor
+final class SetupRevision: ObservableObject {
+    static let shared = SetupRevision()
+    @Published private(set) var count = 0
+    func bump() { count += 1 }
 }
 
 extension SetupRequirement {

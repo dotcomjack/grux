@@ -57,6 +57,7 @@ struct CompareView: View {
         VStack(alignment: .leading, spacing: 2) {
             Text("Compare")
                 .font(GruxType.display)
+                .unlessPaneTitle("Compare")
                 .foregroundStyle(GruxTheme.textPrimary)
             Text("One prompt, every model, blind vote, merged best answer.")
                 .font(GruxType.caption)

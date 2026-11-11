@@ -30,6 +30,8 @@ import SwiftUI
 ///     Meetings needs one more thing
 ///     2 items are missing. Everything else is ready.
 ///
+/// (Since D97 only the headline counts; the subtitle says whether the rest is ready.)
+///
 /// Caught by opening the tab and reading it, not by a test, because no test asserted
 /// on the headline at all. This is that test.
 final class SetupCardPluralisationTests: XCTestCase {
@@ -41,19 +43,20 @@ final class SetupCardPluralisationTests: XCTestCase {
                      : "\(label) needs \(missing) more things"
     }
 
-    private func subtitle(_ missing: Int) -> String {
-        CapabilitySetupCard.subtitle(missing: missing, readyBesides: 1)
-    }
-
-    func testHeadlineAndSubtitleAgreeOnCount() {
-        for n in 1...5 {
-            let h = headline("Meetings", missing: n)
-            let s = subtitle(n)
-            let headlineIsSingular = h.contains("one more thing")
-            let subtitleIsSingular = s.hasPrefix("One item")
-            XCTAssertEqual(headlineIsSingular, subtitleIsSingular,
-                "with \(n) missing the headline says \(h.contains("one") ? "one" : "many") "
-                + "and the subtitle says the other. That is the card arguing with itself.")
+    /// D97 (sense pass 8): the subtitle counted too, four ways ("One item is
+    /// missing.", "3 items are missing.", each with and without "Everything
+    /// else is ready."). The headline is the one place the count lives, so the
+    /// subtitle can never argue with it, and it reads one of two sentences.
+    func testOnlyTheHeadlineCountsAndTheSubtitleReadsOneOfTwoSentences() {
+        for ready in 0...3 {
+            for listed in 1...3 {
+                let s = CapabilitySetupCard.subtitle(readyBesides: ready, listed: listed)
+                XCTAssertNil(s.rangeOfCharacter(from: .decimalDigits), "the subtitle repeats a count: \(s)")
+                XCTAssertFalse(s.contains("item"), "the subtitle counts items: \(s)")
+                // D115 item 8: with nothing ready yet the line says the listed items are all it needs.
+                XCTAssertEqual(s, ready > 0 ? "Everything else is ready."
+                                            : (listed == 1 ? "Once this is done, it is ready." : "Once these are done, it is ready."))
+            }
         }
     }
 
@@ -392,9 +395,9 @@ final class BetaBadgeTests: XCTestCase {
 @MainActor
 final class MailSetupCardOnlyTests: XCTestCase {
     func test_theCardSaysTheRestIsReadyOnlyWhenThereIsARest() {
-        XCTAssertEqual(CapabilitySetupCard.subtitle(missing: 1, readyBesides: 0), "One item is missing.")
-        XCTAssertEqual(CapabilitySetupCard.subtitle(missing: 2, readyBesides: 0), "2 items are missing.")
-        XCTAssertTrue(CapabilitySetupCard.subtitle(missing: 1, readyBesides: 2).hasSuffix("Everything else is ready."))
+        XCTAssertEqual(CapabilitySetupCard.subtitle(readyBesides: 0, listed: 1), "Once this is done, it is ready.")
+        XCTAssertEqual(CapabilitySetupCard.subtitle(readyBesides: 1, listed: 1), "Everything else is ready.")
+        XCTAssertEqual(CapabilitySetupCard.subtitle(readyBesides: 2, listed: 2), "Everything else is ready.")
     }
 
     func test_mailWithNoAccountHasNothingElseReady() throws {

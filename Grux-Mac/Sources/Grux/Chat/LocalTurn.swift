@@ -74,8 +74,11 @@ enum LocalTurn {
     /// above it (persona, name, voice, the trust boundary) and drops the rest.
     static let leanCut = "TOOL USE - READ CAREFULLY"
 
+    /// D115 item 10: with only the first sentence, qwen3.5:4b answered "What
+    /// can you do?" by calling list_tasks and reading the person's tasks back,
+    /// a second hop and the wrong answer, though WHAT_YOU_CAN_DO sat below.
     static let toolNote = """
-    TOOLS: call a tool only when the user asks for something it does (a task, an event, a note, a search). Otherwise answer directly, in one to three sentences.
+    TOOLS: call a tool only when the user asks for something it does (a task, an event, a note, a search). A question about you (what you can do, who you are, how you work) needs no tool: answer it from WHAT_YOU_CAN_DO below. Otherwise answer directly, in one to three sentences.
     """
 
     /// The lean system prompt: the stable prompt up to its tool manual, the
@@ -129,7 +132,11 @@ enum LocalTurn {
     /// two", and a different set for every question, so no two turns shared a
     /// prompt.
     static func rank(_ tools: [ClaudeTool], utterance: String) -> [ClaudeTool] {
-        let words = Set(utterance.lowercased().split { !$0.isLetter && !$0.isNumber }
+        // D180 item 1: "to-do" splits into words too short to count, and its
+        // "list" ranked every list_* tool above add_task; it is a task word.
+        let said = utterance.lowercased()
+            .replacingOccurrences(of: #"\bto-?dos?\b|\bto do(?= list)"#, with: "task", options: .regularExpression)
+        let words = Set(said.split { !$0.isLetter && !$0.isNumber }
             .map(String.init).filter { $0.count >= 4 && !commonWords.contains($0) })
         func score(_ t: ClaudeTool) -> Int {
             let text = Set((t.name.replacingOccurrences(of: "_", with: " ") + " " + t.description).lowercased()

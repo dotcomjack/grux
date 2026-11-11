@@ -378,7 +378,7 @@ final class AccountSwitcher: ObservableObject {
                     if proc.isRunning { proc.terminate() }
                 }
             }
-            proc.waitUntilExit()
+            await proc.waitForExit()
             let outStr = String(data: outPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
             let errStr = String(data: errPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
             return ClaudeRunResult(exitCode: proc.terminationStatus, stdout: outStr, stderr: errStr)

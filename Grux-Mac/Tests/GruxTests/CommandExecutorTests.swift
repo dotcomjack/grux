@@ -30,7 +30,7 @@ final class CommandExecutorTests: XCTestCase {
         do {
             _ = try await LocalExecutor().execute(CommandRequest(
                 executable: "/bin/sleep",
-                arguments: ["30"],
+                arguments: [Self.sleepSeconds],
                 cwd: "/tmp",
                 env: [:],
                 timeoutSec: 1
@@ -38,14 +38,20 @@ final class CommandExecutorTests: XCTestCase {
             XCTFail("expected CommandTimeout")
         } catch is CommandTimeout {
         }
-        let listed = try Self.pgrepSleep30()
-        XCTAssertEqual(listed, "", "sleep 30 must not survive the timeout")
+        let listed = try Self.pgrepOwnSleep()
+        XCTAssertEqual(listed, "", "the timed-out sleep must not survive the timeout")
     }
 
-    private static func pgrepSleep30() throws -> String {
+    /// About 30 seconds, written so no other program's sleep matches it. The
+    /// check looked for any "sleep 30" on the Mac and failed on an unrelated
+    /// script that waits in `sleep 30` (2026-10-31).
+    private static let sleepSeconds = "30.4718"
+
+    /// Every process on the Mac still running this test's own sleep.
+    private static func pgrepOwnSleep() throws -> String {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
-        proc.arguments = ["-f", "sleep 30"]
+        proc.arguments = ["-f", "^/bin/sleep 30\\.4718$"]
         let out = Pipe()
         proc.standardOutput = out
         try proc.run()

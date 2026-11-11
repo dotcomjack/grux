@@ -284,8 +284,6 @@ struct NotesView: View {
     }
 
     static func relativeStamp(_ date: Date) -> String {
-        let fmt = RelativeDateTimeFormatter()
-        fmt.unitsStyle = .abbreviated
-        return fmt.localizedString(for: date, relativeTo: Date())
+        RelativeStamp.string(for: date)
     }
 }

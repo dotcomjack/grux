@@ -365,7 +365,7 @@ final class ClaudeSignInExpiredTests: XCTestCase {
         r.signInExpired = true
         let n = UserCronScheduler.agentNotice(title: "Nightly", result: r)
         XCTAssertEqual(n.title, "Schedule had trouble: Nightly")
-        XCTAssertEqual(n.body, "Claude sign-in expired. Open Grux to sign in again.")
+        XCTAssertEqual(n.body, "Claude sign-in expired. Open Grux to sign in.")
     }
 
     func test_scheduleNotice_otherwiseUnchanged() {
@@ -374,5 +374,32 @@ final class ClaudeSignInExpiredTests: XCTestCase {
         let n = UserCronScheduler.agentNotice(title: "Nightly", result: r)
         XCTAssertEqual(n.title, "Schedule done: Nightly")
         XCTAssertEqual(n.body, "all good")
+    }
+
+    // MARK: Never "again" (D149 item 4)
+
+    /// First run's setup told a person who had never signed in "Agents cannot
+    /// run until you sign in again" (sense pass 18, `fr95/setup-1.png`). Grux
+    /// learns the sign-in only from a failed run, and the CLI fails the same
+    /// way for a sign-in that expired and one that never happened, so no line
+    /// a person reads may say "again".
+    func test_noLineAPersonReadsSaysSignInAgain() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Sources")
+        var hits: [String] = []
+        let files = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)!
+        for case let url as URL in files where url.pathExtension == "swift" {
+            let text = try String(contentsOf: url, encoding: .utf8)
+            for (i, line) in text.components(separatedBy: "\n").enumerated() {
+                let code = line.trimmingCharacters(in: .whitespaces)
+                if code.hasPrefix("//") { continue }
+                let quoted = code.split(separator: "\"", omittingEmptySubsequences: false)
+                    .enumerated().filter { $0.offset % 2 == 1 }.map { $0.element.lowercased() }
+                if quoted.contains(where: { $0.contains("sign in again") || $0.contains("sign in to claude again") }) {
+                    hits.append("\(url.lastPathComponent):\(i + 1)")
+                }
+            }
+        }
+        XCTAssertEqual(hits, [], "a line a person reads says sign in again")
     }
 }

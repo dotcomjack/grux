@@ -52,6 +52,33 @@ final class MeetingStore {
         reindex()
     }
 
+    /// Deletes a meeting: its record, its kept audio and its crash buffer (D198).
+    /// The buffer goes too because `AudioWALRecovery` rebuilds a meeting from a
+    /// preserved one at launch. Audio goes first, so a WAV that will not delete
+    /// leaves the meeting listed rather than orphaned in a hidden folder. The
+    /// meeting being recorded is refused: its next save would bring it back.
+    /// Copies a person exported (`audio-exports`) are theirs and stay.
+    /// Returns nil when nothing was deleted.
+    @discardableResult
+    func delete(id: UUID, activeMeetingId: UUID?) -> MeetingDeletion? {
+        guard id != activeMeetingId else { return nil }
+        let fm = FileManager.default
+        let record = url(for: id)
+        guard fm.fileExists(atPath: record.path) else { return nil }
+        let wav = AudioExportStore.meetingAudioURL(for: id)
+        let hadAudio = fm.fileExists(atPath: wav.path)
+        if hadAudio {
+            guard (try? fm.removeItem(at: wav)) != nil else { return nil }
+        }
+        let wal = Persistence.audioWALDir.appendingPathComponent(id.uuidString, isDirectory: true)
+        if fm.fileExists(atPath: wal.path) {
+            guard (try? fm.removeItem(at: wal)) != nil else { return nil }
+        }
+        guard (try? fm.removeItem(at: record)) != nil else { return nil }
+        reindex()
+        return MeetingDeletion(id: id, removedAudio: hadAudio)
+    }
+
     // MARK: - Read path
 
     /// COULD NEVER RETURN NIL, WHICH IS THE OPPOSITE OF WHAT AN OPTIONAL SAYS.
@@ -273,5 +300,22 @@ final class MeetingStore {
         self.index = rebuilt
         indexLock.unlock()
         Persistence.save(rebuilt, to: indexURL)
+    }
+}
+
+/// What `MeetingStore.delete` removed.
+struct MeetingDeletion: Equatable {
+    let id: UUID
+    let removedAudio: Bool
+}
+
+/// The words around deleting a meeting in Meetings (D198).
+enum MeetingDeleteCopy {
+    static let menuItem = "Delete Meeting..."
+    static let title = "Delete this meeting?"
+    static let message = "Its transcript, notes and any audio Grux kept are removed from this Mac. The summary Grux posted in chat when it ended stays there, and so do copies you saved with Export WAV. This cannot be undone."
+    static func done(_ result: MeetingDeletion?) -> String {
+        guard let result else { return "Grux could not delete that meeting." }
+        return result.removedAudio ? "Deleted the meeting and its audio" : "Deleted the meeting"
     }
 }

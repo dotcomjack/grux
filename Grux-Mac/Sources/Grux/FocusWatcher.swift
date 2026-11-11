@@ -33,7 +33,7 @@ final class FocusWatcher {
             case .focusOff: return "The Focus feature is turned off."
             case .firstFrame: return "Setup has a step left: look at the first frame Grux would send."
             case .exclusions: return "Setup has a step left: confirm which apps are never captured."
-            case .noScreenAccess: return "macOS has not allowed screen recording."
+            case .noScreenAccess: return "macOS has not allowed Screen Recording."
             case .outsideHours: return "It is outside your active hours."
             case .snoozed: return "Focus is snoozed."
             case .noTask: return "No task is set as Now, so there is nothing to compare against."

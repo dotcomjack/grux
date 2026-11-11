@@ -45,7 +45,7 @@ struct JaxDraftsSection: View {
                 .padding(.bottom, 6)
             if shown.isEmpty {
                 Text(staged.isEmpty
-                     ? "No drafts waiting. \(UserIdentity.assistantName) stages support replies here as mail arrives, for your one-tap send."
+                     ? "No drafts waiting. \(UserIdentity.assistantName) stages support replies here as mail arrives, for your one-click send."
                      : "No \(brand.scope.label) drafts right now. Switch the brand filter to see others.")
                     .font(.system(size: 13)).foregroundStyle(GruxTheme.textSecondary).italic()
                     .padding(.vertical, 6)

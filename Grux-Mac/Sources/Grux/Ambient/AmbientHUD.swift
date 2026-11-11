@@ -235,7 +235,7 @@ struct AmbientHUDRoot: View {
             )
         }
         .buttonStyle(.plain)
-        .help(appState.micMuted ? "Mic muted, tap to unmute" : (ambient.isEnabled ? "Tap to pause ambient capture" : "Tap to enable ambient capture"))
+        .help(appState.micMuted ? "Mic muted, click to unmute" : (ambient.isEnabled ? "Click to pause ambient capture" : "Click to enable ambient capture"))
     }
 
     private var capturePillIcon: String {
@@ -278,7 +278,7 @@ struct AmbientHUDRoot: View {
     // for the silence timer.
     private var doneTalkingButton: some View {
         Button {
-            WakeLog.shared.log("hud: DONE TALKING tapped")
+            WakeLog.shared.log("hud: DONE TALKING clicked")
             guard !isFlushingTurn else { return }
             isFlushingTurn = true
             Task { @MainActor in
@@ -289,7 +289,7 @@ struct AmbientHUDRoot: View {
                 // nerfed. Focus mode stays continuous (that's the whole point).
                 if appState.config.ambientMode == .wake,
                    AmbientState.shared.conversationActive {
-                    AmbientState.shared.exitConversation(reason: "done talking tap")
+                    AmbientState.shared.exitConversation(reason: "done talking click")
                 }
             }
         } label: {
@@ -937,7 +937,7 @@ struct AmbientHUDRoot: View {
         return Group {
             if let toggle, isExpandable {
                 Button(action: {
-                    WakeLog.shared.log("hud: section '\(label)' toggle tapped → expanded=\(!isExpanded)")
+                    WakeLog.shared.log("hud: section '\(label)' toggle clicked → expanded=\(!isExpanded)")
                     toggle()
                 }) { content }
                     .buttonStyle(.plain)

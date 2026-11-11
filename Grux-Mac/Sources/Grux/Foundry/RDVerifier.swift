@@ -166,7 +166,7 @@ struct RDLiveProcessRunner: RDProcessRunning {
                 timedOut = true
                 proc.terminate()
             }
-            proc.waitUntilExit()
+            proc.waitForExitBlocking()
             group.wait()
 
             // Lossy: one byte that is not UTF-8 (an image in a diff, a stray byte
@@ -294,9 +294,12 @@ final class RDBaselineStore: ObservableObject {
     /// The pane's one line: the bar an upgrade must meet and where it came from.
     nonisolated static func line(_ baseline: RDTestBaseline, measuring: Bool) -> String {
         if measuring { return "Measuring: running the full test suite on your checkout. This can take a while." }
-        let failures = "\(baseline.failures) known \(baseline.failures == 1 ? "failure" : "failures")"
-        let skips = "\(baseline.skips) \(baseline.skips == 1 ? "skip" : "skips")"
-        let bar = "Upgrades must pass the full test suite with at most \(failures) and \(skips)"
+        // Zero reads as none: it read "with at most 0 known failures" (D107).
+        let failures = baseline.failures <= 0 ? "no known failures"
+            : "at most \(baseline.failures) known \(baseline.failures == 1 ? "failure" : "failures")"
+        let skips = baseline.skips <= 0 ? "no skips"
+            : (baseline.failures <= 0 ? "at most " : "") + "\(baseline.skips) \(baseline.skips == 1 ? "skip" : "skips")"
+        let bar = "Upgrades must pass the full test suite with \(failures) and \(skips)"
         guard let at = baseline.measuredAt, let executed = baseline.measuredExecuted else {
             return "\(bar), Grux's default and not this Mac's. Measure this Mac's own numbers before building one."
         }

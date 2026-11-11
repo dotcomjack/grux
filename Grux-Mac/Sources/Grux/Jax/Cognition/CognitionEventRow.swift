@@ -43,8 +43,8 @@ struct CognitionEventRow: View {
                     HStack(spacing: 8) {
                         metaTag(icon: "circle.grid.cross.fill", text: "\(event.firedHeuristicNames.count) heuristic\(event.firedHeuristicNames.count == 1 ? "" : "s")")
                         metaTag(icon: "books.vertical.fill", text: "\(event.retrievedMemories.count) memor\(event.retrievedMemories.count == 1 ? "y" : "ies")")
-                        if !event.mode.isEmpty {
-                            metaTag(icon: "dial.medium.fill", text: event.mode.capitalized)
+                        if let tag = event.autonomyTag {
+                            metaTag(icon: "dial.medium.fill", text: tag)
                         }
                         Spacer(minLength: 0)
                         Text(JaxTime.ago(event.date))

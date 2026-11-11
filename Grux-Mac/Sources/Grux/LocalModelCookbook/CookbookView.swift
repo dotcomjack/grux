@@ -37,6 +37,10 @@ struct CookbookView: View {
                 registryBanner
                 // Why the default is not the top of the list, when the speed
                 // check after a download kept a faster model.
+                if let note = Cookbook.modelGoneLine(store.state.modelGone, configured: state.config.offlineLLMModel,
+                                                     installed: ollama.installedTags) {
+                    noticeCard(title: "Local model moved to one you have", body: note, tone: GruxTheme.accentPrimary)
+                }
                 if let note = store.state.speedNote {
                     noticeCard(title: "Kept the faster model", body: note, tone: GruxTheme.accentPrimary)
                 }
@@ -121,6 +125,7 @@ struct CookbookView: View {
         VStack(alignment: .leading, spacing: GruxSpacing.xs) {
             Text("Local Models")
                 .font(GruxType.title)
+                .unlessPaneTitle("Local Models")
                 .foregroundStyle(GruxTheme.textPrimary)
                 .fixedSize()
             Text("Hardware-aware cookbook for running models on this Mac through Ollama")
@@ -259,9 +264,16 @@ struct CookbookView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if let pick = live.headline {
-                Text("Recommended: \(pick.displayName) \(pick.parameterLabel) (\(pick.id))")
+                Text(Cookbook.recommendedLine(pick))
                     .font(.caption)
                     .foregroundStyle(GruxTheme.accentCo)
+            }
+            if let inUse = Cookbook.inUseLine(configured: state.config.offlineLLMModel,
+                                              installed: ollama.isInstalled(state.config.offlineLLMModel),
+                                              headline: live.headline) {
+                Text(inUse)
+                    .font(.caption)
+                    .foregroundStyle(GruxTheme.textSecondary)
             }
         }
         .padding(GruxSpacing.l)
@@ -335,7 +347,7 @@ struct CookbookView: View {
                 .font(.caption)
             }
             if !ollama.installedTags.isEmpty {
-                Text("\(ollama.installedTags.count) model\(ollama.installedTags.count == 1 ? "" : "s") installed locally")
+                Text(Cookbook.installedCountPhrase(ollama.installedTags, onThisMac: true))
                     .font(.caption2).foregroundStyle(.tertiary)
             }
         }
@@ -445,7 +457,7 @@ struct CookbookView: View {
                 statChip("Tag", model.id)
                 statChip("Disk", String(format: "%.1f GB", model.diskGB))
                 statChip("Memory", String(format: "~%.0f GB", model.estimatedMemoryGB))
-                statChip("Context", contextLabel(model.contextTokens))
+                statChip("Context", Cookbook.contextChip(modelTokens: model.contextTokens, macTokens: LocalTurn.contextTokens))
             }
             if let prog = ollama.pulls[model.id], !installed {
                 pullProgressRow(model.id, prog)
@@ -594,7 +606,4 @@ struct CookbookView: View {
         )
     }
 
-    private func contextLabel(_ tokens: Int) -> String {
-        tokens >= 1024 ? "\(tokens / 1024)K" : "\(tokens)"
-    }
 }

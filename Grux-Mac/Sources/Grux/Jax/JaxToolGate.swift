@@ -66,11 +66,13 @@ enum JaxToolGate {
     // Reserved bypass keys (anything __-prefixed) are stripped so a stored replay
     // never carries a stale token, and non-JSON values fail soft to nil (no replay
     // stored, approval still recorded, nothing performed: the safe direction).
+    // Keys are sorted so the same input always reads the same: it is shown on the
+    // card, logged, and carried into the risk question's text (W26-P3).
     static func encodeInput(_ input: [String: Any]) -> String? {
         var clean: [String: Any] = [:]
         for (k, v) in input where !k.hasPrefix("__") { clean[k] = v }
         guard JSONSerialization.isValidJSONObject(clean),
-              let data = try? JSONSerialization.data(withJSONObject: clean),
+              let data = try? JSONSerialization.data(withJSONObject: clean, options: [.sortedKeys]),
               let s = String(data: data, encoding: .utf8) else { return nil }
         return s
     }
@@ -84,6 +86,14 @@ enum JaxToolGate {
         // A re-dispatch of an already-approved item carries a one-shot token that
         // only ApprovalQueue could have armed, for this exact item. Let it run.
         if isApproved(input) { return .proceed }
+
+        // A call the tool would turn down now answers with that refusal at once,
+        // so no card waits in Approvals for something a yes could not run (D126).
+        if let refusal = CannotRunNow.refusal(tool: name, input: input,
+                                              foundryEnabled: AppState.shared.config.foundryEnabled) {
+            WakeLog.shared.log("jax-gate: not queued '\(name)' -> \(refusal)")
+            return .shortCircuit(refusal)
+        }
 
         // Self-gating tools own their verdict. Do not second-guess them here.
         if selfGating.contains(name) { return .proceed }
@@ -170,7 +180,7 @@ enum JaxToolGate {
     /// repeats it, whole or in part, still reads right (RV14).
     static func pendingResult(goesOutAs persona: String?) -> String {
         let who = persona.map { " It would go out as \($0)." } ?? ""
-        return "pending: this is waiting for your OK in Approvals.\(who) Nothing is sent or changed until you tap it."
+        return "pending: this is waiting for your OK in Approvals.\(who) Nothing is sent or changed until you approve it."
     }
 
     // MARK: - Classification

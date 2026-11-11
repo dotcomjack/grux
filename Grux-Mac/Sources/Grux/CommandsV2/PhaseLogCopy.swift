@@ -92,7 +92,7 @@ enum PhaseLogCopy {
         let spent = cost >= 0.005 ? String(format: " and cost $%.2f", cost) : ""
         if ok { return "\(who) finished \(quoted(step)) in \(timeWords(seconds))\(spent)." }
         let working = count > 1 ? "The \(count) agents working on" : "The agent working on"
-        if needsSignIn { return "\(working) \(quoted(step)) stopped because Claude needs you to sign in again." }
+        if needsSignIn { return "\(working) \(quoted(step)) stopped because Claude needs you to sign in." }
         if timedOut(raw) { return "\(working) \(quoted(step)) ran out of time after \(timeWords(seconds))." }
         return "\(working) \(quoted(step)) stopped without finishing, after \(timeWords(seconds))\(spent)."
     }

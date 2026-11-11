@@ -46,6 +46,117 @@ final class CookbookDefaultTests: XCTestCase {
     /// the order, so it is spelled out here and nowhere else.
     private let generosity: [ModelFit: Int] = [.tooBig: 0, .tight: 1, .good: 2, .great: 3]
 
+    // MARK: - D152: the model chat is set to is gone from the server
+
+    /// Live 2026-11-04 2:27 AM on this Mini: qwen3.5:4b was removed from
+    /// Ollama while config.json still named it, and every chat turn answered
+    /// "That model is not available on this account." A chosen model that the
+    /// server no longer has is not a choice anyone can keep: the best catalog
+    /// model this Mac HAS takes its place.
+    func test_aMissingChosenModelIsReplacedByTheBestOneInstalled() {
+        let installed = ["grux-local:4b-v3", "gruxai.com/grux/grux-local:2b", "grux-local:9b", "llama3.2:3b"]
+        XCTAssertEqual(
+            Cookbook.replacementForMissingModel(current: "qwen3.5:4b", installed: installed,
+                                                profile: laptopSixteenGB)?.id,
+            "gruxai.com/grux/grux-local:2b")
+        // Only catalog models are picked: an unknown tag is never guessed at.
+        XCTAssertNil(Cookbook.replacementForMissingModel(current: "qwen3.5:4b", installed: ["grux-local:9b", "nomic-embed-text:latest"],
+                                                         profile: laptopSixteenGB))
+    }
+
+    /// A model that is there stays, however it is spelled, and an empty or
+    /// unread list replaces nothing.
+    func test_aModelThatIsInstalledIsNeverReplaced() {
+        for (current, installed) in [("qwen3-coder:30b", ["qwen3-coder:30b", "llama3.2:3b"]),
+                                     ("mistral-small3.1", ["mistral-small3.1:latest", "llama3.2:3b"]),
+                                     ("qwen3.5:4b", [])] {
+            XCTAssertNil(Cookbook.replacementForMissingModel(current: current, installed: installed,
+                                                             profile: laptopSixteenGB), current)
+        }
+    }
+
+    /// Wave 49 review P2-1: a fresh install still holds the shipped default
+    /// nobody chose and nobody pulled. That is first run's to settle (it adopts
+    /// what is installed); a line saying it "is no longer in Ollama" would be
+    /// false. Nothing stored, or the default, is never replaced here.
+    func test_aModelNobodyChoseIsNotReplaced() {
+        let installed = ["qwen3.5:4b", "gruxai.com/grux/grux-local:2b"]
+        for current in ["", GruxConfig.defaultLocalModel] {
+            XCTAssertNil(Cookbook.replacementForMissingModel(current: current, installed: installed,
+                                                             profile: laptopSixteenGB), current)
+        }
+    }
+
+    /// Wave 49 review P3: the rest of the app reads a configured name trimmed
+    /// and in any case, so this does too: a working model is never replaced.
+    func test_aModelSpelledInAnotherCaseIsInstalled() {
+        XCTAssertNil(Cookbook.replacementForMissingModel(current: " Qwen3.5:4B ", installed: ["qwen3.5:4b", "llama3.2:3b"],
+                                                         profile: laptopSixteenGB))
+    }
+
+    /// Wave 49 review P2-2: the line shows only while chat's local model is
+    /// still the one Grux moved to and the one that left is still gone.
+    func test_theMovedLineHoldsOnlyWhileItIsTrue() {
+        let gone = CookbookState.ModelGone(from: "qwen3.5:4b", to: "gruxai.com/grux/grux-local:2b")
+        XCTAssertEqual(
+            Cookbook.modelGoneLine(gone, configured: "gruxai.com/grux/grux-local:2b", installed: []),
+            "qwen3.5:4b is no longer in Ollama, so Grux's local model is now Grux Local 2B. Pick another here any time.")
+        XCTAssertNil(Cookbook.modelGoneLine(gone, configured: "llama3.2:3b", installed: []),
+                     "picked another model elsewhere")
+        XCTAssertNil(Cookbook.modelGoneLine(gone, configured: "gruxai.com/grux/grux-local:2b",
+                                            installed: ["qwen3.5:4b"]), "pulled back")
+        XCTAssertNil(Cookbook.modelGoneLine(nil, configured: "x", installed: []))
+    }
+
+    /// Wave 49 P3s (round 2 items 1, 4, 5): one model is one name in every
+    /// spelling Ollama answers for: any case, spaces around it, ":latest" left
+    /// off, and the long `registry.ollama.ai/library/` form of a library model.
+    func test_oneModelIsOneNameInEverySpelling() {
+        for (a, b) in [(" Qwen3.5:4B ", "qwen3.5:4b"), ("mistral-small3.1", "mistral-small3.1:latest"),
+                       ("registry.ollama.ai/library/qwen3.5:4b", "qwen3.5:4b"),
+                       ("REGISTRY.OLLAMA.AI/library/llama3.2", "llama3.2:latest")] {
+            XCTAssertTrue(Cookbook.sameModel(a, b), "\(a) vs \(b)")
+            XCTAssertTrue(OllamaManager.isInstalled(a, in: ["nomic-embed-text:latest", b]), "\(a) in [\(b)]")
+        }
+        for (a, b) in [("qwen3.5:4b", "qwen3.5:2b"), ("gruxai.com/grux/grux-local:2b", "grux-local:2b"),
+                       ("qwen3.5", "qwen3.5:4b"), ("", ":latest")] {
+            XCTAssertFalse(Cookbook.sameModel(a, b), "\(a) vs \(b)")
+            XCTAssertFalse(OllamaManager.isInstalled(a, in: [b]), "\(a) in [\(b)]")
+        }
+    }
+
+    /// Round 2 item 5: a working model under its long library name is never
+    /// moved; round 2 item 4: the shipped default in another case is still
+    /// nobody's choice, so first run may still settle it.
+    func test_aLongOrRecasedNameIsTheSameModel() {
+        XCTAssertNil(Cookbook.replacementForMissingModel(
+            current: "registry.ollama.ai/library/qwen3.5:4b",
+            installed: ["qwen3.5:4b", "gruxai.com/grux/grux-local:2b"], profile: laptopSixteenGB))
+        XCTAssertFalse(Cookbook.userHasChosenModel(" " + GruxConfig.defaultLocalModel.uppercased() + " "))
+        XCTAssertFalse(Cookbook.userHasChosenModel("registry.ollama.ai/library/" + GruxConfig.defaultLocalModel))
+        XCTAssertTrue(Cookbook.userHasChosenModel("qwen3.5:4b"))
+    }
+
+    /// Round 2 item 1: the model that left, pulled back in another spelling,
+    /// ends the line; the configured model in another spelling keeps it.
+    func test_theMovedLineReadsEverySpelling() {
+        let gone = CookbookState.ModelGone(from: "Qwen3.5:4B ", to: "gruxai.com/grux/grux-local:2b")
+        XCTAssertNil(Cookbook.modelGoneLine(gone, configured: "gruxai.com/grux/grux-local:2b",
+                                            installed: ["qwen3.5:4b"]), "pulled back")
+        XCTAssertNotNil(Cookbook.modelGoneLine(gone, configured: " GRUXAI.COM/grux/grux-local:2b",
+                                               installed: ["gruxai.com/grux/grux-local:2b"]))
+    }
+
+    /// Round 2 item 2: once chat's local model is set to anything else, the
+    /// move is over, so setting the moved-to model again later says nothing.
+    func test_theMoveEndsWhenAnotherModelIsSet() {
+        let gone = CookbookState.ModelGone(from: "qwen3.5:4b", to: "gruxai.com/grux/grux-local:2b")
+        XCTAssertNil(Cookbook.modelGone(gone, afterConfigured: "llama3.2:3b"))
+        XCTAssertEqual(Cookbook.modelGone(gone, afterConfigured: "gruxai.com/grux/grux-local:2b"), gone)
+        XCTAssertEqual(Cookbook.modelGone(gone, afterConfigured: " GRUXAI.com/grux/grux-local:2b"), gone)
+        XCTAssertNil(Cookbook.modelGone(nil, afterConfigured: "x"))
+    }
+
     // MARK: - The default is a decision, not a constant
 
     /// THE ONE THAT MUST NEVER REGRESS. `GruxConfig.migratingLocalModel` exists

@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 
-/// The tools Grux Local v3 was trained on, and the one-line signature a local
+/// The tools Grux Local v4 is trained on, and the one-line signature a local
 /// turn sends for each instead of its full description.
 ///
 /// Grux 3.1 sent about 6,360 prompt tokens per local turn, most of them tool
@@ -11,19 +11,24 @@ import Foundation
 /// trained on (new, changed, MCP), keeps its full description.
 ///
 /// A tool is compacted only when BOTH hold: the turn's model is a Grux Local
-/// tag ending `-v3` (`isTrainedModel`), and the tool's name is in `v3` with the
+/// tag ending `-v4` (`isTrainedModel`), and the tool's name is in `v4` with the
 /// hash of its full definition unchanged since training (`schemaHash`). The
-/// training run reads Resources/GruxLocal/trained-tools-v3.json, written from
+/// training run reads Resources/GruxLocal/trained-tools-v4.json, written from
 /// these same functions (`contract`), so it trains on the bytes the app sends.
 /// TrainedToolsContractTests fails when a trained tool changes.
 enum TrainedTools {
 
-    /// The contract and the model tag suffix it was trained for.
-    static let version = 3
-    static let tagSuffix = "-v3"
+    /// The contract and the model tag suffix it is for. Version 3 is what the
+    /// Grux Local -v3 candidates were trained on (Grux 3.2.0's contract, file
+    /// sha256 3f5a0d40, 57 tools; staged on the test Mac as grux-local:4b-v3,
+    /// never published). Grux 3.3 changed three of those tools and the system
+    /// text, so its contract is version 4: a -v3 model gets every tool in full
+    /// under 3.3, as any other model does, and a -v4 model trains on this file.
+    static let version = 4
+    static let tagSuffix = "-v4"
 
     /// Whether `modelId` is a Grux Local tag trained on this contract:
-    /// `grux-local:4b-v3`, `gruxai.com/grux/grux-local:4b-v3`. Older tags
+    /// `grux-local:4b-v4`, `gruxai.com/grux/grux-local:4b-v4`. Older tags
     /// (`grux-local:4b`) and every other model are not.
     static func isTrainedModel(_ modelId: String) -> Bool {
         let id = modelId.trimmingCharacters(in: .whitespaces).lowercased()
@@ -105,13 +110,13 @@ enum TrainedTools {
         ClaudeTool(name: t.name, description: signature(t), inputSchema: t.inputSchema)
     }
 
-    /// Whether `t` is the definition v3 was trained on.
+    /// Whether `t` is the definition v4 is trained on.
     static func isTrained(_ t: ClaudeTool) -> Bool {
-        v3[t.name].map { $0 == schemaHash(t) } ?? false
+        v4[t.name].map { $0 == schemaHash(t) } ?? false
     }
 
     /// The tools a local turn on `modelId` sends: each trained, unchanged tool
-    /// as its signature when the model is a v3 Grux Local tag, every other
+    /// as its signature when the model is a v4 Grux Local tag, every other
     /// tool, and every tool for every other model, exactly as given.
     static func forModel(_ modelId: String, _ tools: [ClaudeTool]) -> [ClaudeTool] {
         guard isTrainedModel(modelId) else { return tools }
@@ -196,27 +201,27 @@ enum TrainedTools {
         return data + Data("\n".utf8)
     }
 
-    /// The names whose live definition no longer matches `v3`: each one now
-    /// goes out with its full description, which a v3 model was not trained on.
+    /// The names whose live definition no longer matches `v4`: each one now
+    /// goes out with its full description, which a v4 model was not trained on.
     static func drifted(_ tools: [ClaudeTool]) -> [String] {
         let live = Dictionary(tools.map { ($0.name, schemaHash($0)) }, uniquingKeysWith: { a, _ in a })
-        return v3.keys.sorted().filter { live[$0] != v3[$0] }
+        return v4.keys.sorted().filter { live[$0] != v4[$0] }
     }
 }
 
 extension TrainedTools {
-    /// TrainedToolsV3.swift's text for `tools`: the names and hashes `v3`
+    /// TrainedToolsV4.swift's text for `tools`: the names and hashes `v4`
     /// holds, written by the same run that writes the contract file.
     static func tableSource(_ tools: [ClaudeTool]) -> String {
         let rows = LocalTurn.stableOrder(tools.filter(isContractCandidate))
             .map { "        \"\($0.name)\": \"\(schemaHash($0))\"," }
         return """
-        // Written by TrainedTools.tableSource with Resources/GruxLocal/trained-tools-v3.json.
+        // Written by TrainedTools.tableSource with Resources/GruxLocal/trained-tools-v4.json.
         // Do not edit by hand: TrainedToolsContractTests compares the two.
 
         extension TrainedTools {
-            /// Tool name to the schema hash Grux Local v3 was trained on.
-            static let v3: [String: String] = [
+            /// Tool name to the schema hash Grux Local v4 is trained on.
+            static let v4: [String: String] = [
         \(rows.joined(separator: "\n"))
             ]
         }
@@ -265,7 +270,7 @@ extension TrainedTools {
     /// Two of `request`: an everyday turn (the stable list) and one that asks
     /// to open a page (the ranked list), on a 16 GB Mac's window.
     @MainActor
-    static func samples(model: String = "gruxai.com/grux/grux-local:4b-v3") -> [String: Any] {
+    static func samples(model: String = "gruxai.com/grux/grux-local:4b-v4") -> [String: Any] {
         var out: [[String: Any]] = []
         for (name, ask) in [("stable", "what is on my plate today?"), ("ranked", "open github.com")] {
             let r = request(ask: ask, model: model, memoryGB: 16)
@@ -293,7 +298,7 @@ extension TrainedTools {
             if let now = item["now"] as? String { over["NOW"] = now }
             if let app = item["active_app"] as? String { over["ACTIVE_APP_RIGHT_NOW"] = app }
             RecentToolUse.shared.clear()
-            let r = request(ask: ask, model: item["model"] as? String ?? "gruxai.com/grux/grux-local:4b-v3",
+            let r = request(ask: ask, model: item["model"] as? String ?? "gruxai.com/grux/grux-local:4b-v4",
                             memoryGB: (item["memory_gb"] as? NSNumber)?.doubleValue ?? 16, lines: over)
             let row: [String: Any] = ["id": id, "path": r.stable ? "stable" : "fallback", "body": r.body]
             let data = try JSONSerialization.data(withJSONObject: row, options: [.sortedKeys, .withoutEscapingSlashes])

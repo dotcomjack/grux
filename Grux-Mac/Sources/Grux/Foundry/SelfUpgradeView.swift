@@ -15,6 +15,7 @@ struct SelfUpgradeView: View {
     @ObservedObject private var account = AccountSwitcher.shared
     @ObservedObject private var approvals = FoundryApprovalStore.shared
     @ObservedObject private var appState = AppState.shared
+    @ObservedObject private var signIn = ClaudeSignInState.shared
     @ObservedObject private var testBaseline = RDBaselineStore.shared
     @ObservedObject private var governor = FoundryGovernor.shared
     // The rail and the swarm jobs: a card's "Waiting to build" clears the
@@ -69,6 +70,7 @@ struct SelfUpgradeView: View {
                 .foregroundStyle(GruxTheme.accentPrimary)
             Text("Self-Upgrade")
                 .font(GruxType.title)
+                .unlessPaneTitle("Self-Upgrade")
                 .foregroundStyle(GruxTheme.textPrimary)
             if model.pendingCount > 0 {
                 Text("\(model.pendingCount) pending")
@@ -105,8 +107,21 @@ struct SelfUpgradeView: View {
     // pass is off until the person turns it on here.
     private var scheduleBar: some View {
         VStack(alignment: .leading, spacing: GruxSpacing.xs) {
+            // The refusals say "Turn it on in Self-Upgrade (or Settings)", so the
+            // switch lives here too, not only in the empty state's button.
+            Toggle("Self-upgrade", isOn: Binding(
+                get: { appState.config.foundryEnabled },
+                set: { on in
+                    appState.config.foundryEnabled = on
+                    appState.saveConfig()
+                    if on { FoundryEngine.shared.activate() }
+                }
+            ))
+            .toggleStyle(.switch)
+            .font(GruxType.caption)
             Text(FoundrySchedule.line(enabled: appState.config.foundryEnabled,
-                                      schedule: appState.config.foundrySchedule))
+                                      schedule: appState.config.foundrySchedule,
+                                      waiting: model.buildableCount))
                 .font(GruxType.caption)
                 .foregroundStyle(GruxTheme.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -247,15 +262,17 @@ struct SelfUpgradeView: View {
     // No proposals yet. The line says where they come from; the detail says
     // what is in the way when something is; the button does the next thing.
     private var proposalsEmptyState: some View {
-        let auth = FoundryDirection.authState(checked: account.statusChecked, liveStatus: account.liveStatus)
+        let auth = FoundryDirection.authState(checked: account.statusChecked, liveStatus: account.liveStatus,
+                                          knownExpired: signIn.expired)
         let detail: String? = !cliInstalled
             ? "Install Claude Code and sign in, and Grux can build them with your subscription."
             : (auth == .signedOut ? "Sign in to Claude and Grux can build them with your subscription." : nil)
+        let copy = SelfUpgradeEmptyCopy.make(enabled: appState.config.foundryEnabled)
         return GruxEmptyState(
             icon: "hammer",
-            line: "No proposals yet. Ask Grux to look for upgrades, and what it finds lands here.",
+            line: copy.line,
             detail: detail,
-            ctaTitle: appState.config.foundryEnabled ? "Look for upgrades now" : "Turn on self-upgrade",
+            ctaTitle: copy.cta,
             ctaAction: {
                 if !appState.config.foundryEnabled {
                     appState.config.foundryEnabled = true
@@ -264,7 +281,7 @@ struct SelfUpgradeView: View {
                 FoundryEngine.shared.activate()
                 _ = FoundryEngine.shared.triggerManualCycle()
             },
-            voiceHint: "Grux, upgrade yourself"
+            voiceHint: copy.voiceHint
         )
     }
 
@@ -273,7 +290,8 @@ struct SelfUpgradeView: View {
     private func readiness(for card: FoundryProposalCardModel, hold: String?) -> FoundryBuildReadiness {
         let id = UUID(uuidString: card.id)
         return FoundryBuildReadiness(
-            auth: FoundryDirection.authState(checked: account.statusChecked, liveStatus: account.liveStatus),
+            auth: FoundryDirection.authState(checked: account.statusChecked, liveStatus: account.liveStatus,
+                                          knownExpired: signIn.expired),
             subscriptionType: account.liveStatus?.subscriptionType,
             cliInstalled: cliInstalled,
             foundryEnabled: appState.config.foundryEnabled,
@@ -906,5 +924,26 @@ struct FoundryStatusBadge: View {
             .buttonStyle(.plain)
             .help("\(model.pendingCount) Self-Upgrade proposals pending")
         }
+    }
+}
+
+// The proposals empty state's words. While self-upgrade is off it sits under the
+// line saying "upgrade yourself" is turned down, so it neither invites that ask nor
+// shows it as a voice hint; its button turns self-upgrade on and looks.
+struct SelfUpgradeEmptyCopy: Equatable {
+    let line: String
+    let cta: String
+    let voiceHint: String?
+
+    static func make(enabled: Bool) -> SelfUpgradeEmptyCopy {
+        enabled
+            ? SelfUpgradeEmptyCopy(
+                line: "No proposals yet. Ask Grux to look for upgrades, and what it finds lands here.",
+                cta: "Look for upgrades now",
+                voiceHint: "Grux, upgrade yourself")
+            : SelfUpgradeEmptyCopy(
+                line: "No proposals yet. Turn on self-upgrade and Grux looks for upgrades; what it finds lands here.",
+                cta: "Turn on self-upgrade",
+                voiceHint: nil)
     }
 }

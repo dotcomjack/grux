@@ -47,7 +47,7 @@ enum ToolReplyCopy {
             return "\(quoted(firstQuoted(body)).capitalizedFirst) is your focus now."
         case "remember_fact":
             let fact = firstQuoted(body) ?? (input["fact"] as? String) ?? ""
-            return fact.isEmpty ? "Got it, I will remember that." : "Got it, I will remember: \(fact)"
+            return fact.isEmpty ? "Got it, I will remember that." : rememberedLine(fact)
         case "create_note":
             return "Saved your note \(quoted(firstQuoted(body) ?? (input["title"] as? String)))."
         case "create_event":
@@ -60,6 +60,12 @@ enum ToolReplyCopy {
             return readable(body)
         }
     }
+
+    /// The tools `forPerson` words as a sentence about what was done, rather
+    /// than passing the result text through.
+    static let saysWhatWasDone: Set<String> = [
+        "add_task", "complete_task", "remove_task", "focus_on_task", "remember_fact", "create_note", "create_event",
+    ]
 
     /// The model sometimes hands a tool result back as its whole reply (qwen2.5
     /// on the local route does). When the reply is one of this turn's results,
@@ -130,7 +136,7 @@ enum ToolReplyCopy {
     /// What an approval is about, as the person would name it: `your note
     /// "Groceries"`. The queue's own summary for a gated write is the gate's
     /// `Run tool 'create_note' (unclassified side effect).`
-    static func subject(tool: String, input: [String: Any]) -> String {
+    nonisolated static func subject(tool: String, input: [String: Any]) -> String {
         let title = ((input["title"] as? String) ?? "").trimmingCharacters(in: .whitespaces)
         let named = title.isEmpty ? "" : " \(quoted(title))"
         switch tool {
@@ -165,7 +171,7 @@ enum ToolReplyCopy {
     /// What Approvals lists for a knowingly gated tool (row A30), in place of the
     /// gate's `Run tool 'create_event' (unclassified side effect).` Nil for a tool
     /// with no wording, which keeps whatever summary it came with.
-    static func approvalSummary(tool: String, input: [String: Any]) -> String? {
+    nonisolated static func approvalSummary(tool: String, input: [String: Any]) -> String? {
         func named(_ key: String) -> String {
             let raw = ((input[key] as? String) ?? "").trimmingCharacters(in: .whitespaces)
             let readable = raw.replacingOccurrences(of: "_", with: " ").replacingOccurrences(of: "-", with: " ")
@@ -251,16 +257,16 @@ enum ToolReplyCopy {
     private static func pending(tool: String, input: [String: Any]) -> String {
         switch tool {
         case "create_note":
-            return "Your note is waiting for your OK in Approvals. Nothing is saved until you tap it."
+            return "Your note is waiting for your OK in Approvals. Nothing is saved until you approve it."
         case "create_event":
-            return "Your event is waiting for your OK in Approvals. Nothing goes on your calendar until you tap it."
+            return "Your event is waiting for your OK in Approvals. Nothing goes on your calendar until you approve it."
         case "compose_email":
             let to = (input["to"] as? String).map { " to \($0)" } ?? ""
-            return "Your email\(to) is waiting for your OK in Approvals. Nothing is sent until you tap it."
+            return "Your email\(to) is waiting for your OK in Approvals. Nothing is sent until you approve it."
         default:
             // Its own subject ("The command `make`", "That request"), so after another
             // line it never reads as if that one were the thing waiting.
-            return "\(subject(tool: tool, input: input).capitalizedFirst) is waiting for your OK in Approvals. Nothing happens until you tap it."
+            return "\(subject(tool: tool, input: input).capitalizedFirst) is waiting for your OK in Approvals. Nothing happens until you approve it."
         }
     }
 
@@ -380,6 +386,61 @@ enum ToolReplyCopy {
         return false
     }
 
+    /// The fact is kept in the person's words ("I take my coffee black"); said
+    /// back as is it reads as Grux's own coffee (D210 item 14), so the reply
+    /// turns their I, me and my to you and your. A fact that also says "you"
+    /// cannot be turned word by word, so it is said back quoted as theirs.
+    static func rememberedLine(_ fact: String) -> String {
+        let words = fact.split(separator: " ", omittingEmptySubsequences: false).map(String.init)
+        let cores = words.map { core(of: $0).lowercased() }
+        let saysI = cores.contains { firstPerson[$0] != nil || $0 == "i" }
+        let saysYou = cores.contains { secondPerson.contains($0) }
+        if saysI && saysYou { return "Got it, I will remember, in your words: \"\(sentence(fact))\"" }
+        guard saysI else { return "Got it, I will remember: \(sentence(fact))" }
+        var out: [String] = []
+        for (i, word) in words.enumerated() {
+            let key = cores[i]
+            var swapped: String?
+            if key == "i" {
+                swapped = "you"
+            } else if let to = firstPerson[key] {
+                swapped = to
+            } else if i > 0, cores[i - 1] == "i", let verb = ["am": "are", "was": "were"][key] {
+                swapped = verb
+            }
+            guard let swapped else { out.append(word); continue }
+            let c = core(of: word)
+            let range = word.range(of: c)!
+            out.append(word.replacingCharacters(in: range, with: swapped))
+        }
+        return "Got it, I will remember: \(sentence(out.joined(separator: " ")))"
+    }
+
+    /// A word without the punctuation around it; a straight or curly
+    /// apostrophe inside stays ("I'm", "I’d"), and is read as straight.
+    private static func core(of word: String) -> String {
+        let trimmed = word.trimmingCharacters(in: CharacterSet.punctuationCharacters.subtracting(["'", "\u{2019}"])
+            .union(.whitespaces))
+        return trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "'\u{2019}"))
+    }
+
+    /// The person's words, keyed by the lowercased word with a straight
+    /// apostrophe; the curly forms map the same way.
+    private static let firstPerson: [String: String] = {
+        let straight = ["me": "you", "my": "your", "mine": "yours", "myself": "yourself",
+                        "i'm": "you're", "i've": "you've", "i'll": "you'll", "i'd": "you'd"]
+        var all = straight
+        for (k, v) in straight where k.contains("'") {
+            all[k.replacingOccurrences(of: "'", with: "\u{2019}")] = v.replacingOccurrences(of: "'", with: "\u{2019}")
+        }
+        return all
+    }()
+
+    private static let secondPerson: Set<String> = {
+        let straight = ["you", "your", "yours", "yourself", "you're", "you've", "you'll", "you'd"]
+        return Set(straight + straight.map { $0.replacingOccurrences(of: "'", with: "\u{2019}") })
+    }()
+
     private static func strip(prefix: String, from s: String) -> String {
         String(s.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
     }
@@ -401,7 +462,7 @@ enum ToolReplyCopy {
         return inside
     }
 
-    private static func quoted(_ s: String?) -> String {
+    nonisolated private static func quoted(_ s: String?) -> String {
         let t = (s ?? "").trimmingCharacters(in: .whitespaces)
         return t.isEmpty ? "that" : "\"\(t)\""
     }
