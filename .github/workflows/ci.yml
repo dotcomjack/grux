@@ -183,7 +183,12 @@ jobs:
 
   build-and-test:
     name: Build and test
-    runs-on: macos-15
+    # The toolchain the release is built with. Grux 3.3.0 is built and notarized
+    # with Xcode 27.2 (27B52, Apple Swift 6.4.2), and Swift 6.1 on macos-15 cannot
+    # type-check Grux-Mac/Sources/Grux/Chat/WeatherAsk.swift:183 in reasonable time
+    # (run 43027688522, 2026-11-11). CI builds and tests the same compiler as the
+    # shipped binary; the Toolchain step below fails on any other Swift.
+    runs-on: xcode-27
     # The documentation filter, moved off the trigger. See the comment at the
     # top of this file for why it had to move and why it lands here.
     #
@@ -218,9 +223,12 @@ jobs:
       # requirement is the trap; the dependencies set the real floor.
       - name: Toolchain
         run: |
+          sudo xcode-select -s /Applications/Xcode_27.2.app/Contents/Developer
           swift --version
           xcodebuild -version
           ls /Applications | grep -i '^Xcode' || true
+          swift --version 2>&1 | grep -q 'Apple Swift version 6\.4\.' \
+            || { echo "CI must build with the release toolchain, Swift 6.4"; exit 1; }
 
       # NO BUILD CACHE, deliberately. Removed 2026-08-20 after it broke CI twice.
       #
