@@ -327,7 +327,7 @@ struct HomeView: View {
                         Button { state.requestedTab = item.tab } label: {
                             HStack(spacing: GruxSpacing.s) {
                                 Image(systemName: item.icon)
-                                    .font(.system(size: 11, weight: .semibold))
+                                    .font(GruxType.caption)
                                     .foregroundStyle(GruxTheme.accentCo)
                                     .frame(width: 14)
                                 VStack(alignment: .leading, spacing: 2) {

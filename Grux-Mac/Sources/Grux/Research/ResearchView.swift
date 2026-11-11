@@ -158,7 +158,7 @@ struct ResearchView: View {
             HStack {
                 Button(action: run) {
                     Label("Run deep research", systemImage: "sparkle.magnifyingglass")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(GruxType.caption)
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
@@ -190,7 +190,7 @@ struct ResearchView: View {
                     if job.phase == .done {
                         Button(action: { exportMarkdown(job) }) {
                             Label("Export .md", systemImage: "square.and.arrow.up")
-                                .font(.system(size: 11, weight: .semibold))
+                                .font(GruxType.caption)
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)

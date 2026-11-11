@@ -130,7 +130,7 @@ struct DocumentEditorView: View {
                 dismiss()
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(GruxType.body)
                     .foregroundStyle(GruxTheme.textSecondary)
                     .frame(width: 28, height: 28)
                     .contentShape(Circle())

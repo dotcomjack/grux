@@ -149,7 +149,7 @@ struct NotesView: View {
                 HStack(spacing: GruxSpacing.s) {
                     TextField("Title", text: $editTitle)
                         .textFieldStyle(.plain)
-                        .font(.system(size: 17, weight: .bold))
+                        .font(GruxType.title)
                         .foregroundStyle(GruxTheme.textPrimary)
                         .onChange(of: editTitle) { _, new in
                             guard let current = store.note(id: note.id),
