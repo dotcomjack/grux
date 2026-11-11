@@ -457,11 +457,20 @@ final class ChatOpensAtLatestTests: XCTestCase {
         XCTAssertEqual(ChatView.latestChipShown(in: pane.transcript), false, "control: opened at the newest message")
         NotificationCenter.default.post(name: NSScrollView.willStartLiveScrollNotification, object: pane.transcript)
         let clip = pane.transcript.contentView
+        func diag(_ label: String) {
+            let st = ChatView.status(of: pane.transcript)
+            let keys = ["scrollOffset", "scrollMax", "diagDocHeight", "diagClipHeight", "topVisibleMessageId",
+                        "diagTopRowMinY", "diagTopRowHeight", "diagRowCount", "diagRowSum", "followsLatest", "diagPersonScrolling"]
+            print("SCROLL-DIAG \(label) clipMinY=\(clip.bounds.minY) " + keys.map { "\($0)=\(st[$0] ?? "nil")" }.joined(separator: " "))
+        }
+        diag("t0 opened")
         let startY = clip.bounds.minY
         clip.scroll(to: NSPoint(x: 0, y: max(0, startY - 200)))
         pane.transcript.reflectScrolledClipView(clip)
+        diag("t1 scrolled")
         pane.size.height = 420
-        pump(0.6)
+        diag("t2 resized")
+        for i in 1...6 { pump(0.1); diag("t3 +\(i)00ms") }
         XCTAssertEqual(clip.bounds.minY, max(0, startY - 200), accuracy: 2,
                        "a re-anchor took back the person's scroll while it was still going")
         NotificationCenter.default.post(name: NSScrollView.didEndLiveScrollNotification, object: pane.transcript)

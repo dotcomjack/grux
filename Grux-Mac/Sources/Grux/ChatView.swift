@@ -570,6 +570,14 @@ struct ChatView: View {
             "transcriptWidth": Double(scroll.frame.width),
         ]
         out["topVisibleMessageId"] = follow.topVisibleMessage?.uuidString ?? NSNull()
+        // DIAG (scroll-27 branch only, never shipped)
+        if let top = follow.topVisibleMessage, let f = follow.rowFrames[top] {
+            out["diagTopRowMinY"] = Double(f.minY); out["diagTopRowHeight"] = Double(f.height)
+        }
+        out["diagDocHeight"] = Double(docHeight); out["diagClipHeight"] = Double(clip.height)
+        out["diagPersonScrolling"] = follow.personScrolling
+        out["diagRowCount"] = follow.rowFrames.count
+        out["diagRowSum"] = Double(follow.rowFrames.values.reduce(0) { $0 + $1.height })
         return out
     }
 

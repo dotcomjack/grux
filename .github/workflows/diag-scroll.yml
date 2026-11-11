@@ -1,0 +1,48 @@
+# DIAGNOSTIC ONLY, branch diag/scroll-27, never merged. Logs the chat
+# transcript's geometry around test_aReanchorWaitsWhileThePersonIsScrolling,
+# which missed by 5.4pt and 9.4pt on macOS 27 (runs 43036600276, 43102388274).
+name: diag-scroll
+on:
+  pull_request:
+    branches: [main]
+jobs:
+  diag:
+    name: diag (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: xcode-27
+            developer_dir: /Applications/Xcode_27.2.app/Contents/Developer
+          - runner: macos-26
+            developer_dir: ""
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          if [ -n "${{ matrix.developer_dir }}" ]; then sudo xcode-select -s "${{ matrix.developer_dir }}"; fi
+          swift --version; sw_vers
+      - name: Build tests
+        working-directory: Grux-Mac
+        run: swift build --build-tests 2>&1 | tail -3
+      - name: The one test, ten times
+        working-directory: Grux-Mac
+        continue-on-error: true
+        run: |
+          for i in $(seq 1 10); do
+            echo "=== run $i"
+            swift test --skip-build --filter 'ChatOpensAtLatestTests/test_aReanchorWaitsWhileThePersonIsScrolling' 2>&1 | grep -E 'SCROLL-DIAG|error:|Executed' || true
+          done
+      - name: The whole class, three times
+        working-directory: Grux-Mac
+        continue-on-error: true
+        run: |
+          for i in 1 2 3; do
+            echo "=== class run $i"
+            swift test --skip-build --filter 'ChatOpensAtLatestTests' 2>&1 | grep -E 'SCROLL-DIAG|error:|Executed' || true
+          done
+      - name: The full suite once
+        working-directory: Grux-Mac
+        continue-on-error: true
+        run: swift test --skip-build 2>&1 | grep -E 'SCROLL-DIAG|ChatOpensAtLatest.*error:|Executed [0-9]+ tests' | tail -40
