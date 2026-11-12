@@ -405,7 +405,7 @@ If you run a local model through Ollama, it costs nothing at all.
 - Xcode 16 or later (Swift 6.0+). `Package.swift` says `swift-tools-version:5.9`,
   but `swift-transformers` pulls `swift-jinja` 2.x, which is written against
   tools-version 6.0, so an older toolchain cannot resolve the dependency graph
-- An Anthropic API key, or Ollama running locally. Focus log and Compare need the key either way, and Agents, Jax Command and Self-Upgrade need the Claude Code CLI, signed in
+- An Anthropic API key, Ollama running locally, or an OpenAI-compatible endpoint you add with its own key, such as OpenRouter. Focus log and Compare need the key either way, and Agents, Jax Command and Self-Upgrade need the Claude Code CLI, signed in
 
 Dependencies are deliberately thin. Three direct ones.
 [WhisperKit](https://github.com/argmaxinc/WhisperKit) for on-device speech, which
@@ -474,8 +474,9 @@ skipped and come back to later.
 3. **Setup, one thing at a time:** only what the picked features need. Every macOS
    permission gets its own screen that says what it is for before macOS asks.
 
-**The minimum useful setup is one model.** Chat runs on an Anthropic API key, or on
-Ollama with no key at all.
+**The minimum useful setup is one model.** Chat runs on an Anthropic API key, on
+Ollama with no key at all, or on any OpenAI-compatible endpoint you add with its
+own key, such as OpenRouter.
 
 If you would rather not send anything to a hosted model at all, install
 [Ollama](https://ollama.com), pull a model, and turn on Offline mode in
@@ -639,7 +640,8 @@ that cannot fail is not a guard.
 **What is unfinished, and where contributions help most.** Stated plainly, because it
 matters if you are deciding whether to contribute:
 
-- **A second model backend.** Chat talks to Anthropic or to Ollama. The seam is real
+- **A third model backend.** Chat talks to Anthropic, or through one OpenAI-compatible
+  client to Ollama or any endpoint you add. The seam is real
   but it has only ever had two implementations, so it is shaped by both of them rather
   than by the general case. A third would tell you where it is wrong.
 - **The standalone MCP server, `GruxMCPServer`, is read only.** It is built from
