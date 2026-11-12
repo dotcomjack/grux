@@ -1,8 +1,10 @@
 # Grux
 
-**Grux is an open source, local-first AI agent for macOS.** It is a native app that
-gives the agent your mail, your calendar, your meetings and a shell it can undo.
-Your own API key, or a local model through Ollama and no key at all.
+**Grux is an open source AI agent for macOS that can run entirely on your Mac,** on
+Grux Local, a model trained for the jobs Grux gives it. Its shell takes a snapshot before
+any command that looks destructive, so undo can put your files back, and every command
+it runs goes in a plain text log. Your own API key, any OpenAI-compatible endpoint you add
+with its own key, or a local model through Ollama and no key at all.
 
 **[Download Grux for Mac](https://github.com/dotcomjack/grux/releases/latest/download/Grux.dmg)** (Grux.dmg, 28 MB, Apple silicon, macOS 14 or later).
 Open it, drag Grux into Applications, and open it from there.
