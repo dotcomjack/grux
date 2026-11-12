@@ -181,6 +181,34 @@ jobs:
         working-directory: Grux-Mac
         run: python3 scripts/identity-scan-md.py
 
+  # Branch protection on `main` requires the three check names below. When the
+  # `changes` job says a commit is documentation only, the macOS job is skipped
+  # as one check named "Build and test (${{ matrix.runner }})", unexpanded, so
+  # the three required names never report and the pull request sits BLOCKED
+  # with every check green. Measured 2026-11-12 on PR #25 (README only): it had
+  # to be merged with an admin override.
+  #
+  # This job reports those three names, on Linux, in exactly the case the macOS
+  # job does not run, and in no other. The two `if:` conditions are complements
+  # on `needs.changes.outputs.code`: 'false' runs this job, anything else
+  # (including empty, when `changes` failed) runs the real build. So a commit
+  # that changed code can never be passed by this job, and a documentation-only
+  # commit costs three Linux seconds instead of a macOS build.
+  build-and-test-docs-only:
+    name: Build and test (${{ matrix.runner }})
+    strategy:
+      matrix:
+        runner: [xcode-27, macos-26, macos-15]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code == 'false' }}
+    steps:
+      - name: Documentation only, no Swift to build
+        env:
+          RUNNER_NAME: ${{ matrix.runner }}
+        run: echo "documentation only, so the $RUNNER_NAME build has nothing to compile; Documentation guards (Linux) carries the verdict"
+
   build-and-test:
     name: Build and test (${{ matrix.runner }})
     # The release toolchain gates: Grux 3.3.0 is built and notarized with Xcode
