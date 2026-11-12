@@ -458,12 +458,28 @@ final class ChatOpensAtLatestTests: XCTestCase {
         NotificationCenter.default.post(name: NSScrollView.willStartLiveScrollNotification, object: pane.transcript)
         let clip = pane.transcript.contentView
         let startY = clip.bounds.minY
-        clip.scroll(to: NSPoint(x: 0, y: max(0, startY - 200)))
+        let place = max(0, startY - 200)
+        clip.scroll(to: NSPoint(x: 0, y: place))
         pane.transcript.reflectScrolledClipView(clip)
+        let topMessage = ChatView.status(of: pane.transcript)["topVisibleMessageId"] as? String
+        XCTAssertNotNil(topMessage, "control: the scroll-up has a message at the top of the view")
         pane.size.height = 420
         pump(0.6)
-        XCTAssertEqual(clip.bounds.minY, max(0, startY - 200), accuracy: 2,
+        // A re-anchor goes to the end: here 240 pt below the person's place.
+        // macOS 27 animates the viewport's resize (247 to 207 pt over about
+        // 200 ms) and the clip view settles 1 to 9.4 pt off the place with no
+        // move of Chat's own; macOS 26 resizes in one step and holds it to the
+        // point (diag run 43108380934, 14 runs a leg). So the place is held to
+        // the point before macOS 27 and within 16 pt on it, and on both the
+        // person still reads the same message and the view is not at the end.
+        let slack: CGFloat = ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27 ? 16 : 2
+        XCTAssertEqual(clip.bounds.minY, place, accuracy: slack,
                        "a re-anchor took back the person's scroll while it was still going")
+        XCTAssertEqual(ChatView.status(of: pane.transcript)["topVisibleMessageId"] as? String, topMessage,
+                       "the message the person scrolled to left the top of the view")
+        let scrollMax = try XCTUnwrap(ChatView.status(of: pane.transcript)["scrollMax"] as? Double)
+        XCTAssertGreaterThan(scrollMax - Double(clip.bounds.minY), 100,
+                             "a re-anchor took the view to the end while the person was still scrolling")
         NotificationCenter.default.post(name: NSScrollView.didEndLiveScrollNotification, object: pane.transcript)
         pump(0.3)
         XCTAssertEqual(ChatView.followsLatest(in: pane.transcript), false)
