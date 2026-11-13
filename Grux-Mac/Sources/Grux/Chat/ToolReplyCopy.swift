@@ -178,6 +178,12 @@ enum ToolReplyCopy {
             return readable.isEmpty ? "" : " \(quoted(readable))"
         }
         switch tool {
+        case "add_task": return "Add the task\(named("title"))."
+        case "complete_task": return "Check off your task\(named("match"))."
+        case "remove_task": return "Remove your task\(named("match"))."
+        case "focus_on_task": return "Make\(named("match").isEmpty ? " a task" : named("match")) your focus."
+        case "promote_action": return "Move the suggestion\(named("match")) to your tasks."
+        case "dismiss_action": return "Dismiss the suggestion\(named("match"))."
         case "create_note": return "Save your note\(named("title"))."
         case "update_note": return "Change your note\(named("title"))."
         case "create_event": return "Add your event\(named("title")) to your calendar."
@@ -221,6 +227,7 @@ enum ToolReplyCopy {
             return "Run \(subject(tool: tool, input: input))."
         case "shell_end": return "End the shell session."
         case "shell_undo": return "Undo the last shell change."
+        case "shell_restore_snapshot": return "Put a folder back to an earlier snapshot."
         default: return nil
         }
     }
@@ -280,6 +287,7 @@ enum ToolReplyCopy {
         case "compose_email", "slack_send": what = "Nothing was sent"
         case "open_app", "open_url": what = "Nothing was opened"
         case "shell_run", "shell_run_confirmed", "shell_start", "run_macro": what = "Nothing was run"
+        case "shell_restore_snapshot": what = "Nothing was restored"
         default: what = "Nothing was done"
         }
         return "\(what), because this is a dry run."

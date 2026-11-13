@@ -121,6 +121,27 @@ enum JaxToolGate {
             }
         }
 
+        // A shell snapshot restore rewrites a folder and removes files made since,
+        // so it ALWAYS waits for a tap, in every autonomy mode. The preflight only
+        // narrows: it refuses an id that is not one chat may restore before a card
+        // is queued for it, and names the folder and the time on the card.
+        //
+        // QUEUED DIRECTLY, not through DecisionGate's keyword sniffers. Their only
+        // other answers are a refusal or an urgent spend card, and they read the
+        // card text, so a folder called `threads-poster` or `wireframes` would have
+        // turned a local restore into "public posting" or "spend". There is no
+        // proceed on this path at all.
+        if name == ShellRecoveryTools.restoreTool {
+            switch await ShellRecoveryTools.preflight(input: input) {
+            case .refused(let reason):
+                return .shortCircuit("refused: \(reason) Nothing was changed.")
+            case .action(let action):
+                let pending = PendingApproval(action: action, urgent: false, persona: .none,
+                                              reason: DecisionGate.asksFirstReason)
+                return .shortCircuit(queue(pending, toolName: name, input: input))
+            }
+        }
+
         // Read-only / internal-reversible tools are explicitly safe and skip the
         // gate machinery entirely (no ProposedAction, no log noise). Everything
         // not on this list is treated as potentially side-effecting and is gated.
@@ -159,20 +180,27 @@ enum JaxToolGate {
         switch verdict {
         case .proceed:
             return .proceed
-        case .queueForApproval(var pending):
-            // Stamp the replay coordinates so approving the card actually re-runs
-            // this exact tool call through the gate's one-shot bypass.
-            pending.action.detail["__replay_tool"] = toolName
-            if let json = encodeInput(input) { pending.action.detail["__replay_input"] = json }
-            // dispatchTool answers the chat turn, so Chat is who hears "pending".
-            pending.action.detail[ApprovalQueue.askedInKey] = ApprovalQueue.askedInChat
-            ApprovalQueue.shared.enqueue(pending)
-            WakeLog.shared.log("jax-gate: queued '\(toolName)' for approval (\(pending.reason))")
-            return .shortCircuit(pendingResult(goesOutAs: pending.persona == .none ? nil : pending.persona.displayName))
+        case .queueForApproval(let pending):
+            return .shortCircuit(queue(pending, toolName: toolName, input: input))
         case .refuse(let reason):
             WakeLog.shared.log("jax-gate: refused '\(toolName)' (\(reason))")
             return .shortCircuit("refused: \(reason) Nothing was sent or changed.")
         }
+    }
+
+    /// Puts one call in Approvals and returns what the model hears.
+    @MainActor
+    private static func queue(_ item: PendingApproval, toolName: String, input: [String: Any]) -> String {
+        var pending = item
+        // Stamp the replay coordinates so approving the card actually re-runs
+        // this exact tool call through the gate's one-shot bypass.
+        pending.action.detail["__replay_tool"] = toolName
+        if let json = encodeInput(input) { pending.action.detail["__replay_input"] = json }
+        // dispatchTool answers the chat turn, so Chat is who hears "pending".
+        pending.action.detail[ApprovalQueue.askedInKey] = ApprovalQueue.askedInChat
+        ApprovalQueue.shared.enqueue(pending)
+        WakeLog.shared.log("jax-gate: queued '\(toolName)' for approval (\(pending.reason))")
+        return pendingResult(goesOutAs: pending.persona == .none ? nil : pending.persona.displayName)
     }
 
     /// What the model hears for a call that now waits in Approvals. Written in
@@ -191,9 +219,7 @@ enum JaxToolGate {
     // listing, planning. When in doubt a tool is LEFT OFF this list (so it gets
     // gated), never added speculatively.
     static let safeReadOnlyTools: Set<String> = [
-        // task + action stack (local AppState, fully reversible)
-        "add_task", "remove_task", "complete_task", "focus_on_task",
-        "promote_action", "dismiss_action",
+        // task + action stack: reading it. Changing it waits (knowinglyGated).
         "list_tasks", "list_proposed_actions",
         // memory + profile (local stores, fully reversible). capture_memory
         // appends to the local inbox (~/.grux/inbox.md + inbox.json) and
@@ -271,7 +297,10 @@ enum JaxToolGate {
         // THIS IS THE ONE THE OPERATOR ACTUALLY HIT. "Open Chrome" spoken aloud
         // queued silently and never ran, and the reply talked about an unrelated
         // swarm job because the tool it asked for returned nothing.
-        "open_app", "open_url"
+        "open_app", "open_url",
+        // Grux's own audit log (one file, no path argument) and the list of its
+        // own shell snapshots. They read, and restore nothing.
+        "shell_audit_log", "shell_snapshots"
     ]
 
     /// TOOLS THAT ARE GATED ON PURPOSE, listed so the coverage test can tell
@@ -308,7 +337,15 @@ enum JaxToolGate {
         // Recording people.
         "start_meeting_capture", "stop_meeting_capture",
         // The shell. Never anything but gated.
-        "shell_run", "shell_run_confirmed", "shell_start", "shell_end", "shell_undo"
+        "shell_run", "shell_run_confirmed", "shell_start", "shell_end", "shell_undo",
+        "shell_restore_snapshot",
+        // The person's tasks and the suggestions above them. Measured 2026-11-12 on the
+        // Mac mini: Grux Local 2b answered "write a list" by checking off three of the
+        // person's real tasks, and nothing asked. A task the person asked for in their own
+        // words still runs at once, because its card is the confirmation
+        // (PIMConfirmationController.dispatch, personAsked); a model's call waits here.
+        "add_task", "remove_task", "complete_task", "focus_on_task",
+        "promote_action", "dismiss_action"
     ]
 
     // MARK: - Dry run
@@ -341,8 +378,8 @@ enum JaxToolGate {
     /// server when one is set), and `compact_thread_now` and `summarize_meeting`
     /// (a paid model call).
     static let staysInsideGrux: Set<String> = [
-        "add_task", "remove_task", "complete_task", "focus_on_task",
-        "promote_action", "dismiss_action", "list_tasks", "list_proposed_actions",
+        // A task change waits in Approvals (knowinglyGated), so a dry run holds it too.
+        "list_tasks", "list_proposed_actions",
         "remember_slang", "remember_fact", "list_memories", "mark_memory_reviewed",
         "decision_log_query", "recall_thread_summary",
         "list_inbox", "list_macros",

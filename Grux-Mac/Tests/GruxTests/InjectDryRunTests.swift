@@ -36,10 +36,11 @@ final class InjectDryRunTests: XCTestCase {
 
         for name in ["open_app", "open_url", "play_on_youtube", "read_screen", "play_music_track",
                      "run_focus_check_now", "search_web", "run_macro", "control_screen", "create_note",
-                     "shell_run", "compose_email", "slack_send", "start_workflow_v2", "a_tool_added_tomorrow"] {
+                     "shell_run", "compose_email", "slack_send", "start_workflow_v2", "a_tool_added_tomorrow",
+                     "add_task", "complete_task", "remove_task"] {
             XCTAssertTrue(JaxToolGate.dryRunHolds(name), "\(name) acts outside Grux and runs in a dry run")
         }
-        for name in ["add_task", "remember_fact", "list_tasks", "documents_list", "list_meetings"] {
+        for name in ["remember_fact", "list_tasks", "documents_list", "list_meetings"] {
             XCTAssertFalse(JaxToolGate.dryRunHolds(name), "\(name) only touches Grux and was held")
         }
     }

@@ -7,6 +7,53 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [3.3.1] - 2026-11-12
+
+An empty chat now starts from your Mac. The suggestions under it are built from what is
+really there, and chat gained three tools to act on them: it can read Grux's own audit
+log, list the snapshots Grux took before it changed a folder, and put a folder back to
+one of them once you approve it.
+
+### Added
+
+- **Suggestions built from this Mac.** An empty chat offers at most three, from what is
+  true right now: undo the last command Grux snapshotted first, ask why Grux refused
+  something, see what Grux ran today, prepare for your next meeting, ask about the window
+  you are in, or set up Grux Local for your Mac's memory. A suggestion shows only when
+  chat can act on it, and screen or calendar access is offered only when it is missing.
+  The undo, refusal and today suggestions do not show while chat runs on a local model: we
+  tried all three live on Grux Local and it did not use the tools reliably. On a cloud
+  model they show, and our tests check that each one reaches chat with the tools that
+  answer it; we have not yet tried them there with a live cloud model.
+- **Chat can read Grux's audit log.** Ask what Grux ran today, or why it refused a
+  command, and chat reads its own log of every shell command it ran and every file it
+  read, up to 7 days back. It reads that one file and nothing else, and secrets in it are
+  hidden.
+- **Chat can undo a shell command.** Chat lists the snapshots Grux took before a command
+  that could destroy work, and can put the folder back to one of them. The restore always
+  waits for your tap in Approvals, whatever autonomy you set, and goes through the same
+  path as `grux undo`.
+
+### Changed
+
+- **A change to your tasks that chat makes on its own now waits for your OK.** Adding,
+  removing, checking off or focusing a task, and moving or dismissing a suggestion, waits
+  in Approvals with a card that says what it would do when chat decides to do it. A task
+  you ask for in your own words, such as "add a task: call Sam", still happens at once.
+- Chat has 119 tools, up from 116.
+
+### Fixed
+
+- **A local model gets the tools an undo or log question needs.** A local model got the same
+  short list of tools for every message, so asking it to undo a command or what Grux ran
+  never reached the tools that answer. Those asks now carry them, in place of others,
+  within the same limits.
+- **A local model no longer checks off your tasks unasked.** Asked to write a list, a small
+  local model could mark tasks done; that change now waits for your OK.
+- **Building from source works again.** The grux-guardrails 0.8.2 pin named a revision
+  that repository no longer has, so a clean checkout could not fetch it. It now names the
+  same code at the revision the 0.8.2 tag points to.
+
 ## [3.3.0] - 2026-11-11
 
 Everyday asks get straight, true answers, even on a small local model. Ask Grux the
@@ -1504,7 +1551,8 @@ listed because each was a promise the app made and did not keep.
   deliberately unwired. It is declared as unused rather than removed, because it
   is a half-built feature and not a false claim.
 
-[Unreleased]: https://github.com/dotcomjack/grux/compare/v3.3.0...HEAD
+[Unreleased]: https://github.com/dotcomjack/grux/compare/v3.3.1...HEAD
+[3.3.1]: https://github.com/dotcomjack/grux/compare/v3.3.0...v3.3.1
 [3.3.0]: https://github.com/dotcomjack/grux/compare/v3.2.0...v3.3.0
 [3.2.0]: https://github.com/dotcomjack/grux/compare/v3.1.0...v3.2.0
 [3.1.0]: https://github.com/dotcomjack/grux/compare/v3.0.0...v3.1.0

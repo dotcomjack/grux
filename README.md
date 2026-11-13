@@ -18,7 +18,7 @@ Open it, drag Grux into Applications, and open it from there.
 
 **One agent for everything you run on your Mac.**
 
-37 features and 116 tools in one native window.
+37 features and 119 tools in one native window.
 
 Grux opens persistent terminal sessions in your project. Its shell tool snapshots
 the project into a shadow git repository when its session starts and again before
@@ -65,7 +65,7 @@ Star the repository on GitHub, and watch its releases to hear about new versions
 > Mac with 24 GB or more).
 > [How it was trained and measured](#grux-local).
 
-**Status: shipping, currently 3.3.** 37 features ship in 14 surfaces, and a command line drives all of them. 25 are
+**Status: shipping, currently 3.3.1.** 37 features ship in 14 surfaces, and a command line drives all of them. 25 are
 core and 12 are labs: real, but rough at the edges, and labelled so. Those are
 two different counts on purpose. A feature is a capability the app has; a surface
 is a place to open. 3.0 folded nine things into where they belonged, so the list
@@ -212,7 +212,7 @@ so a web search opens Google in Chrome.
 
 ## Install
 
-**[Download Grux AI 3.3 for Apple silicon](https://github.com/dotcomjack/grux/releases/latest/download/Grux.dmg)** (Grux.dmg, 28 MB, macOS 14 or later)
+**[Download Grux AI 3.3.1 for Apple silicon](https://github.com/dotcomjack/grux/releases/latest/download/Grux.dmg)** (Grux.dmg, 28 MB, macOS 14 or later)
 
 1. Open `Grux.dmg`.
 2. Drag Grux into Applications.
@@ -407,7 +407,7 @@ If you run a local model through Ollama, it costs nothing at all.
 - Xcode 16 or later (Swift 6.0+). `Package.swift` says `swift-tools-version:5.9`,
   but `swift-transformers` pulls `swift-jinja` 2.x, which is written against
   tools-version 6.0, so an older toolchain cannot resolve the dependency graph
-- An Anthropic API key, Ollama running locally, or an OpenAI-compatible endpoint you add with its own key, such as OpenRouter. Focus log and Compare need the key either way, and Agents, Jax Command and Self-Upgrade need the Claude Code CLI, signed in
+- An Anthropic API key, Ollama running locally, or an OpenAI-compatible endpoint you add with its own key, such as OpenRouter. Focus log and Compare need the Anthropic key either way, and Agents, Jax Command and Self-Upgrade need the Claude Code CLI, signed in
 
 Dependencies are deliberately thin. Three direct ones.
 [WhisperKit](https://github.com/argmaxinc/WhisperKit) for on-device speech, which
@@ -613,7 +613,7 @@ three or the app.
 in `ChatService.allTools()` in `Grux-Mac/Sources/Grux/ChatService.swift` and handled in
 the `switch` further down the same file. Copy `add_task`: the declaration is at the top
 of `allTools()` and its handler is the first `case`. Two edits, same file, and the
-model can call it. `ToolCatalogueTests` pins the count at 116, so adding one turns the
+model can call it. `ToolCatalogueTests` pins the count at 119, so adding one turns the
 suite red until you move the pin on purpose.
 
 **To add a surface**, meaning a place to open with its own screen. Add a
@@ -628,7 +628,7 @@ catches already happened here:
 
 ```sh
 cd Grux-Mac
-swift test                          # 6085 tests
+swift test                          # 6131 tests
 python3 scripts/check-contract.py   # the setup contract is frozen
 ```
 

@@ -61,6 +61,7 @@ enum ActionClaimGuard {
         "get_meeting_transcript", "focus_summary", "search_meetings", "search_notes",
         "speaker_stats", "shell_status", "summarize_meeting", "search_web",
         "research_web", "youtube_transcript", "grux_orb_hint", "grux_orb_stage",
+        "shell_audit_log", "shell_snapshots",
     ]
 
     /// Read-only tools that still keep something (W57-FIX round 4, every tool in
@@ -139,9 +140,10 @@ enum ActionClaimGuard {
 
     /// Ungated tools that do change something on this Mac, so an `ok` from
     /// one does back a claim.
+    /// (The task tools left this list in 3.3.1: a model's call to one waits in Approvals,
+    /// and an approved one's `ok` backs a claim like any gated tool's.)
     static let localActions: Set<String> = [
-        "add_task", "remove_task", "complete_task", "focus_on_task",
-        "promote_action", "dismiss_action", "remember_slang", "remember_fact",
+        "remember_slang", "remember_fact",
         "capture_memory", "mark_memory_reviewed", "play_music_track", "play_on_youtube",
         "set_mode", "design_create_project", "design_generate", "design_open_project",
         "design_restore_version", "design_system_activate", "design_system_generate_brand",

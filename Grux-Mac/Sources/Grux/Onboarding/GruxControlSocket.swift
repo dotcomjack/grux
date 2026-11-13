@@ -862,52 +862,86 @@ enum GruxControlTools {
          "created_at": ISO8601DateFormatter().string(from: r.createdAt)]
     }
 
-    /// Roll one session's folder back.
+    /// Roll one session's folder back, for `grux_shell_undo` and so for `grux undo`.
+    static func shellUndo(snapshotId: String) async -> [String: Any] {
+        switch await restoreSnapshot(snapshotId: snapshotId) {
+        case .restored(let restoredTo, let changed, let sessionId, let live):
+            return MCPWire.textResult(json([
+                "restored_to": restoredTo, "changed": changed,
+                "session_id": sessionId, "live": live,
+            ]))
+        case .refused(let reason):
+            return MCPWire.textFailure(reason)
+        }
+    }
+
+    enum SnapshotRestore: Equatable {
+        case restored(restoredTo: String, changed: [String], sessionId: String, live: Bool)
+        case refused(String)
+    }
+
+    /// THE ONE RESTORE PATH. `grux_shell_undo` (and through it `grux undo`) and chat's
+    /// `shell_restore_snapshot` both end here, so the checks below hold for every door.
     ///
     /// A LIVE session goes through its manager rather than through a fresh store. Restoring
     /// behind a live session's back would leave its in-memory record list describing a work
     /// tree that no longer matches it, and the next undo inside that session would target the
     /// wrong commit.
-    static func shellUndo(snapshotId: String) async -> [String: Any] {
-        for info in await ShellSessionManager.shared.listSessions() {
-            let records = (try? await ShellSessionManager.shared
-                .listSnapshots(sessionId: info.sessionId)) ?? []
-            guard records.contains(where: { $0.snapshotId == snapshotId }) else { continue }
-            do {
-                let result = try await ShellSessionManager.shared
-                    .undo(sessionId: info.sessionId, to: snapshotId)
-                return MCPWire.textResult(json([
-                    "restored_to": result.restoredTo, "changed": result.changed,
-                    "session_id": info.sessionId, "live": true,
-                ]))
-            } catch {
-                return MCPWire.textFailure("Could not undo: \(error)")
+    ///
+    /// `supportDir` is the snapshot store to look in, nil for the real one. Tests pass a temp
+    /// directory so a restore never touches the operator's own repositories.
+    static func restoreSnapshot(snapshotId raw: String, supportDir: String? = nil) async -> SnapshotRestore {
+        let snapshotId = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        // An id is a NAME the store gave out, never a path. Anything else is refused before
+        // the store is opened, so `../` or a slash cannot steer a lookup outside it.
+        guard isSnapshotId(snapshotId) else {
+            return .refused("\(snapshotId.isEmpty ? "An empty id" : "That") is not a snapshot id. "
+                            + "Snapshot ids look like s3-1a2b3c4.")
+        }
+
+        if supportDir == nil {
+            for info in await ShellSessionManager.shared.listSessions() {
+                let records = (try? await ShellSessionManager.shared
+                    .listSnapshots(sessionId: info.sessionId)) ?? []
+                guard records.contains(where: { $0.snapshotId == snapshotId }) else { continue }
+                do {
+                    let result = try await ShellSessionManager.shared
+                        .undo(sessionId: info.sessionId, to: snapshotId)
+                    return .restored(restoredTo: result.restoredTo, changed: result.changed,
+                                     sessionId: info.sessionId, live: true)
+                } catch {
+                    return .refused("Could not undo: \(error)")
+                }
             }
         }
 
-        guard let (session, _) = await ShellSnapshotIndex.locate(snapshotId: snapshotId) else {
-            return MCPWire.textFailure("No snapshot called \(snapshotId). "
-                                     + "Call grux_shell_snapshots to see them.")
+        guard let (session, _) = await ShellSnapshotIndex.locate(snapshotId: snapshotId,
+                                                                 supportDir: supportDir) else {
+            return .refused("No snapshot called \(snapshotId). "
+                            + "Call grux_shell_snapshots to see them.")
         }
         guard let root = session.rootDir else {
-            return MCPWire.textFailure("That snapshot's repository does not record which folder "
-                                     + "it belongs to, so there is nothing safe to restore.")
+            return .refused("That snapshot's repository does not record which folder "
+                            + "it belongs to, so there is nothing safe to restore.")
         }
         guard FileManager.default.fileExists(atPath: root) else {
-            return MCPWire.textFailure("The folder that snapshot belongs to is gone: \(root)")
+            return .refused("The folder that snapshot belongs to is gone: \(root)")
         }
 
-        let store = ShellSnapshotStore(sessionId: session.sessionId, rootDir: root)
+        let store = ShellSnapshotStore(sessionId: session.sessionId, rootDir: root, supportDir: supportDir)
         do {
             try await store.hydrate()
             let changed = try await store.restore(to: snapshotId)
-            return MCPWire.textResult(json([
-                "restored_to": snapshotId, "changed": changed,
-                "session_id": session.sessionId, "live": false,
-            ]))
+            return .restored(restoredTo: snapshotId, changed: changed,
+                             sessionId: session.sessionId, live: false)
         } catch {
-            return MCPWire.textFailure("Could not undo: \(error)")
+            return .refused("Could not undo: \(error)")
         }
+    }
+
+    /// The shape `ShellSnapshotStore` names a snapshot: `s<n>-<7 hex>`.
+    nonisolated static func isSnapshotId(_ id: String) -> Bool {
+        id.range(of: #"^s[0-9]{1,6}-[0-9a-f]{7}$"#, options: .regularExpression) != nil
     }
 
     private static func json(_ any: [String: Any]) -> String {

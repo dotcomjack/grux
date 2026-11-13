@@ -50,7 +50,8 @@ enum ToolRelevance {
                      "worker", "workers", "shell", "terminal", "script", "compile", "compiles", "bug", "bugs", "error", "errors",
                      "test", "tests", "git", "github", "pull request", "commit", "design", "mockup", "mock up", "prototype",
                      "landing page", "website", "site", "html", "css", "brand kit", "logo", "skill", "skills", "workflow",
-                     "workflows", "backup", "upgrade", "foundry", "compare", "project", "projects", "localize", "run it"],
+                     "workflows", "backup", "upgrade", "foundry", "compare", "project", "projects", "localize", "run it",
+                     "audit log"],
         .meetings: ["meeting", "meetings", "capture", "transcript", "transcripts", "speaker", "speakers", "enroll", "recording",
                     "record", "standup", "who said", "folder", "folders", "diarize", "export the audio"],
         .research: ["research", "deep dive", "look into", "investigate", "report", "reports", "youtube", "video", "article",
@@ -72,6 +73,21 @@ enum ToolRelevance {
     private static let webAddress = try? NSRegularExpression(
         pattern: "(?:^|[^a-z0-9.-])[a-z0-9-]+(?:\\.[a-z0-9-]+)*\\.(?:com|org|net|io|dev|app|ai|co|edu|gov|me|tv|us|uk)(?:[^a-z0-9-]|$)")
 
+    /// How each `ChatStarterChips` ask that needs a shell tool begins.
+    static let chipShapes = ["undo `", "why did you refuse `", "what did you run today?"]
+
+    /// The recovery tools a starter chip's ask needs, by its shape, in the order the model
+    /// uses them; none for any other words. A lean local turn gives these slots of their
+    /// own (ChatService.assemblePendingContext), so a chip works on Grux Local.
+    static func chipTools(for utterance: String) -> [String] {
+        let lowered = utterance.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if lowered.hasPrefix("undo `") { return [ShellRecoveryTools.listTool, ShellRecoveryTools.restoreTool] }
+        if lowered.hasPrefix("why did you refuse `") || lowered.hasPrefix("what did you run today?") {
+            return [ShellRecoveryTools.auditTool]
+        }
+        return []
+    }
+
     static let recencyWindow: TimeInterval = 15 * 60
 
     /// Music tools whose miss falls back to play_on_youtube.
@@ -87,6 +103,9 @@ enum ToolRelevance {
         if s.hasImage { out.insert(.screen) }
         for (g, words) in keywords where ChatIntentClassifier.containsAnyWord(text, keywords: words) { out.insert(g) }
         let lowered = text.lowercased()
+        // The starter chips the shell recovery tools answer, matched by their SHAPE, so a
+        // bare "undo that paste" or "I ran today" never pulls the developer tools in.
+        if chipShapes.contains(where: { lowered.hasPrefix($0) }) { out.insert(.developer) }
         if webAddress?.firstMatch(in: lowered, range: NSRange(lowered.startIndex..., in: lowered)) != nil {
             out.insert(.otherApps)
         }

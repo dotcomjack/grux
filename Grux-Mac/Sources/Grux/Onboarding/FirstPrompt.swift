@@ -17,7 +17,7 @@ enum FirstPrompt {
     /// it, so this screen never raises a prompt nobody asked for.
     static let decisions = 1
 
-    static let placeholder = "Say it however you like. Run my inbox, keep me on track, help me ship code."
+    static let placeholder = "Say it however you like: undo what my script did, explain this error, help me ship code."
 
     struct Listening { let title: String; let lead: String; let body: String }
 

@@ -91,8 +91,10 @@ final class PIMTaskActionIntentTests: XCTestCase {
             XCTAssertTrue(plan.requiresUndoWindow, plan.kind.rawValue)
             XCTAssertEqual(plan.kind.cardKindLabel, "TASK", plan.kind.rawValue)
             XCTAssertEqual(plan.kind.rawValue, plan.toolName, "kind names its tool")
-            // The card is the one confirmation (A10b): no second approval in Jax.
-            XCTAssertTrue(JaxToolGate.safeReadOnlyTools.contains(plan.toolName ?? ""), plan.kind.rawValue)
+            // A model's call to the tool waits in Approvals. The person's own plan does not:
+            // its card is the one confirmation (A10b) and carries the one-shot pass
+            // (PIMConfirmationController.dispatch, proven in PIMTaskIntentTests).
+            XCTAssertTrue(JaxToolGate.knowinglyGated.contains(plan.toolName ?? ""), plan.kind.rawValue)
         }
     }
 

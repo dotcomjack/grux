@@ -17,8 +17,8 @@ import XCTest
 /// ## The count in here is the measured one, and the README now agrees
 ///
 /// Measured 2026-08-26 by walking every `ClaudeTool(name:)` construction that
-/// `allTools()` can reach: 36 declared inline in `ChatService`, 80 more across
-/// the 25 appended groups, 116 total. Every one of those groups except
+/// `allTools()` can reach: 36 declared inline in `ChatService`, 83 more across
+/// the 26 appended groups, 119 total. Every one of those groups except
 /// `MCPManager` returns a flat array literal with no branch in it, so the number
 /// is deterministic rather than a sample.
 ///
@@ -46,7 +46,7 @@ final class ToolCatalogueTests: XCTestCase {
 
     /// The measured size of the catalogue. Moving this is a deliberate act: see
     /// the failure message for the other line that has to move with it.
-    private static let expectedToolCount = 116
+    private static let expectedToolCount = 119
 
     func testCatalogueCountIsPinned() {
         let tools = ChatService.allTools()
@@ -58,7 +58,7 @@ final class ToolCatalogueTests: XCTestCase {
 
             1. `expectedToolCount` in this file.
             2. The first line of README.md, which currently reads:
-               "37 features and 116 tools in one native window."
+               "37 features and 119 tools in one native window."
 
             The two agree today (the README said seventy nine until db9b6d0 brought it \
             to the measured 116). Whoever changed the catalogue updates BOTH, the pinned \
@@ -92,7 +92,7 @@ final class ToolCatalogueTests: XCTestCase {
             """)
     }
 
-    /// Every one of the 116 names is lower snake case: a leading lowercase letter,
+    /// Every one of the 119 names is lower snake case: a leading lowercase letter,
     /// then lowercase letters, digits and single underscores. That was measured,
     /// not assumed, so this assertion starts green. It exists because the groups
     /// are separate files and a contributor working only in, say, `NotesTool` has

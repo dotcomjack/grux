@@ -1128,6 +1128,16 @@ final class ChatService {
             if noTools { tools = [] }
             let filtered = tools
             tools = LocalTurn.rank(tools, utterance: lastUser?.content ?? "")
+            // A starter chip's ask names the recovery tools that answer it (ChatStarterChips).
+            // They go to the front of the ranked list, so the fit below keeps them and drops
+            // the lowest-ranked tools instead: the window and the ceiling stay what Grux Local
+            // was sized for. Measured 2026-11-12 on the Mac mini: before this every chip ask
+            // took the stable core list, so no recovery tool ever reached a local model.
+            let chipTools = noTools ? [] : ToolRelevance.chipTools(for: lastUser?.content ?? "")
+            if !chipTools.isEmpty {
+                let lead = chipTools.compactMap { name in tools.first { $0.name == name } }
+                tools = lead + tools.filter { !chipTools.contains($0.name) }
+            }
             // Room for the line naming what is left out, at its longest.
             let worstLine = LocalTurn.cutToolsLine(tools.map(\.name))?.count ?? 0
             // The blocks without cache_control (the per-turn block, a preset's,
@@ -1149,7 +1159,7 @@ final class ChatService {
             // Tools and the cut line go out in the one order (LocalTurn.stableOrder),
             // on either path, so the order never depends on the words (D17).
             let order = LocalTurn.canonicalOrder(Self.allTools())
-            if !noTools,
+            if !noTools, chipTools.isEmpty,
                let stable = Self.stableLocalTools(systemBlocks: systemBlocks, messages: messages, ranked: tools,
                                                   utterance: lastUser?.content ?? "",
                                                   hasImage: lastUser?.imageData != nil,
@@ -2010,6 +2020,7 @@ final class ChatService {
         ]
         tools.append(contentsOf: FilesystemTool.claudeTools())
         tools.append(contentsOf: ShellTool.claudeTools())
+        tools.append(contentsOf: ShellRecoveryTools.claudeTools())
         tools.append(contentsOf: IOSTool.claudeTools())
         tools.append(contentsOf: AgentTools.claudeTools())
         tools.append(contentsOf: ResearchTool.claudeTools())
@@ -2617,6 +2628,9 @@ final class ChatService {
 
         case "shell_start", "shell_run", "shell_run_confirmed", "shell_undo", "shell_status", "shell_end":
             return await ShellTool.dispatch(name: name, input: input)
+
+        case _ where ShellRecoveryTools.names.contains(name):
+            return await ShellRecoveryTools.dispatch(name: name, input: input)
 
         case "ios_doctor", "ios_scaffold", "ios_build_verify", "ios_simulator_run":
             return await IOSTool.dispatch(name: name, input: input)

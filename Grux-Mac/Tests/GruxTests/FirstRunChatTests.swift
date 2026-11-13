@@ -11,57 +11,43 @@ final class FirstRunChatTests: XCTestCase {
 
     // MARK: - Suggestion chips
 
-    /// THE BUG, pinned. Every chip the old empty state offered needed data a
-    /// fresh install does not have, so the most inviting thing on screen was
-    /// also the thing most likely to disappoint.
+    /// THE BUG, pinned. The old empty state offered the same stock chips on
+    /// every Mac, and on a fresh install every one of them needed data that
+    /// did not exist. The chips are now built from this Mac's state, so no
+    /// state, thin or full, may bring a stock chip back.
     ///
     /// Asserting the absence of the exact old strings is deliberate. A test that
     /// only checked "there are three chips" passes against the code that shipped
     /// the bug, which makes it decoration.
-    func testFirstRunNeverOffersSomethingThatNeedsDataThatDoesNotExist() {
-        let chips = ChatEmptyState.suggestions(isFirstRun: true, hasTasks: false)
-
-        XCTAssertFalse(chips.contains("Roast my task stack"),
-                       "the task stack is empty on a fresh install, so this roasts nothing")
-        XCTAssertFalse(chips.contains("What should I work on?"),
-                       "there are no projects or tasks yet, so there is nothing to rank")
-        XCTAssertFalse(chips.contains("Plan today"),
-                       "calendar permission is usually not granted yet, so this plans against nothing")
-        XCTAssertFalse(chips.isEmpty, "a first run user must still be offered somewhere to start")
+    func testNoStateEverOffersAStockChip() {
+        let stock = ["What can you actually do?", "Help me plan my first project",
+                     "What should I set up first?", "What should I work on?",
+                     "Roast my task stack", "Plan today"]
+        var full = MacStarterState()
+        full.chatCanRestoreSnapshots = true
+        full.chatCanReadAuditLog = true
+        full.lastRefusal = .init(at: Date(), target: "touch proof.txt", reason: "strict mode")
+        full.commandsToday = 12
+        full.memoryGB = 16
+        for state in [MacStarterState(), MacStarterState(memoryGB: 16), full] {
+            let chips = ChatStarterChips.build(state).chips.map(\.ask)
+            XCTAssertFalse(chips.isEmpty, "every Mac must still be offered somewhere to start")
+            for old in stock {
+                XCTAssertFalse(chips.contains(old), "the stock chip \"\(old)\" is back")
+            }
+        }
     }
 
     /// The other half, and the reason the first half is not simply "offer
-    /// nothing": what IS offered has to move a new user toward operating.
-    func testFirstRunOffersSomethingThatWorksWithNoDataAtAll() {
-        let chips = ChatEmptyState.suggestions(isFirstRun: true, hasTasks: false)
-        XCTAssertTrue(chips.contains(where: { $0.lowercased().contains("what can you") }),
-                      "the likeliest first question a person types must be one tap away")
-        XCTAssertTrue(chips.contains(where: { $0.lowercased().contains("set up") }),
-                      "a new user needs a route into configuring the thing")
-        XCTAssertTrue(chips.contains(where: { $0.lowercased().contains("project") }),
-                      "and a route into doing real work, not just chatting")
-    }
-
-    /// The general rule, applied to the returning user too: a chip that cannot
-    /// work is absent rather than disappointing.
-    func testRoastIsOfferedOnlyWhenThereIsAStackToRoast() {
-        XCTAssertFalse(ChatEmptyState.suggestions(isFirstRun: false, hasTasks: false)
-                        .contains("Roast my task stack"),
-                       "no tasks means no roast, even for a returning user")
-        XCTAssertTrue(ChatEmptyState.suggestions(isFirstRun: false, hasTasks: true)
-                        .contains("Roast my task stack"),
-                      "with a real stack it is exactly the right offer")
-    }
-
-    /// Guards the case that produced the bug in the first place: a returning
-    /// user whose stack happens to be empty is NOT a first run user, and used to
-    /// get the same broken chip.
-    func testReturningUserWithAnEmptyStackStillGetsWorkingSuggestions() {
-        let chips = ChatEmptyState.suggestions(isFirstRun: false, hasTasks: false)
-        XCTAssertFalse(chips.isEmpty)
-        for chip in chips {
-            XCTAssertNotEqual(chip, "Roast my task stack")
-        }
+    /// nothing": a fresh install, with nothing granted and nothing run, still
+    /// gets three things it can do next, and each one is a setup step.
+    func testAFreshInstallIsOfferedSetupStepsThatWork() {
+        var fresh = MacStarterState()
+        fresh.memoryGB = 16
+        let chips = ChatStarterChips.build(fresh).chips.map(\.ask)
+        XCTAssertEqual(chips, ["Set up Grux Local 4B for this Mac's 16 GB",
+                               "Let Grux see the window I am in",
+                               "Connect my calendar"])
     }
 
     // MARK: - What Grux can do
@@ -410,26 +396,15 @@ final class FirstRunChatTests: XCTestCase {
         XCTAssertFalse(WakeWordListener.wouldTrigger("hey ada"), "control: nor a renamed one")
     }
 
-    /// The leak the first version of this fix left open. A user whose tasks are
-    /// ALL COMPLETED has a non-empty `tasks` array and an empty `activeTasks`
-    /// one. The chip logic read the former and the model is handed the latter,
-    /// so they were offered "Roast my task stack" against a stack the model sees
-    /// as "(empty)": the exact shrug this change exists to prevent, reached by a
-    /// different route.
-    ///
-    /// Asserted at the boundary the view actually passes, since `suggestions` is
-    /// pure and cannot see AppState: what matters is that "has tasks" means
-    /// "has ACTIVE tasks".
-    func testAStackOfOnlyCompletedTasksIsNotAStackToRoast() {
-        let chips = ChatEmptyState.suggestions(isFirstRun: false, hasTasks: false)
-        XCTAssertFalse(chips.contains("Roast my task stack"),
-                       "with nothing active there is nothing to roast, however many completed rows exist")
-
+    /// "First run" means no ACTIVE tasks. `state.tasks` includes completed
+    /// rows the model is never shown, so somebody who finished everything they
+    /// had must still read as a first run.
+    func testFirstRunIsDecidedByActiveTasks() {
         let source = try? String(contentsOf: chatViewSource, encoding: .utf8)
         XCTAssertNotNil(source)
-        XCTAssertTrue(source?.contains("hasTasks: !state.activeTasks.isEmpty") ?? false,
-                      "ChatView must pass ACTIVE tasks; state.tasks includes completed ones and the model never sees those")
-        XCTAssertFalse(source?.contains("hasTasks: !state.tasks.isEmpty") ?? true,
+        XCTAssertTrue(source?.contains("state.activeTasks.isEmpty") ?? false,
+                      "ChatView must decide first run from ACTIVE tasks")
+        XCTAssertFalse(source?.contains("state.tasks.isEmpty") ?? true,
                        "the raw tasks array counts completed rows the model is never shown")
     }
 
@@ -496,21 +471,35 @@ final class FirstRunChatTests: XCTestCase {
 
     // MARK: - Render
 
+    /// A fresh 16 GB Mac and a busy one, through the real builder.
+    static var freshChips: [ChatStarterChips.Chip] {
+        ChatStarterChips.build(MacStarterState(memoryGB: 16)).chips
+    }
+    static var busyChips: [ChatStarterChips.Chip] {
+        var s = MacStarterState()
+        s.chatCanRestoreSnapshots = true
+        s.chatCanReadAuditLog = true
+        s.lastDestructiveSnapshot = .init(at: Date(), command: "find . -name x -delete", folder: "/tmp/p")
+        s.lastRefusal = .init(at: Date(), target: "touch proof.txt", reason: "strict mode")
+        s.commandsToday = 361
+        return ChatStarterChips.build(s).chips
+    }
+
     /// Renders both states so somebody can LOOK at the first sentence Grux says.
     ///
     ///     GRUX_SHOT_DIR=/tmp/chat swift test --filter FirstRunChatTests
     func testEmptyStateRenders() {
         for (name, view) in [
-            ("firstRun", ChatEmptyState(isFirstRun: true, hasTasks: false,
-                                        wakeWordOn: false, onPick: { _ in })),
-            ("returning", ChatEmptyState(isFirstRun: false, hasTasks: true,
-                                         wakeWordOn: false, onPick: { _ in })),
-            ("returningEmptyStack", ChatEmptyState(isFirstRun: false, hasTasks: false,
-                                                   wakeWordOn: false, onPick: { _ in })),
+            ("firstRun", ChatEmptyState(isFirstRun: true, wakeWordOn: false,
+                                        chips: Self.freshChips, onPick: { _ in })),
+            ("returning", ChatEmptyState(isFirstRun: false, wakeWordOn: false,
+                                         chips: Self.busyChips, onPick: { _ in })),
+            ("returningNoChipsYet", ChatEmptyState(isFirstRun: false, wakeWordOn: false,
+                                                   chips: [], onPick: { _ in })),
             // The state the wake-word wiring fix is about: a listener that is
             // genuinely running, which is the only time the phrase is offered.
-            ("returningWakeListening", ChatEmptyState(isFirstRun: false, hasTasks: true,
-                                                      wakeWordOn: true, onPick: { _ in }))
+            ("returningWakeListening", ChatEmptyState(isFirstRun: false, wakeWordOn: true,
+                                                      chips: Self.busyChips, onPick: { _ in }))
         ] {
             // The 840pt window floor, minus the sidebar rail, is roughly the
             // width the chat pane actually gets. Rendering at the full window

@@ -11,6 +11,9 @@ struct ChatView: View {
     @StateObject private var wake = WakeWordListener.shared
     @ObservedObject private var presets = PresetStore.shared
     @State private var draft = ""
+    /// The empty state's chips, built from this Mac by `ChatStarterChips` while
+    /// the empty state is on screen.
+    @State private var starterChips: [ChatStarterChips.Chip] = []
     @State private var draftBeforeVoice = ""
     // Debounces the pre-send cost estimate refresh. Composer edits reschedule
     // this ~600ms task instead of re-pricing on every keystroke; the estimate
@@ -821,15 +824,25 @@ struct ChatView: View {
 
     private var emptyState: some View {
         ChatEmptyState(isFirstRun: chatIsFirstRun,
-                       hasTasks: !state.activeTasks.isEmpty,
                        // THE LIVE LISTENER, not `config.wakeWordEnabled`. The
                        // preference is only what the user asked for; ambient
                        // mode and a muted mic both stop the listener while
                        // leaving it true, and this line promised a wake word
                        // that could not hear anything.
-                       wakeWordOn: wake.isListening) { text in
+                       wakeWordOn: wake.isListening,
+                       chips: starterChips) { text in
             draft = text
             send()
+        }
+        // Live, never read once: a permission granted, a meeting ending or a
+        // model finishing its pull changes the chips without a relaunch. The
+        // task ends when the empty state leaves the screen.
+        .task {
+            while !Task.isCancelled {
+                let mac = await ChatStarterChips.gather()
+                starterChips = ChatStarterChips.build(mac).chips
+                try? await Task.sleep(nanoseconds: 30_000_000_000)
+            }
         }
     }
 

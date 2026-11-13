@@ -92,8 +92,16 @@ final class PIMTaskIntentTests: XCTestCase {
         XCTAssertEqual(ChatIntentClassifier.pimRoute(utterance: "add a task: water the office plants")?.kind, .addTask)
     }
 
-    func test_addTaskNeedsNoApproval() {
-        // The card is the one confirmation; add_task must not also queue in Jax.
-        XCTAssertTrue(JaxToolGate.safeReadOnlyTools.contains("add_task"))
+    @MainActor
+    func test_addTaskNeedsNoApproval() async {
+        // The card is the one confirmation when the person asked: add_task must not also
+        // queue in Jax. A model's own add_task waits (LocalChipToolsTests).
+        let state = AppState.shared
+        let saved = state.tasks
+        defer { state.tasks = saved }
+        let r = await PIMConfirmationController.dispatch(name: "add_task", input: ["title": "Card probe water the plants"],
+                                                         personAsked: true)
+        XCTAssertTrue(r.hasPrefix("ok:"), r)
+        XCTAssertTrue(state.tasks.contains { $0.title == "Card probe water the plants" })
     }
 }

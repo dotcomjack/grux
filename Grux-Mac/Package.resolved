@@ -5,7 +5,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/dotcomjack/grux-guardrails.git",
       "state" : {
-        "revision" : "60119283feb2e77a371089da2c21f50445cd12fa",
+        "revision" : "8c4cdb2be44ec094c671b3d9c90cf5880534c710",
         "version" : "0.8.2"
       }
     },

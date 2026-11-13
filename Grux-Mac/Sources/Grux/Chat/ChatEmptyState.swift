@@ -31,16 +31,23 @@ import SwiftUI
 ///
 /// It was a private computed property on `ChatView`, which is 1000+ lines and
 /// needs a live `AppState`, so nothing could render it and nothing could assert
-/// on it. Pulling it out with its inputs passed in makes both possible, and
-/// `suggestions(isFirstRun:hasTasks:)` is a pure function precisely so the chip
-/// logic can be tested without SwiftUI at all.
+/// on it. Pulling it out with its inputs passed in makes both possible.
+///
+/// ## The chips come from this Mac, not from a list
+///
+/// The hardcoded chips are gone, first run and returning alike. "What can you
+/// actually do?" and "Plan today" were the same three strings on every Mac, and
+/// a stock ask is a shrug in advance. `ChatStarterChips.build` is the pure
+/// function that turns this Mac's real state (an undoable command, a refusal,
+/// the next meeting, the window in front, today's log, whether a local model is
+/// set up) into at most three asks, and `ChatView` gathers that state while the
+/// empty state is on screen and hands the result in as `chips`.
 struct ChatEmptyState: View {
 
     /// No tasks and no prior conversation. Not "has never launched": somebody
     /// who cleared their history is, for the purposes of what Grux can usefully
     /// offer, in the same position as somebody who just installed it.
     let isFirstRun: Bool
-    let hasTasks: Bool
     /// Whether the wake word listener is actually running.
     ///
     /// This copy used to tell every returning user to say "hey grux" from
@@ -49,27 +56,12 @@ struct ChatEmptyState: View {
     /// app was instructing people to use a feature that was off and that nobody
     /// had ever told them existed. Saying it only when it is on is the whole fix.
     let wakeWordOn: Bool
+    /// `ChatStarterChips.build(...).chips`, at most three. Each `ask` is sent
+    /// VERBATIM as the user's first message, so these are not labels, they are
+    /// utterances. Empty until the first gather lands, and then no row at all
+    /// rather than a stock guess.
+    let chips: [ChatStarterChips.Chip]
     let onPick: (String) -> Void
-
-    /// The chips, as data, so the interesting half is testable.
-    ///
-    /// Each string is sent VERBATIM as the user's first message, so these are
-    /// not labels, they are utterances. They read as something a person would
-    /// actually type for that reason.
-    static func suggestions(isFirstRun: Bool, hasTasks: Bool) -> [String] {
-        if isFirstRun {
-            // All three work against a machine Grux knows nothing about, and all
-            // three move the user toward operating rather than chatting.
-            return ["What can you actually do?",
-                    "Help me plan my first project",
-                    "What should I set up first?"]
-        }
-        var out = ["What should I work on?", "Plan today"]
-        // Only offered when there is a stack to roast. This is the whole fix in
-        // one line: the chip is absent rather than disappointing.
-        if hasTasks { out.insert("Roast my task stack", at: 1) }
-        return out
-    }
 
     private var headline: String {
         isFirstRun ? "Tell me what you are working on." : "Ready."
@@ -82,10 +74,16 @@ struct ChatEmptyState: View {
     /// assertable without standing up SwiftUI.
     static func blurb(isFirstRun: Bool, wakeWordOn: Bool) -> String {
         if isFirstRun {
-            // Says plainly that it knows nothing yet. An assistant that opens by
-            // implying familiarity it does not have spends trust it has not
-            // earned, and the first wrong answer collects on it.
-            return "I read the window you are in, and I can reach the mail, calendar, notes and files already on this Mac. I know nothing about you yet, so the fastest way to get useful is to tell me what you are building."
+            // Leads with what Grux does on this Mac that a chat window does
+            // not: a local model (Ollama and Grux Local), a snapshot before any
+            // command that looks destructive (`ShellSession`, hybrid undo), and
+            // the plain text log every shell command and file read lands in
+            // (`fs-audit.log`, `grux history`). It used to open with the mail,
+            // calendar, notes and files it could reach, which every assistant
+            // claims. Then it says plainly that it knows nothing yet: an
+            // assistant that implies familiarity it does not have spends trust
+            // it has not earned.
+            return "I can run on a local model on this Mac, snapshot a folder before a command that could wreck it so it can be undone, and keep a plain log of every command I run. I know nothing about you yet, so the fastest way to get useful is to tell me what you are building."
         }
         if wakeWordOn {
             // THE PHRASE IS THE APP'S NAME, NOT THE ASSISTANT'S, and this line
@@ -119,7 +117,7 @@ struct ChatEmptyState: View {
             // instead of running past the pane at the 840pt window floor. The
             // old row was a plain HStack of three, and the third was
             // unreachable there.
-            FlowChips(items: Self.suggestions(isFirstRun: isFirstRun, hasTasks: hasTasks)) { text in
+            FlowChips(items: chips.map(\.ask)) { text in
                 Button { onPick(text) } label: {
                     Text(text)
                         .font(.caption.weight(.medium))
@@ -133,6 +131,7 @@ struct ChatEmptyState: View {
                         )
                 }
                 .buttonStyle(.plain)
+                .help(chips.first { $0.ask == text }?.because ?? "")
                 .accessibilityHint("Sends this as your message")
             }
             .padding(.top, GruxSpacing.xs)
