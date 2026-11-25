@@ -48,7 +48,8 @@ Star the repository on GitHub, and watch its releases to hear about new versions
 > press. On a 16 GB Mac mini the 4B got **454 of 464** held-out Grux tasks right, against
 > 396 for the same model before training, and ignored instructions hidden in pasted text
 > in 65 of 70 held-out cases, against 55. The 2B, made for 8 GB Macs, went from 295 to
-> **435** of 464 on the same Mac mini. The 9B, made for 24 GB Macs and up, went from 400 to
+> **439** of 464 on the same Mac mini, and takes text only: a chat with an image attached
+> fails when it is routed to the local 2B. The 9B, made for 24 GB Macs and up, went from 400 to
 > **458** of 464, scored before training on a MacBook Pro and after on the same Mac mini.
 > Needs Apple silicon and Ollama 0.40.8 or later; Grux links you to ollama.com and does
 > not install it.
@@ -140,7 +141,7 @@ set went right, and the count for each kind of task is in `results/v1.json`.
 
 | Tag | Made for | Freshly loaded on the 16 GB Mac mini at num_ctx 16,384 (measured) |
 |---|---|---|
-| `gruxai.com/grux/grux-local:2b` | 8 GB Macs | 2.65 GB |
+| `gruxai.com/grux/grux-local:2b` (text only) | 8 GB Macs | 1.54 GB |
 | `gruxai.com/grux/grux-local:4b` (`latest`) | 16 GB Macs and up | 4.44 GB |
 | `gruxai.com/grux/grux-local:9b` | 24 GB Macs and up | 7.25 GB |
 
@@ -149,8 +150,9 @@ Mac. Grux 3.1 uses num_ctx 32,768 on Macs with 24 GB or more
 ([`LocalTurn.swift:21-27`](https://github.com/dotcomjack/grux/blob/v3.1.0/Grux-Mac/Sources/Grux/Chat/LocalTurn.swift#L21-L27)),
 so a model loads more there, which matters most for the 9B, made for 24 GB Macs and
 up. Ollama can also report more memory for the model as it works: on the 16 GB Mac
-mini the 2B read 2.65 GB freshly loaded and 11.37 GB after a full held-out run (464
-tasks), and the 4B (`latest`) read 4.44 GB and then 13.11 GB the same way; the 4B v2
+mini the 4B (`latest`) read 4.44 GB freshly loaded and 13.11 GB after a full held-out
+run (464 tasks), while the 2B read 1.54 GB both freshly loaded and after the same 464
+tasks, though macOS put its runner process at 2,637 MB after them; the 4B v2
 read 4.44 GB freshly loaded and 13.11 GB after 72 held-out tasks on a MacBook Pro
 (Apple M4 Pro, 48 GB). All at num_ctx 16,384. How far it grows on an 8 GB Mac is not
 yet measured.
@@ -164,8 +166,8 @@ before training (the qwen3.5 build from the Ollama library):
 |---|---|---|
 | 4B, all 464 tasks | 396 (85%) | **454 (98%)** |
 | 4B, hidden instructions ignored | 55 of 70 | **65 of 70** |
-| 2B, all 464 tasks | 295 (64%) | **435 (94%)** |
-| 2B, hidden instructions ignored | 43 of 70 | **66 of 70** |
+| 2B, all 464 tasks | 295 (64%) | **439 (95%)** |
+| 2B, hidden instructions ignored | 43 of 70 | **64 of 70** |
 
 The 9B's Grux Local numbers are from the same Mac mini. Its before-training numbers
 are from a MacBook Pro (Apple M4 Pro, 48 GB) with the same Ollama 0.40.8 and the same
@@ -178,7 +180,7 @@ are from a MacBook Pro (Apple M4 Pro, 48 GB) with the same Ollama 0.40.8 and the
 
 In Grux's fixed test with the model already loaded, chat replies from Grux Local on
 that Mac mini: 95% came back within 3.4 s (4B),
-1.6 s (2B) and 3.8 s (9B). Every number here, with the count for each kind of task,
+2.4 s (2B) and 3.8 s (9B). Every number here, with the count for each kind of task,
 is in [`results/v1.json`](https://github.com/dotcomjack/grux-local/blob/main/results/v1.json).
 
 **4B v2, opt-in.** `gruxai.com/grux/grux-local:4b-v2` is a second version of the 4B,
@@ -192,17 +194,32 @@ Held-out v2 was written alongside round 2's training data and checked to share n
 do the task and name the steering, is the behavior round 2 trained, which v1 was not
 trained to do. `gruxai.com/grux/grux-local:4b` and `latest` stay on v1.
 
+**The 2B, rebuilt.** `gruxai.com/grux/grux-local:2b` now points at a new build
+(manifest `sha256:1622ac1b80af...`), trained on round 5 data and run as one GGUF file
+(Q4_K_M) on Ollama's llama.cpp runner instead of MLX. It takes text only: Ollama
+answers a chat request that carries an image with HTTP 400, so in Grux a chat with an
+image attached fails when it is routed to the local 2B. On the same Mac mini, against
+the first 2B, it got 414 of 466 on held-out v2 against 371, and 439 of 464 on held-out
+v1 against 435. It is worse at hidden instructions on held-out v1 (64 against 65), at
+saying plainly what it cannot do on Grux 3.3.1's local turns (27 against 31 to 32 of
+34), at file naming (62 against 65 of 92), and in chat speed (95% within 2.4 s against 2.0 s
+on held-out v1, and 8.8 s against 8.6 s on held-out v2). The comparison, and how the new build was checked against its
+published bytes, is in the
+[model card](https://github.com/dotcomjack/grux-local#the-2b-rebuilt).
+
 **How it was made.** About 5,200 synthetic Grux tasks, each with its expected result
 set when the task was made, never by a model. Gemma 4 26B (Apache-2.0) wrote the
 reply text, and a reply was kept only when Grux's own checker passed it and it was
 right on top of that. Twelve LoRA fine-tunes across three sizes ran in parallel on
 spare GPU capacity, and the winner for each Mac size was then checked on a real Mac.
-No personal data was used. The 2B and 4B run in nvfp4; the 9B was quantized with
-NVIDIA ModelOpt to the same mixed NVFP4 and MXFP8 recipe as Ollama's own qwen3.5:9b.
+No personal data was used. The 4B runs in nvfp4 on Ollama's MLX runner; the 9B was
+quantized with NVIDIA ModelOpt to the same mixed NVFP4 and MXFP8 recipe as Ollama's
+own qwen3.5:9b. That is how v1 was made; the current 2B was rebuilt from round 5 data,
+which is not published, and is a GGUF file in Q4_K_M on Ollama's llama.cpp runner.
 
 **Use it.** It needs Apple silicon and Ollama 0.40.8 or later. Run
-`ollama pull gruxai.com/grux/grux-local:4b` (`gruxai.com/grux/grux-local:2b` on an
-8 GB Mac, `gruxai.com/grux/grux-local:9b` on a Mac with 24 GB or more). Then in
+`ollama pull gruxai.com/grux/grux-local:4b` (`gruxai.com/grux/grux-local:2b`, text
+only, on an 8 GB Mac, `gruxai.com/grux/grux-local:9b` on a Mac with 24 GB or more). Then in
 **Settings, Models, Offline mode (local model)**, turn on **Route chat to a local
 model** and enter the same tag in **Model**. Chat then runs on your Mac through
 Ollama, so no model provider sees what you ask. Tools you ask for still do their job,
