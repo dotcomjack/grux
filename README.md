@@ -202,8 +202,8 @@ image attached fails when it is routed to the local 2B. On the same Mac mini, ag
 the first 2B, it got 414 of 466 on held-out v2 against 371, and 439 of 464 on held-out
 v1 against 435. It is worse at hidden instructions on held-out v1 (64 against 65), at
 saying plainly what it cannot do on Grux 3.3.1's local turns (27 against 31 to 32 of
-34), at file naming (62 against 65 of 92), and in chat speed on held-out v1 (95% within
-2.4 s against 2.0 s). The comparison, and how the new build was checked against its
+34), at file naming (62 against 65 of 92), and in chat speed (95% within 2.4 s against 2.0 s
+on held-out v1, and 8.8 s against 8.6 s on held-out v2). The comparison, and how the new build was checked against its
 published bytes, is in the
 [model card](https://github.com/dotcomjack/grux-local#the-2b-rebuilt).
 
