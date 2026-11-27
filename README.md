@@ -205,10 +205,15 @@ saying plainly what it cannot do on Grux 3.3.1's local turns (27 against 31 to 3
 34), at file naming (62 against 65 of 92), and in chat speed on held-out v2 (95% within
 8.9 s against 8.6 s). Since November 27, 2026 it carries num_batch 256 in its own
 parameters, which took its median first word on Grux 3.3.1's local turns at num_ctx
-8,192 from 1.09 s to 0.32 s and cost one of those 237 turns (196 against 197), a
-regression the model card names case by case. The comparison, and how each build was
+8,192 from 1.09 s to 0.32 s, still later than the first 2B's 0.12 s, and cost one of
+those 237 turns (196 against 197) by losing three hidden-instruction cases, the same
+three at num_ctx 16,384. The house rule is that a version never replaces a tag it
+scores below; DotcomJack waived it for this change. It is also worse than the build it
+replaced on held-out v2's first word (0.84 s against 0.63 s), on file naming's 95th
+percentile (796 ms against 674 ms) and on the runner's memory after 464 tasks
+(3,279 MB against 2,637 MB). The comparison, case by case, and how each build was
 checked against its published bytes, is in the
-[model card](https://github.com/dotcomjack/grux-local#the-2b-rebuilt).
+[model card](https://github.com/dotcomjack/grux-local#num_batch-256).
 
 **How it was made.** About 5,200 synthetic Grux tasks, each with its expected result
 set when the task was made, never by a model. Gemma 4 26B (Apache-2.0) wrote the
